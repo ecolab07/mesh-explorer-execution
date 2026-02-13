@@ -1,0 +1,14 @@
+{
+  "name": "mesh-explorer-execution",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm --filter @mesh/conformance-tests test",
+    "test:all": "pnpm -r test"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
