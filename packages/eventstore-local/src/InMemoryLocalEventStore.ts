@@ -21,6 +21,7 @@ type StreamStorage = Record<StreamName, EventEnvelope[]>;
  */
 export class InMemoryLocalEventStore implements LocalEventStore {
   private readonly bySpace = new Map<string, StreamStorage>();
+  private readonly bySpace = new Map<string, { meta: EventEnvelope[]; graph: EventEnvelope[] }>();
 
   async appendTx(graphSpaceId: string, txBundle: TxBundle, _idempotencyCtx: IdempotencyCtx): Promise<TransactionReceipt | CommandError> {
     if (txBundle.metaEvents.length === 0 && txBundle.graphEvents.length === 0) {
@@ -38,6 +39,13 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     const meta: EventEnvelope[] = txBundle.metaEvents.map((payload: CanonicalEventPayload, idx: number) => ({
       graphSpaceId,
       stream: "meta",
+    const current = this.bySpace.get(graphSpaceId) ?? { meta: [], graph: [] };
+    const metaStart = current.meta.length;
+    const graphStart = current.graph.length;
+
+    const meta = txBundle.metaEvents.map((payload, idx) => ({
+      graphSpaceId,
+      stream: "meta" as const,
       seq: metaStart + idx + 1,
       txId: txBundle.txId,
       eventId: `${txBundle.txId}-m-${idx + 1}`,
@@ -47,6 +55,9 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     const graph: EventEnvelope[] = txBundle.graphEvents.map((payload: CanonicalEventPayload, idx: number) => ({
       graphSpaceId,
       stream: "graph",
+    const graph = txBundle.graphEvents.map((payload, idx) => ({
+      graphSpaceId,
+      stream: "graph" as const,
       seq: graphStart + idx + 1,
       txId: txBundle.txId,
       eventId: `${txBundle.txId}-g-${idx + 1}`,
@@ -65,6 +76,8 @@ export class InMemoryLocalEventStore implements LocalEventStore {
       eventRefs: {
         meta: meta.map((e: EventEnvelope) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId })),
         graph: graph.map((e: EventEnvelope) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId }))
+        meta: meta.map((e) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId })),
+        graph: graph.map((e) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId }))
       }
     };
   }
@@ -74,6 +87,8 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     if (!current) return null;
     const meta = current.meta.filter((e: EventEnvelope) => e.txId === txId);
     const graph = current.graph.filter((e: EventEnvelope) => e.txId === txId);
+    const meta = current.meta.filter((e) => e.txId === txId);
+    const graph = current.graph.filter((e) => e.txId === txId);
     if (meta.length === 0 && graph.length === 0) return null;
     return { txId, meta, graph };
   }
@@ -81,6 +96,9 @@ export class InMemoryLocalEventStore implements LocalEventStore {
   async readRange(graphSpaceId: string, stream: StreamName, fromSeqExclusive: number, limit: number, _mode: ReadMode): Promise<EventEnvelope[]> {
     const current: StreamStorage = this.bySpace.get(graphSpaceId) ?? { meta: [], graph: [] };
     return current[stream].filter((e: EventEnvelope) => e.seq > fromSeqExclusive).slice(0, limit);
+    const current = this.bySpace.get(graphSpaceId);
+    if (!current) return [];
+    return current[stream].filter((e) => e.seq > fromSeqExclusive).slice(0, limit);
   }
 
   async getCursorHead(graphSpaceId: string): Promise<Cursor> {
