@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryLocalEventStore } from "@mesh/eventstore-local";
-import { canonicalString, stripNondeterminism } from "@mesh/shared";
+import { REASON_CODES, canonicalString, stripNondeterminism } from "@mesh/shared";
 
+// Invariant: append-only reads are stable (same seq/tx ordering) across repeated reads; fail if sequence/order drifts.
+// Invariant: TX_CLOSED readRange extends to tx boundary and honors snapshotCursor; fail on half-tx or post-snapshot leak.
+// Invariant: tx_index and per-stream seq are monotone and aligned with tx boundaries; fail on out-of-order index/seq.
+// Invariant: idempotent replays return same committed receipt and do not duplicate tx_index rows; fail on divergence/duplication.
+// Invariant: crash before commit is atomic (no partial visibility); fail if only one stream exposes tx events.
+// Invariant: empty transaction is rejected with normalized reasonCode; fail if accepted or differently classified.
 describe("CT-L-* Core Local", () => {
   it("CT-L-1 Append-only immutability (Critical)", async () => {
     const store = new InMemoryLocalEventStore();
@@ -21,8 +27,10 @@ describe("CT-L-* Core Local", () => {
     const firstRead = await store.readRange(graphSpaceId, "meta", 0, 100, "TX_CLOSED");
     const secondRead = await store.readRange(graphSpaceId, "meta", 0, 100, "TX_CLOSED");
 
-    expect(firstRead.map((e) => e.seq)).toEqual([1, 2]);
-    expect(firstRead.map((e) => e.txId)).toEqual(["tx-1", "tx-2"]);
+    expect(firstRead.map((e) => ({ seq: e.seq, txId: e.txId, eventId: e.eventId }))).toEqual([
+      { seq: 1, txId: "tx-1", eventId: "tx-1-m-1" },
+      { seq: 2, txId: "tx-2", eventId: "tx-2-m-1" }
+    ]);
     expect(canonicalString(firstRead)).toEqual(canonicalString(secondRead));
   });
 
@@ -47,10 +55,14 @@ describe("CT-L-* Core Local", () => {
     const cut = await store.readRange(graphSpaceId, "meta", 0, 1, "TX_CLOSED");
     const snapshotRead = await store.readRange(graphSpaceId, "meta", 0, 10, "TX_CLOSED", { snapshotCursor: snapshot });
 
-    expect(cut).toHaveLength(2);
-    expect(cut.map((e) => e.seq)).toEqual([1, 2]);
-    expect(new Set(cut.map((e) => e.txId))).toEqual(new Set(["tx-1"]));
-    expect(snapshotRead.map((e) => e.txId)).toEqual(["tx-1", "tx-1"]);
+    expect(cut.map((e) => ({ txId: e.txId, seq: e.seq }))).toEqual([
+      { txId: "tx-1", seq: 1 },
+      { txId: "tx-1", seq: 2 }
+    ]);
+    expect(snapshotRead.map((e) => ({ txId: e.txId, seq: e.seq }))).toEqual([
+      { txId: "tx-1", seq: 1 },
+      { txId: "tx-1", seq: 2 }
+    ]);
   });
 
   it("CT-L-3 tx_index monotonicity and two-stream ordering (Critical)", async () => {
@@ -72,9 +84,20 @@ describe("CT-L-* Core Local", () => {
     const graph = await store.readRange(graphSpaceId, "graph", 0, 100, "TX_CLOSED");
     const txIndex = await store.readTxIndex(graphSpaceId);
 
-    expect(meta.map((e) => e.seq)).toEqual([1, 2, 3]);
-    expect(graph.map((e) => e.seq)).toEqual([1, 2, 3]);
-    expect(txIndex.map((t) => t.txIndex)).toEqual([1, 2]);
+    expect(meta.map((e) => ({ txId: e.txId, seq: e.seq }))).toEqual([
+      { txId: "tx-1", seq: 1 },
+      { txId: "tx-2", seq: 2 },
+      { txId: "tx-2", seq: 3 }
+    ]);
+    expect(graph.map((e) => ({ txId: e.txId, seq: e.seq }))).toEqual([
+      { txId: "tx-1", seq: 1 },
+      { txId: "tx-1", seq: 2 },
+      { txId: "tx-2", seq: 3 }
+    ]);
+    expect(txIndex).toEqual([
+      { txId: "tx-1", txIndex: 1, meta: { start: 1, end: 1, count: 1 }, graph: { start: 1, end: 2, count: 2 } },
+      { txId: "tx-2", txIndex: 2, meta: { start: 2, end: 3, count: 2 }, graph: { start: 3, end: 3, count: 1 } }
+    ]);
   });
 
   it("CT-L-4 Tx boundary integrity + idempotence (Critical)", async () => {
@@ -87,19 +110,23 @@ describe("CT-L-* Core Local", () => {
     const second = await store.appendTx(graphSpaceId, txBundle, idem);
     const txIndex = await store.readTxIndex(graphSpaceId);
 
-    expect(first.status).toBe("committed");
-    expect(second.status).toBe("committed");
-    if (first.status === "committed" && second.status === "committed") {
-      expect(second).toEqual(first);
-      expect(first.txIndex).toBe(1);
-    }
-
-    expect(txIndex).toHaveLength(1);
-    expect(txIndex[0]).toMatchObject({
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({
+      status: "committed",
+      commandId: "tx-1",
       txId: "tx-1",
-      meta: { start: 1, end: 1, count: 1 },
-      graph: { start: 1, end: 2, count: 2 }
+      txIndex: 1,
+      cursorAfter: { metaSeq: 1, graphSeq: 2 },
+      eventRefs: {
+        meta: [{ stream: "meta", seq: 1, eventId: "tx-1-m-1" }],
+        graph: [
+          { stream: "graph", seq: 1, eventId: "tx-1-g-1" },
+          { stream: "graph", seq: 2, eventId: "tx-1-g-2" }
+        ]
+      }
     });
+
+    expect(txIndex).toEqual([{ txId: "tx-1", txIndex: 1, meta: { start: 1, end: 1, count: 1 }, graph: { start: 1, end: 2, count: 2 } }]);
   });
 
   it("CT-L-5 Fault Injection: crash before commit keeps store atomic", async () => {
@@ -137,30 +164,22 @@ describe("CT-L-* Core Local", () => {
       idempotencyCtx
     );
 
-    const nothingVisible = metaEvents.length === 0 && graphEvents.length === 0;
-    const fullVisible =
-      metaEvents.length === 1 &&
-      graphEvents.length === 1 &&
-      metaEvents[0]?.txId === txId &&
-      graphEvents[0]?.txId === txId;
+    expect(metaEvents).toEqual([]);
+    expect(graphEvents).toEqual([]);
+    expect(retry).toMatchObject({ status: "committed", txId, txIndex: 1, cursorAfter: { metaSeq: 1, graphSeq: 1 } });
+  });
 
-    expect(nothingVisible || fullVisible).toBe(true);
-    expect(!(metaEvents.length === 1 && graphEvents.length === 0)).toBe(true);
-    expect(!(metaEvents.length === 0 && graphEvents.length === 1)).toBe(true);
+  it("CT-L-6 contradiction: empty tx is rejected", async () => {
+    const store = new InMemoryLocalEventStore();
+    const graphSpaceId = "space-l6";
 
-    if (nothingVisible) {
-      expect(retry.status).toBe("committed");
-      if (retry.status === "committed") {
-        expect(retry.txId).toBe(txId);
-      }
-      return;
-    }
+    const result = await store.appendTx(
+      graphSpaceId,
+      { txId: "tx-empty", metaEvents: [], graphEvents: [] },
+      { actorId: "actor", idempotencyKey: "k-empty", payloadHash: "h-empty" }
+    );
 
-    expect(retry.status).toBe("committed");
-    if (retry.status === "committed") {
-      expect(retry.txId).toBe(txId);
-      expect(retry.cursorAfter).toEqual({ metaSeq: 1, graphSeq: 1 });
-    }
+    expect(result).toEqual({ status: "rejected", category: "VALIDATION", reasonCode: REASON_CODES.EMPTY_TX });
   });
 
   it("sanity: canonical normalizer is deterministic and strips createdAt", () => {
