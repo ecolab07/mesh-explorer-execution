@@ -12,6 +12,7 @@ function run(command) {
 
 try {
   run("pnpm --filter @mesh/conformance-tests test");
+  // Runtime diagnostics are intentionally excluded: they contain non-deterministic metadata.
   run("git diff --exit-code -- artifacts/conformance-evidence.md artifacts/conformance-evidence.json");
 } catch {
   console.error("Conformance artifacts are not up to date. Re-run tests and commit updated artifacts.");

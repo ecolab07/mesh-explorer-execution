@@ -1,9 +1,5 @@
 # Conformance Evidence
 
-- Commit SHA: 26420de122117256610a9a3e79278a020b3085af
-- Generated at (UTC): 2026-02-14T21:59:54.086Z
-- Node: v22.21.1
-- pnpm: 10.13.1
 - Vitest: ^2.1.8
 - Suites: CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics, CT-L-* Core Local, CT-P-* Projection determinism, CT-S-* Security masking and indistinguishability, CT-SYNC-* Local sync harness
 
