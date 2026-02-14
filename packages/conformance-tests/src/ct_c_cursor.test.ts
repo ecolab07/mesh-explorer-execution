@@ -6,7 +6,7 @@ import { REASON_CODES } from "@mesh/shared";
 // Invariant: invisible tx does not create observable holes for each principal; fail if cursor jumps/leaks hidden tx positions.
 // Invariant: hidden tx remains unreadable by principal and yields normalized NOT_FOUND_OR_MASKED; fail if transaction is exposed.
 describe("CT-C-* Cursor semantics per principal", () => {
-  it("CT-C-1: principal cursor is monotone and tx-closed", async () => {
+  it("[INV:CT-C-1][SURF:Cursor] CT-C-1: principal cursor is monotone and tx-closed", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-c1";
 
@@ -48,7 +48,7 @@ describe("CT-C-* Cursor semantics per principal", () => {
     });
   });
 
-  it("CT-C-2: alternating visibility across principals has no observable holes", async () => {
+  it("[INV:CT-C-2][SURF:Cursor] CT-C-2: alternating visibility across principals has no observable holes", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-c2";
 
@@ -82,7 +82,7 @@ describe("CT-C-* Cursor semantics per principal", () => {
     expect(bobPage2).toEqual({ txs: [expect.objectContaining({ txId: "tx-4-both", txIndex: 4 })], cursor: 3 });
   });
 
-  it("CT-C-3 contradiction: hidden tx cannot be read directly by masked principal", async () => {
+  it("[INV:CT-C-3][SURF:Cursor] CT-C-3 contradiction: hidden tx cannot be read directly by masked principal", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-c3";
 

@@ -6,7 +6,7 @@ import { PrincipalProjectionEngine } from "@mesh/projection-minimal";
 // Invariant: projection cache is scoped by principal (no cross-principal tx bleed); fail if txIds/cursor leak between users.
 // Invariant: new committed tx invalidates previous observable state after apply/poll cycle; fail if state remains stale.
 describe("CT-P-* Projection determinism", () => {
-  it("CT-P-1: incremental apply equals rebuild", async () => {
+  it("[INV:CT-P-1][SURF:Projection] CT-P-1: incremental apply equals rebuild", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-p1";
     const engine = new PrincipalProjectionEngine(store, graphSpaceId);
@@ -23,7 +23,7 @@ describe("CT-P-* Projection determinism", () => {
     expect(incremental).toEqual(rebuilt);
   });
 
-  it("CT-P-2: cache is scoped by principal", async () => {
+  it("[INV:CT-P-2][SURF:Projection] CT-P-2: cache is scoped by principal", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-p2";
     const engine = new PrincipalProjectionEngine(store, graphSpaceId);
@@ -38,7 +38,7 @@ describe("CT-P-* Projection determinism", () => {
     expect(aliceV1).not.toEqual(bobV1);
   });
 
-  it("CT-P-3: invalidation + new tx changes snapshot after incremental apply", async () => {
+  it("[INV:CT-P-3][SURF:Projection] CT-P-3: invalidation + new tx changes snapshot after incremental apply", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-p3";
     const engine = new PrincipalProjectionEngine(store, graphSpaceId);

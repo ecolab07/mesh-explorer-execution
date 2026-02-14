@@ -9,7 +9,7 @@ import { REASON_CODES, canonicalString, stripNondeterminism } from "@mesh/shared
 // Invariant: crash before commit is atomic (no partial visibility); fail if only one stream exposes tx events.
 // Invariant: empty transaction is rejected with normalized reasonCode; fail if accepted or differently classified.
 describe("CT-L-* Core Local", () => {
-  it("CT-L-1 Append-only immutability (Critical)", async () => {
+  it("[INV:CT-L-1][SURF:EventStore] CT-L-1 Append-only immutability (Critical)", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-l1";
 
@@ -34,7 +34,7 @@ describe("CT-L-* Core Local", () => {
     expect(canonicalString(firstRead)).toEqual(canonicalString(secondRead));
   });
 
-  it("CT-L-2 tx-closed readRange extension (Critical)", async () => {
+  it("[INV:CT-L-2][SURF:EventStore] CT-L-2 tx-closed readRange extension (Critical)", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-l2";
 
@@ -65,7 +65,7 @@ describe("CT-L-* Core Local", () => {
     ]);
   });
 
-  it("CT-L-3 tx_index monotonicity and two-stream ordering (Critical)", async () => {
+  it("[INV:CT-L-3][SURF:EventStore] CT-L-3 tx_index monotonicity and two-stream ordering (Critical)", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-l3";
 
@@ -100,7 +100,7 @@ describe("CT-L-* Core Local", () => {
     ]);
   });
 
-  it("CT-L-4 Tx boundary integrity + idempotence (Critical)", async () => {
+  it("[INV:CT-L-4][SURF:EventStore] CT-L-4 Tx boundary integrity + idempotence (Critical)", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-l4";
     const txBundle = { txId: "tx-1", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }, { g: 2 }] };
@@ -129,7 +129,7 @@ describe("CT-L-* Core Local", () => {
     expect(txIndex).toEqual([{ txId: "tx-1", txIndex: 1, meta: { start: 1, end: 1, count: 1 }, graph: { start: 1, end: 2, count: 2 } }]);
   });
 
-  it("CT-L-5 Fault Injection: crash before commit keeps store atomic", async () => {
+  it("[INV:CT-L-5][SURF:EventStore] CT-L-5 Fault Injection: crash before commit keeps store atomic", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-l5";
     const txId = "tx-l5";
@@ -169,7 +169,7 @@ describe("CT-L-* Core Local", () => {
     expect(retry).toMatchObject({ status: "committed", txId, txIndex: 1, cursorAfter: { metaSeq: 1, graphSeq: 1 } });
   });
 
-  it("CT-L-6 contradiction: empty tx is rejected", async () => {
+  it("[INV:CT-L-6][SURF:EventStore] CT-L-6 contradiction: empty tx is rejected", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-l6";
 

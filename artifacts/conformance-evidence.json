@@ -1,0 +1,236 @@
+{
+  "metadata": {
+    "commitSha": "0fa703f532d0f3e6770d373441e007d95fea19c2",
+    "generatedAt": "2026-02-14T21:46:40.729Z",
+    "nodeVersion": "v22.21.1",
+    "pnpmVersion": "10.13.1",
+    "vitestVersion": "^2.1.8",
+    "suites": [
+      "CT-C-* Cursor semantics per principal",
+      "CT-K-* Kernel command semantics",
+      "CT-L-* Core Local",
+      "CT-P-* Projection determinism",
+      "CT-S-* Security masking and indistinguishability",
+      "CT-SYNC-* Local sync harness"
+    ]
+  },
+  "invariants": [
+    {
+      "invariantId": "CT-C-1",
+      "surface": "Cursor",
+      "testName": "CT-C-1: principal cursor is monotone and tx-closed",
+      "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(first).toEqual({ ; expect(second).toEqual({",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c1\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-C-2",
+      "surface": "Cursor",
+      "testName": "CT-C-2: alternating visibility across principals has no observable holes",
+      "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+      "oracle": "Asserts 4 expectation(s): expect(alicePage1).toEqual({ ; expect(alicePage2).toEqual({ txs: [expect.objectContaining({ txId: \"tx-4-both\", txIndex: 4 })], cursor: 3 }); ; expect(bobPage1).toEqual({ ; expect(bobPage2).toEqual({ txs: [expect.objectContaining({ txId: \"tx-4-both\", txIndex: 4 })], cursor: 3 });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c2\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-C-3",
+      "surface": "Cursor",
+      "testName": "CT-C-3 contradiction: hidden tx cannot be read directly by masked principal",
+      "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+      "oracle": "Asserts 1 expectation(s): expect(hidden).toEqual({ status: \"rejected\", category: \"NOT_FOUND\", reasonCode: REASON_CODES.NOT_FOUND_OR_MASKED });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c3\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-K-1",
+      "surface": "Kernel",
+      "testName": "CT-K-1: invalid baseRevision returns normalized error",
+      "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+      "oracle": "Asserts 1 expectation(s): expect(result).toEqual({",
+      "setup": "const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore()); const result = await kernel.execute({",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-K-2",
+      "surface": "Kernel",
+      "testName": "CT-K-2: idempotent resubmission with same key returns same receipt",
+      "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(first).toEqual(second); ; expect(first).toMatchObject({",
+      "setup": "const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore()); const first = await kernel.execute({",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-K-3",
+      "surface": "Kernel",
+      "testName": "CT-K-3: idempotency key reuse with payload mismatch is rejected",
+      "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(accepted).toMatchObject({ status: \"committed\", txId: \"cmd-k3-ok\", txIndex: 1 }); ; expect(rejected).toEqual({",
+      "setup": "const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore()); const accepted = await kernel.execute({",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-K-4",
+      "surface": "Kernel",
+      "testName": "CT-K-4: commit invariants preserve appendTx + base revision preconditions",
+      "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+      "oracle": "Asserts 3 expectation(s): expect(fakeStore.resolveRevisionCalls).toEqual([[\"space-k\", \"rev/current\"]]); ; expect(fakeStore.appendCalls).toHaveLength(1); ; expect(result).toEqual({",
+      "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-K-5",
+      "surface": "Kernel",
+      "testName": "CT-K-5 contradiction: malformed command is rejected",
+      "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+      "oracle": "Asserts 1 expectation(s): expect(result).toEqual({",
+      "setup": "const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore()); const result = await kernel.execute({ ...baseCommand, commandId: \"\", idempotencyKey: \"\", payload: undefined as never })",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-L-1",
+      "surface": "EventStore",
+      "testName": "CT-L-1 Append-only immutability (Critical)",
+      "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(firstRead.map((e) => ({ seq: e.seq, txId: e.txId, eventId: e.eventId }))).toEqual([ ; expect(canonicalString(firstRead)).toEqual(canonicalString(secondRead));",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l1\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-L-2",
+      "surface": "EventStore",
+      "testName": "CT-L-2 tx-closed readRange extension (Critical)",
+      "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(cut.map((e) => ({ txId: e.txId, seq: e.seq }))).toEqual([ ; expect(snapshotRead.map((e) => ({ txId: e.txId, seq: e.seq }))).toEqual([",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l2\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-L-3",
+      "surface": "EventStore",
+      "testName": "CT-L-3 tx_index monotonicity and two-stream ordering (Critical)",
+      "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+      "oracle": "Asserts 3 expectation(s): expect(meta.map((e) => ({ txId: e.txId, seq: e.seq }))).toEqual([ ; expect(graph.map((e) => ({ txId: e.txId, seq: e.seq }))).toEqual([ ; expect(txIndex).toEqual([",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l3\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-L-4",
+      "surface": "EventStore",
+      "testName": "CT-L-4 Tx boundary integrity + idempotence (Critical)",
+      "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+      "oracle": "Asserts 3 expectation(s): expect(first).toEqual(second); ; expect(first).toMatchObject({ ; expect(txIndex).toEqual([{ txId: \"tx-1\", txIndex: 1, meta: { start: 1, end: 1, count: 1 }, graph: { start: 1, end: 2, count: 2 } }]);",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l4\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-L-5",
+      "surface": "EventStore",
+      "testName": "CT-L-5 Fault Injection: crash before commit keeps store atomic",
+      "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+      "oracle": "Asserts 3 expectation(s): expect(metaEvents).toEqual([]); ; expect(graphEvents).toEqual([]); ; expect(retry).toMatchObject({ status: \"committed\", txId, txIndex: 1, cursorAfter: { metaSeq: 1, graphSeq: 1 } });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l5\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-L-6",
+      "surface": "EventStore",
+      "testName": "CT-L-6 contradiction: empty tx is rejected",
+      "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+      "oracle": "Asserts 1 expectation(s): expect(result).toEqual({ status: \"rejected\", category: \"VALIDATION\", reasonCode: REASON_CODES.EMPTY_TX });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l6\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-P-1",
+      "surface": "Projection",
+      "testName": "CT-P-1: incremental apply equals rebuild",
+      "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(incremental).toEqual({ principalId: \"alice\", cursor: 2, nodeCount: 2, txIds: [\"tx-1\", \"tx-2\"] }); ; expect(incremental).toEqual(rebuilt);",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p1\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-P-2",
+      "surface": "Projection",
+      "testName": "CT-P-2: cache is scoped by principal",
+      "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+      "oracle": "Asserts 3 expectation(s): expect(aliceV1).toEqual({ principalId: \"alice\", cursor: 1, nodeCount: 1, txIds: [\"tx-1\"] }); ; expect(bobV1).toEqual({ principalId: \"bob\", cursor: 0, nodeCount: 0, txIds: [] }); ; expect(aliceV1).not.toEqual(bobV1);",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p2\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-P-3",
+      "surface": "Projection",
+      "testName": "CT-P-3: invalidation + new tx changes snapshot after incremental apply",
+      "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(before).toEqual({ principalId: \"alice\", cursor: 1, nodeCount: 1, txIds: [\"tx-1\"] }); ; expect(after).toEqual({ principalId: \"alice\", cursor: 2, nodeCount: 2, txIds: [\"tx-1\", \"tx-2\"] });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p3\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-S-1",
+      "surface": "Security",
+      "testName": "CT-S-1: absent and masked tx are indistinguishable",
+      "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+      "oracle": "Asserts 6 expectation(s): expect(missing).toEqual(expected); ; expect(masked).toEqual(expected); ; expect(Object.keys(masked).sort()).toEqual(Object.keys(missing).sort()); ; expect(masked).not.toHaveProperty(\"baseRevision\"); ; expect(masked).not.toHaveProperty(\"cursor\"); ; expect(masked).not.toHaveProperty(\"metadata\");",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-s1\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-S-2",
+      "surface": "Security",
+      "testName": "CT-S-2: masked event hides full transaction without observable holes",
+      "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+      "oracle": "Asserts 1 expectation(s): expect(principalRead).toEqual({",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-s2\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-S-3",
+      "surface": "Security",
+      "testName": "CT-S-3 contradiction: absent vs masked no side-channel shape",
+      "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+      "oracle": "Asserts 1 expectation(s): expect(JSON.stringify(masked)).toBe(JSON.stringify(absent));",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-s3\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-SYNC-1",
+      "surface": "Sync",
+      "testName": "CT-SYNC-1: poll is tx-closed and filtered by principal",
+      "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+      "oracle": "Asserts 1 expectation(s): expect(poll).toEqual({ txIds: [\"tx-1\"], principalCursorAfter: 1 });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-sync1\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-SYNC-2",
+      "surface": "Sync",
+      "testName": "CT-SYNC-2: subscribeOnce returns coherent follow-up cursor",
+      "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(first).toEqual({ txIds: [\"tx-1\"], principalCursorAfter: 1 }); ; expect(second).toEqual({ txIds: [\"tx-2\"], principalCursorAfter: 2 });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-sync2\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-SYNC-3",
+      "surface": "Sync",
+      "testName": "CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay",
+      "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+      "oracle": "Asserts 3 expectation(s): expect(receipt).toMatchObject({ ; expect(firstPoll).toEqual({ txIds: [\"cmd-sync-1\"], principalCursorAfter: 1 }); ; expect(replayPoll).toEqual({ txIds: [], principalCursorAfter: 1 });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-sync3\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-SYNC-4",
+      "surface": "Sync",
+      "testName": "CT-SYNC-4 contradiction: rejected submit is never observable in poll",
+      "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+      "oracle": "Asserts 2 expectation(s): expect(rejected).toEqual({ ; expect(poll).toEqual({ txIds: [], principalCursorAfter: 0 });",
+      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-sync4\"",
+      "limitations": ""
+    }
+  ],
+  "coverageGaps": []
+}

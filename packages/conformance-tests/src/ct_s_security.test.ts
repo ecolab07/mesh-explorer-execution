@@ -6,7 +6,7 @@ import { REASON_CODES } from "@mesh/shared";
 // Invariant: masking is transaction-wide (one masked event masks the whole tx); fail if any part of that tx is visible.
 // Invariant: no observable side-channel via cursor/extra keys between absent and masked reads; fail if response shape differs.
 describe("CT-S-* Security masking and indistinguishability", () => {
-  it("CT-S-1: absent and masked tx are indistinguishable", async () => {
+  it("[INV:CT-S-1][SURF:Security] CT-S-1: absent and masked tx are indistinguishable", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-s1";
 
@@ -32,7 +32,7 @@ describe("CT-S-* Security masking and indistinguishability", () => {
     expect(masked).not.toHaveProperty("metadata");
   });
 
-  it("CT-S-2: masked event hides full transaction without observable holes", async () => {
+  it("[INV:CT-S-2][SURF:Security] CT-S-2: masked event hides full transaction without observable holes", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-s2";
 
@@ -86,7 +86,7 @@ describe("CT-S-* Security masking and indistinguishability", () => {
     });
   });
 
-  it("CT-S-3 contradiction: absent vs masked no side-channel shape", async () => {
+  it("[INV:CT-S-3][SURF:Security] CT-S-3 contradiction: absent vs masked no side-channel shape", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-s3";
 
