@@ -32,6 +32,7 @@ jobs:
           path: |
             artifacts/conformance-evidence.md
             artifacts/conformance-evidence.json
+            artifacts/conformance-evidence.runtime.json
             **/*.log
             **/*dump*.json
             **/vitest*.xml

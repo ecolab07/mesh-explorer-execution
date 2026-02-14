@@ -1,9 +1,5 @@
 {
   "metadata": {
-    "commitSha": "26420de122117256610a9a3e79278a020b3085af",
-    "generatedAt": "2026-02-14T21:59:54.086Z",
-    "nodeVersion": "v22.21.1",
-    "pnpmVersion": "10.13.1",
     "vitestVersion": "^2.1.8",
     "suites": [
       "CT-C-* Cursor semantics per principal",

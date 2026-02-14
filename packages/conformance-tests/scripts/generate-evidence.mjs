@@ -242,10 +242,6 @@ async function main() {
   const markdown = [
     "# Conformance Evidence",
     "",
-    `- Commit SHA: ${commitSha}`,
-    `- Generated at (UTC): ${generatedAt}`,
-    `- Node: ${nodeVersion}`,
-    `- pnpm: ${pnpmVersion}`,
     `- Vitest: ${vitestVersion}`,
     `- Suites: ${[...new Set(suiteNames)].join(", ")}`,
     "",
@@ -267,10 +263,6 @@ async function main() {
 
   const jsonPayload = {
     metadata: {
-      commitSha,
-      generatedAt,
-      nodeVersion,
-      pnpmVersion,
       vitestVersion,
       suites: [...new Set(suiteNames)].sort()
     },
@@ -280,12 +272,29 @@ async function main() {
     coverageGaps: missingInvariants
   };
 
+  const runtimePayload = {
+    metadata: {
+      commitSha,
+      generatedAt,
+      nodeVersion,
+      pnpmVersion,
+      vitestVersion,
+      suites: [...new Set(suiteNames)].sort(),
+      runner: {
+        platform: process.platform,
+        arch: process.arch
+      }
+    }
+  };
+
   const mdPath = path.resolve(artifactsDir, "conformance-evidence.md");
   const jsonPath = path.resolve(artifactsDir, "conformance-evidence.json");
+  const runtimeJsonPath = path.resolve(artifactsDir, "conformance-evidence.runtime.json");
   await fs.writeFile(mdPath, markdown, "utf8");
   await fs.writeFile(jsonPath, `${JSON.stringify(jsonPayload, null, 2)}\n`, "utf8");
+  await fs.writeFile(runtimeJsonPath, `${JSON.stringify(runtimePayload, null, 2)}\n`, "utf8");
 
-  console.log(`Generated evidence:\n- ${mdPath}\n- ${jsonPath}`);
+  console.log(`Generated evidence:\n- ${mdPath}\n- ${jsonPath}\n- ${runtimeJsonPath}`);
 }
 
 main().catch((error) => {
