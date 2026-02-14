@@ -32,7 +32,11 @@ const baseCommand: Command = {
 };
 
 describe("CT-K-* Kernel command semantics", () => {
-  it("[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error", async () => {
+  it("[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error", async ({ task }) => {
+    task.meta.invariantId = "CT-K-1";
+    task.meta.surface = "Kernel";
+    task.meta.oracle = "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.";
+    task.meta.criticality = "Structural";
     const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
 
     const result = await kernel.execute({
@@ -49,7 +53,11 @@ describe("CT-K-* Kernel command semantics", () => {
     });
   });
 
-  it("[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt", async () => {
+  it("[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt", async ({ task }) => {
+    task.meta.invariantId = "CT-K-2";
+    task.meta.surface = "Kernel";
+    task.meta.oracle = "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.";
+    task.meta.criticality = "Critical";
     const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
 
     const first = await kernel.execute({
@@ -74,7 +82,11 @@ describe("CT-K-* Kernel command semantics", () => {
     });
   });
 
-  it("[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected", async () => {
+  it("[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected", async ({ task }) => {
+    task.meta.invariantId = "CT-K-3";
+    task.meta.surface = "Kernel";
+    task.meta.oracle = "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.";
+    task.meta.criticality = "Critical";
     const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
 
     const accepted = await kernel.execute({
@@ -95,7 +107,11 @@ describe("CT-K-* Kernel command semantics", () => {
     });
   });
 
-  it("[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions", async () => {
+  it("[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions", async ({ task }) => {
+    task.meta.invariantId = "CT-K-4";
+    task.meta.surface = "Kernel";
+    task.meta.oracle = "Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH.";
+    task.meta.criticality = "Critical";
     const fakeStore = new RevisionMismatchStore();
     const kernel = new KernelMinimalImpl(fakeStore);
 
@@ -115,7 +131,11 @@ describe("CT-K-* Kernel command semantics", () => {
     });
   });
 
-  it("[INV:CT-K-5][SURF:Kernel] CT-K-5 contradiction: malformed command is rejected", async () => {
+  it("[INV:CT-K-5][SURF:Kernel] CT-K-5 contradiction: malformed command is rejected", async ({ task }) => {
+    task.meta.invariantId = "CT-K-5";
+    task.meta.surface = "Kernel";
+    task.meta.oracle = "Malformed command input must be rejected with VALIDATION/MALFORMED_COMMAND.";
+    task.meta.criticality = "Regression";
     const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
 
     const result = await kernel.execute({ ...baseCommand, commandId: "", idempotencyKey: "", payload: undefined as never });
