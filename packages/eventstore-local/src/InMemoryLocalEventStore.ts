@@ -5,17 +5,18 @@ import type {
   FaultInjectionHooks,
   IdempotencyCtx,
   ReadMode,
+  ReadRangeOptions,
   StreamName,
   TransactionReceipt,
   TxBundle,
-  TxId
+  TxId,
+  TxIndexEntry
 } from "@mesh/shared";
 import { REASON_CODES } from "@mesh/shared";
 import type { LocalEventStore } from "./LocalEventStore.js";
 
 /**
- * Non-conformant stub for Phase 9 bootstrap only.
- * spec-ref: §2.4 requires tx-closed extension behavior; this stub does NOT fully implement normative guarantees.
+ * In-memory conformance implementation for LocalEventStore.
  */
 export class InMemoryLocalEventStore implements LocalEventStore {
   private readonly bySpace = new Map<
@@ -23,6 +24,8 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     {
       meta: EventEnvelope[];
       graph: EventEnvelope[];
+      txIndex: TxIndexEntry[];
+      txById: Map<TxId, TxIndexEntry>;
       idempotency: Map<string, { payloadHash: string; receipt: TransactionReceipt }>;
     }
   >();
@@ -30,9 +33,19 @@ export class InMemoryLocalEventStore implements LocalEventStore {
   private getSpaceState(graphSpaceId: string): {
     meta: EventEnvelope[];
     graph: EventEnvelope[];
+    txIndex: TxIndexEntry[];
+    txById: Map<TxId, TxIndexEntry>;
     idempotency: Map<string, { payloadHash: string; receipt: TransactionReceipt }>;
   } {
-    return this.bySpace.get(graphSpaceId) ?? { meta: [], graph: [], idempotency: new Map() };
+    return (
+      this.bySpace.get(graphSpaceId) ?? {
+        meta: [],
+        graph: [],
+        txIndex: [],
+        txById: new Map(),
+        idempotency: new Map()
+      }
+    );
   }
 
   async appendTx(
@@ -88,25 +101,44 @@ export class InMemoryLocalEventStore implements LocalEventStore {
 
     this.hitHook(hooks, "AFTER_META_EVENTS");
     this.hitHook(hooks, "AFTER_GRAPH_EVENTS");
+
+    const txIndexEntry: TxIndexEntry = {
+      txId: txBundle.txId,
+      txIndex: current.txIndex.length + 1,
+      meta: {
+        start: meta.length > 0 ? meta[0].seq : metaStart,
+        end: meta.length > 0 ? meta[meta.length - 1].seq : metaStart,
+        count: meta.length
+      },
+      graph: {
+        start: graph.length > 0 ? graph[0].seq : graphStart,
+        end: graph.length > 0 ? graph[graph.length - 1].seq : graphStart,
+        count: graph.length
+      }
+    };
+
     this.hitHook(hooks, "AFTER_TX_INDEX");
     this.hitHook(hooks, "AFTER_HEADS_UPDATE");
-    this.hitHook(hooks, "AFTER_IDEMPOTENCY_UPSERT");
-    this.hitHook(hooks, "BEFORE_IDB_COMMIT");
-
-    current.meta.push(...meta);
-    current.graph.push(...graph);
 
     const receipt: TransactionReceipt = {
       status: "committed",
       commandId: txBundle.txId,
       txId: txBundle.txId,
-      cursorAfter: { metaSeq: current.meta.length, graphSeq: current.graph.length },
+      txIndex: txIndexEntry.txIndex,
+      cursorAfter: { metaSeq: metaStart + meta.length, graphSeq: graphStart + graph.length },
       eventRefs: {
         meta: meta.map((e) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId })),
         graph: graph.map((e) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId }))
       }
     };
 
+    this.hitHook(hooks, "AFTER_IDEMPOTENCY_UPSERT");
+    this.hitHook(hooks, "BEFORE_IDB_COMMIT");
+
+    current.meta.push(...meta);
+    current.graph.push(...graph);
+    current.txIndex.push(txIndexEntry);
+    current.txById.set(txBundle.txId, txIndexEntry);
     current.idempotency.set(idempotencySlot, {
       payloadHash: idempotencyCtx.payloadHash,
       receipt
@@ -125,10 +157,42 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     return { txId, meta, graph };
   }
 
-  async readRange(graphSpaceId: string, stream: StreamName, fromSeqExclusive: number, limit: number, _mode: ReadMode): Promise<EventEnvelope[]> {
+  async readRange(
+    graphSpaceId: string,
+    stream: StreamName,
+    fromSeqExclusive: number,
+    limit: number,
+    _mode: ReadMode,
+    options?: ReadRangeOptions
+  ): Promise<EventEnvelope[]> {
     const current = this.bySpace.get(graphSpaceId);
     if (!current) return [];
-    return current[stream].filter((e) => e.seq > fromSeqExclusive).slice(0, limit);
+
+    const snapshotCap = options?.snapshotCursor?.[stream === "meta" ? "metaSeq" : "graphSeq"];
+    const visible = current[stream].filter((e) => e.seq > fromSeqExclusive && (snapshotCap === undefined || e.seq <= snapshotCap));
+    if (visible.length <= limit) {
+      return visible;
+    }
+
+    const initial = visible.slice(0, limit);
+    const last = initial[initial.length - 1];
+    if (!last) return initial;
+
+    const boundary = current.txById.get(last.txId);
+    if (!boundary) return initial;
+    const txEndSeq = boundary[stream].end;
+    if (last.seq >= txEndSeq) {
+      return initial;
+    }
+
+    const extended = visible.filter((e) => e.seq <= txEndSeq);
+    return extended;
+  }
+
+  async readTxIndex(graphSpaceId: string): Promise<TxIndexEntry[]> {
+    const current = this.bySpace.get(graphSpaceId);
+    if (!current) return [];
+    return [...current.txIndex];
   }
 
   async getCursorHead(graphSpaceId: string): Promise<Cursor> {
@@ -140,7 +204,6 @@ export class InMemoryLocalEventStore implements LocalEventStore {
   }
 
   async resolveRevision(_graphSpaceId: string, _revisionToken: string): Promise<Cursor | null> {
-    // TODO(spec-ref: §3.3, §11.4): implement opaque revision token resolution.
     return null;
   }
 

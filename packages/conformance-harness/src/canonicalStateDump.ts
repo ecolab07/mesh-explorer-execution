@@ -24,6 +24,7 @@ export interface CanonicalEventDump {
 
 export interface CanonicalTxIndexDump {
   txId: string;
+  txIndex: number;
   meta: { start: number; end: number; count: number };
   graph: { start: number; end: number; count: number };
 }
@@ -33,9 +34,13 @@ export async function buildCanonicalStateDump(eventStore: LocalEventStore, graph
   const cursorHead = await eventStore.getCursorHead(graphSpaceId);
   const metaEvents = await eventStore.readRange(graphSpaceId, "meta", 0, Number.MAX_SAFE_INTEGER, "TX_CLOSED");
   const graphEvents = await eventStore.readRange(graphSpaceId, "graph", 0, Number.MAX_SAFE_INTEGER, "TX_CLOSED");
-
-  // TODO(spec-ref: §16.2 step 5): LocalEventStore interface has no tx_index read API in this phase scaffold.
-  const txIndex: CanonicalTxIndexDump[] = [];
+  const txIndexRaw = await eventStore.readTxIndex(graphSpaceId);
+  const txIndex: CanonicalTxIndexDump[] = txIndexRaw.map((t) => ({
+    txId: t.txId,
+    txIndex: t.txIndex,
+    meta: t.meta,
+    graph: t.graph
+  }));
 
   return {
     version: "CSD-ES-1",

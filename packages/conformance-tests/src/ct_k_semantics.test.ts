@@ -10,8 +10,10 @@ import {
   type EventEnvelope,
   type IdempotencyCtx,
   type ReadMode,
+  type ReadRangeOptions,
   type StreamName,
   type TransactionReceipt,
+  type TxIndexEntry,
   type TxBundle,
   type TxId
 } from "@mesh/shared";
@@ -122,7 +124,18 @@ class RevisionMismatchStore implements LocalEventStore {
     return null;
   }
 
-  async readRange(_graphSpaceId: string, _stream: StreamName, _fromSeqExclusive: number, _limit: number, _mode: ReadMode): Promise<EventEnvelope[]> {
+  async readRange(
+    _graphSpaceId: string,
+    _stream: StreamName,
+    _fromSeqExclusive: number,
+    _limit: number,
+    _mode: ReadMode,
+    _options?: ReadRangeOptions
+  ): Promise<EventEnvelope[]> {
+    return [];
+  }
+
+  async readTxIndex(_graphSpaceId: string): Promise<TxIndexEntry[]> {
     return [];
   }
 
