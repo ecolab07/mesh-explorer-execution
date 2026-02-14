@@ -86,6 +86,23 @@ function escapeCell(value) {
 async function main() {
   const testFiles = await listTestFiles(testsRoot);
   const expectedInvariants = await readJson(expectedInvariantsPath);
+  const expectedById = new Map();
+  for (const expected of expectedInvariants) {
+    if (typeof expected?.invariantId !== "string") {
+      throw new Error("expected-invariants.json contains an item without invariantId");
+    }
+    if (expectedById.has(expected.invariantId)) {
+      throw new Error(`expected-invariants.json contains duplicate invariantId: ${expected.invariantId}`);
+    }
+    if (typeof expected.surface !== "string" || expected.surface.trim().length === 0) {
+      throw new Error(`expected-invariants.json has invalid surface for ${expected.invariantId}`);
+    }
+    if (typeof expected.criticality !== "string" || !allowedCriticality.has(expected.criticality)) {
+      throw new Error(`expected-invariants.json has invalid criticality for ${expected.invariantId}`);
+    }
+    expectedById.set(expected.invariantId, expected);
+  }
+
   const runtimeTests = await collectRuntimeMeta();
   const suiteNames = [];
   const setupByTestRef = new Map();
@@ -114,6 +131,7 @@ async function main() {
 
   const invalidConformance = [];
   const evidenceRows = [];
+  const seenInvariantIds = new Map();
   for (const test of runtimeTests) {
     const relativePath = path.relative(repoRoot, test.file).replaceAll(path.sep, "/");
     const testRef = `${relativePath}::${test.name}`;
@@ -139,6 +157,26 @@ async function main() {
     if (typeof criticality !== "string" || !allowedCriticality.has(criticality)) {
       invalidConformance.push(`${testRef} -> missing/invalid meta.criticality`);
     }
+    if (typeof invariantId === "string" && seenInvariantIds.has(invariantId)) {
+      invalidConformance.push(
+        `${testRef} -> duplicate meta.invariantId already declared by ${seenInvariantIds.get(invariantId)}`
+      );
+    }
+
+    const expected = typeof invariantId === "string" ? expectedById.get(invariantId) : undefined;
+    if (typeof invariantId === "string" && !expected) {
+      invalidConformance.push(`${testRef} -> invariantId not declared in expected-invariants.json`);
+    }
+    if (expected && typeof surface === "string" && expected.surface !== surface) {
+      invalidConformance.push(
+        `${testRef} -> surface mismatch for ${invariantId}: expected ${expected.surface}, got ${surface}`
+      );
+    }
+    if (expected && typeof criticality === "string" && expected.criticality !== criticality) {
+      invalidConformance.push(
+        `${testRef} -> criticality mismatch for ${invariantId}: expected ${expected.criticality}, got ${criticality}`
+      );
+    }
 
     if (
       typeof invariantId === "string" &&
@@ -157,6 +195,7 @@ async function main() {
         setup: setupByTestRef.get(testRef) ?? "Setup inferred from test body.",
         limitations: ""
       });
+      seenInvariantIds.set(invariantId, testRef);
     }
   }
 
@@ -165,7 +204,7 @@ async function main() {
   }
 
   const observed = new Set(evidenceRows.map((row) => row.invariantId));
-  const missingInvariants = expectedInvariants.filter((id) => !observed.has(id));
+  const missingInvariants = [...expectedById.keys()].filter((id) => !observed.has(id));
 
   if (missingInvariants.length > 0) {
     throw new Error(`Expected invariants without tests: ${missingInvariants.join(", ")}`);
@@ -185,7 +224,7 @@ async function main() {
   const pnpmVersion = commandOutput("pnpm --version");
   const rootPackage = await readJson(path.resolve(repoRoot, "package.json"));
   const vitestVersion = rootPackage.devDependencies?.vitest ?? "unknown";
-  const generatedAt = new Date().toISOString();
+  const generatedAt = commandOutput("git show -s --format=%cI HEAD");
 
   const escapedRows = evidenceRows.map((row) => ({
     ...row,
@@ -233,7 +272,7 @@ async function main() {
       nodeVersion,
       pnpmVersion,
       vitestVersion,
-      suites: [...new Set(suiteNames)]
+      suites: [...new Set(suiteNames)].sort()
     },
     invariants: evidenceRows,
     criticalitySummary,
