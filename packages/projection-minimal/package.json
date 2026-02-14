@@ -1,21 +1,16 @@
 {
-  "name": "@mesh/conformance-tests",
+  "name": "@mesh/projection-minimal",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "pretest": "node ./scripts/check-no-todo.mjs"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@mesh/conformance-harness": "workspace:*",
-    "@mesh/shared": "workspace:*",
     "@mesh/eventstore-local": "workspace:*",
-    "@mesh/kernel-minimal": "workspace:*",
-    "@mesh/projection-minimal": "workspace:*",
-    "@mesh/sync-local": "workspace:*"
+    "@mesh/shared": "workspace:*"
   },
   "exports": {
     ".": {

@@ -8,6 +8,18 @@ export type PayloadHash = string;
 
 export type StreamName = "meta" | "graph";
 
+export type PrincipalId = string;
+export type AccessEffect = "allow" | "deny" | "mask";
+
+export interface PrincipalContext {
+  principalId: PrincipalId;
+}
+
+export interface EventAccessPolicy {
+  [principalId: string]: AccessEffect | undefined;
+  "*"?: AccessEffect;
+}
+
 export interface Cursor {
   metaSeq: number;
   graphSeq: number;
