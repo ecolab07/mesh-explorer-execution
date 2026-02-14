@@ -22,13 +22,24 @@ export class KernelMinimalImpl implements KernelMinimal {
       payloadHash: JSON.stringify({ payload: command.payload, requireBaseRevision: command.requireBaseRevision })
     };
 
+    if (command.requireBaseRevision) {
+      const resolvedBaseRevision = await this.eventStore.resolveRevision(command.graphSpaceId, command.requireBaseRevision);
+      if (!resolvedBaseRevision) {
+        return {
+          status: "rejected",
+          commandId: command.commandId,
+          category: "VALIDATION",
+          reasonCode: REASON_CODES.INVALID_BASE_REVISION
+        };
+      }
+    }
+
     return this.eventStore.appendTx(
       command.graphSpaceId,
       {
         txId: command.commandId,
-        // TODO(spec-ref: §18.2.1): route CMD.NOOP metaEvents/graphEvents payload explicitly.
         metaEvents: [],
-        graphEvents: []
+        graphEvents: [command.payload]
       },
       idempotencyCtx
     );

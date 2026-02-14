@@ -2,6 +2,7 @@ import type {
   CommandError,
   Cursor,
   EventEnvelope,
+  FaultInjectionHooks,
   IdempotencyCtx,
   ReadMode,
   StreamName,
@@ -17,9 +18,29 @@ import type { LocalEventStore } from "./LocalEventStore.js";
  * spec-ref: §2.4 requires tx-closed extension behavior; this stub does NOT fully implement normative guarantees.
  */
 export class InMemoryLocalEventStore implements LocalEventStore {
-  private readonly bySpace = new Map<string, { meta: EventEnvelope[]; graph: EventEnvelope[] }>();
+  private readonly bySpace = new Map<
+    string,
+    {
+      meta: EventEnvelope[];
+      graph: EventEnvelope[];
+      idempotency: Map<string, { payloadHash: string; receipt: TransactionReceipt }>;
+    }
+  >();
 
-  async appendTx(graphSpaceId: string, txBundle: TxBundle, _idempotencyCtx: IdempotencyCtx): Promise<TransactionReceipt | CommandError> {
+  private getSpaceState(graphSpaceId: string): {
+    meta: EventEnvelope[];
+    graph: EventEnvelope[];
+    idempotency: Map<string, { payloadHash: string; receipt: TransactionReceipt }>;
+  } {
+    return this.bySpace.get(graphSpaceId) ?? { meta: [], graph: [], idempotency: new Map() };
+  }
+
+  async appendTx(
+    graphSpaceId: string,
+    txBundle: TxBundle,
+    idempotencyCtx: IdempotencyCtx,
+    hooks?: FaultInjectionHooks
+  ): Promise<TransactionReceipt | CommandError> {
     if (txBundle.metaEvents.length === 0 && txBundle.graphEvents.length === 0) {
       return {
         status: "rejected",
@@ -28,7 +49,22 @@ export class InMemoryLocalEventStore implements LocalEventStore {
       };
     }
 
-    const current = this.bySpace.get(graphSpaceId) ?? { meta: [], graph: [] };
+    const current = this.getSpaceState(graphSpaceId);
+    const idempotencySlot = `${idempotencyCtx.actorId}::${idempotencyCtx.idempotencyKey}`;
+    const existing = current.idempotency.get(idempotencySlot);
+    if (existing) {
+      if (existing.payloadHash !== idempotencyCtx.payloadHash) {
+        return {
+          status: "rejected",
+          category: "CONFLICT",
+          reasonCode: REASON_CODES.IDEMPOTENCY_PAYLOAD_MISMATCH
+        };
+      }
+      return existing.receipt;
+    }
+
+    this.hitHook(hooks, "BEFORE_ANY_WRITE");
+
     const metaStart = current.meta.length;
     const graphStart = current.graph.length;
 
@@ -50,11 +86,17 @@ export class InMemoryLocalEventStore implements LocalEventStore {
       payload
     }));
 
+    this.hitHook(hooks, "AFTER_META_EVENTS");
+    this.hitHook(hooks, "AFTER_GRAPH_EVENTS");
+    this.hitHook(hooks, "AFTER_TX_INDEX");
+    this.hitHook(hooks, "AFTER_HEADS_UPDATE");
+    this.hitHook(hooks, "AFTER_IDEMPOTENCY_UPSERT");
+    this.hitHook(hooks, "BEFORE_IDB_COMMIT");
+
     current.meta.push(...meta);
     current.graph.push(...graph);
-    this.bySpace.set(graphSpaceId, current);
 
-    return {
+    const receipt: TransactionReceipt = {
       status: "committed",
       commandId: txBundle.txId,
       txId: txBundle.txId,
@@ -64,6 +106,14 @@ export class InMemoryLocalEventStore implements LocalEventStore {
         graph: graph.map((e) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId }))
       }
     };
+
+    current.idempotency.set(idempotencySlot, {
+      payloadHash: idempotencyCtx.payloadHash,
+      receipt
+    });
+    this.bySpace.set(graphSpaceId, current);
+
+    return receipt;
   }
 
   async readTx(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null> {
@@ -92,5 +142,12 @@ export class InMemoryLocalEventStore implements LocalEventStore {
   async resolveRevision(_graphSpaceId: string, _revisionToken: string): Promise<Cursor | null> {
     // TODO(spec-ref: §3.3, §11.4): implement opaque revision token resolution.
     return null;
+  }
+
+  private hitHook(hooks: FaultInjectionHooks | undefined, point: Parameters<NonNullable<FaultInjectionHooks["onPoint"]>>[0]): void {
+    hooks?.onPoint?.(point);
+    if (hooks?.failAt === point) {
+      throw new Error(`FAULT_INJECTION:${point}`);
+    }
   }
 }

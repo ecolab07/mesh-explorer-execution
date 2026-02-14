@@ -29,6 +29,12 @@ importers:
       '@mesh/conformance-harness':
         specifier: workspace:*
         version: link:../conformance-harness
+      '@mesh/eventstore-local':
+        specifier: workspace:*
+        version: link:../eventstore-local
+      '@mesh/kernel-minimal':
+        specifier: workspace:*
+        version: link:../kernel-minimal
       '@mesh/shared':
         specifier: workspace:*
         version: link:../shared
