@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@mesh/shared": [
+        "packages/shared/dist/index.d.ts"
+      ],
+      "@mesh/shared/*": [
+        "packages/shared/dist/*"
+      ],
+      "@mesh/eventstore-local": [
+        "packages/eventstore-local/dist/index.d.ts"
+      ],
+      "@mesh/eventstore-local/*": [
+        "packages/eventstore-local/dist/*"
+      ],
+      "@mesh/kernel-minimal": [
+        "packages/kernel-minimal/dist/index.d.ts"
+      ],
+      "@mesh/kernel-minimal/*": [
+        "packages/kernel-minimal/dist/*"
+      ],
+      "@mesh/conformance-harness": [
+        "packages/conformance-harness/dist/index.d.ts"
+      ],
+      "@mesh/conformance-harness/*": [
+        "packages/conformance-harness/dist/*"
+      ]
+    }
+  }
+}
