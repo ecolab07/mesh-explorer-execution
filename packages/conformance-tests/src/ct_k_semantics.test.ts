@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LocalEventStore } from "@mesh/eventstore-local";
-import { InMemoryLocalEventStore } from "@mesh/eventstore-local";
+import { getConformanceBackends, makeStore, type ConformanceBackend } from "./backends.js";
 import { KernelMinimalImpl } from "@mesh/kernel-minimal";
 import {
   REASON_CODES,
@@ -31,13 +31,25 @@ const baseCommand: Command = {
   payload: { op: "SET", value: 1 }
 };
 
-describe("CT-K-* Kernel command semantics", () => {
+describe.each(getConformanceBackends())("CT-K-* Kernel command semantics (%s)", (backend: ConformanceBackend) => {
+  let store: LocalEventStore;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    const scope = await makeStore(backend);
+    store = scope.store;
+    cleanup = scope.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
   it("[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error", async ({ task }) => {
     task.meta.invariantId = "CT-K-1";
     task.meta.surface = "Kernel";
     task.meta.oracle = "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.";
     task.meta.criticality = "Structural";
-    const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
+    const kernel = new KernelMinimalImpl(store);
 
     const result = await kernel.execute({
       ...baseCommand,
@@ -58,7 +70,7 @@ describe("CT-K-* Kernel command semantics", () => {
     task.meta.surface = "Kernel";
     task.meta.oracle = "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.";
     task.meta.criticality = "Critical";
-    const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
+    const kernel = new KernelMinimalImpl(store);
 
     const first = await kernel.execute({
       ...baseCommand,
@@ -87,7 +99,7 @@ describe("CT-K-* Kernel command semantics", () => {
     task.meta.surface = "Kernel";
     task.meta.oracle = "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.";
     task.meta.criticality = "Critical";
-    const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
+    const kernel = new KernelMinimalImpl(store);
 
     const accepted = await kernel.execute({
       ...baseCommand,
@@ -136,7 +148,7 @@ describe("CT-K-* Kernel command semantics", () => {
     task.meta.surface = "Kernel";
     task.meta.oracle = "Malformed command input must be rejected with VALIDATION/MALFORMED_COMMAND.";
     task.meta.criticality = "Regression";
-    const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
+    const kernel = new KernelMinimalImpl(store);
 
     const result = await kernel.execute({ ...baseCommand, commandId: "", idempotencyKey: "", payload: undefined as never });
 

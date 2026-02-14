@@ -152,6 +152,26 @@
       "limitations": ""
     },
     {
+      "invariantId": "CT-L-7",
+      "surface": "EventStore",
+      "testName": "[INV:CT-L-7][SURF:EventStore] CT-L-7 restart realism: persisted tx survives reopen + idempotence (Critical)",
+      "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+      "oracle": "After restart, committed tx remains readable and idempotent replay returns original receipt without duplication.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-l7\"; const txBundle = { txId: \"tx-restart\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-L-8",
+      "surface": "EventStore",
+      "testName": "[INV:CT-L-8][SURF:EventStore] CT-L-8 restart realism: crash+restart around CT-L-5 keeps final state atomic (Critical)",
+      "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+      "oracle": "Crash before commit then restart keeps store atomic: no partial tx survives and clean retry commits once.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-l8\"; const tx = { txId: \"tx-l8\", metaEvents: [{ m: \"m\" }], graphEvents: [{ g: \"g\" }] }",
+      "limitations": ""
+    },
+    {
       "invariantId": "CT-P-1",
       "surface": "Projection",
       "testName": "[INV:CT-P-1][SURF:Projection] CT-P-1: incremental apply equals rebuild",
@@ -253,7 +273,7 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 11,
+    "Critical": 13,
     "Structural": 7,
     "Regression": 6
   },
@@ -266,6 +286,8 @@
     "CT-L-3",
     "CT-L-4",
     "CT-L-5",
+    "CT-L-7",
+    "CT-L-8",
     "CT-S-1",
     "CT-S-2",
     "CT-SYNC-3"

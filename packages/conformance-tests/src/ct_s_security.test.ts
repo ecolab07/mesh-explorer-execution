@@ -1,18 +1,30 @@
-import { describe, expect, it } from "vitest";
-import { InMemoryLocalEventStore } from "@mesh/eventstore-local";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { LocalEventStore } from "@mesh/eventstore-local";
+import { getConformanceBackends, makeStore, type ConformanceBackend } from "./backends.js";
 import { REASON_CODES } from "@mesh/shared";
 
 // Invariant: absent and masked tx are indistinguishable (same category/code/shape and no metadata leaks); fail on any field divergence.
 // Invariant: masking is transaction-wide (one masked event masks the whole tx); fail if any part of that tx is visible.
 // Invariant: no observable side-channel via cursor/extra keys between absent and masked reads; fail if response shape differs.
-describe("CT-S-* Security masking and indistinguishability", () => {
+describe.each(getConformanceBackends())("CT-S-* Security masking and indistinguishability (%s)", (backend: ConformanceBackend) => {
+  let store: LocalEventStore;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    const scope = await makeStore(backend);
+    store = scope.store;
+    cleanup = scope.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
   it("[INV:CT-S-1][SURF:Security] CT-S-1: absent and masked tx are indistinguishable", async ({ task }) => {
     task.meta.invariantId = "CT-S-1";
     task.meta.surface = "Security";
     task.meta.oracle = "Masked and absent transaction reads must return identical normalized NOT_FOUND_OR_MASKED rejections.";
     task.meta.criticality = "Critical";
-    const store = new InMemoryLocalEventStore();
-    const graphSpaceId = "space-s1";
+        const graphSpaceId = "space-s1";
 
     await store.appendTx(
       graphSpaceId,
@@ -41,8 +53,7 @@ describe("CT-S-* Security masking and indistinguishability", () => {
     task.meta.surface = "Security";
     task.meta.oracle = "Masked event visibility removes entire transaction from principal range without cursor holes.";
     task.meta.criticality = "Critical";
-    const store = new InMemoryLocalEventStore();
-    const graphSpaceId = "space-s2";
+        const graphSpaceId = "space-s2";
 
     await store.appendTx(
       graphSpaceId,
@@ -99,8 +110,7 @@ describe("CT-S-* Security masking and indistinguishability", () => {
     task.meta.surface = "Security";
     task.meta.oracle = "Serialized response shape for masked and absent tx lookups must be indistinguishable.";
     task.meta.criticality = "Regression";
-    const store = new InMemoryLocalEventStore();
-    const graphSpaceId = "space-s3";
+        const graphSpaceId = "space-s3";
 
     await store.appendTx(
       graphSpaceId,

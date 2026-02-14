@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { InMemoryLocalEventStore } from "@mesh/eventstore-local";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { LocalEventStore } from "@mesh/eventstore-local";
+import { getConformanceBackends, makeStore, type ConformanceBackend } from "./backends.js";
 import { KernelMinimalImpl } from "@mesh/kernel-minimal";
 import { REASON_CODES } from "@mesh/shared";
 import { LocalSyncHarness } from "@mesh/sync-local";
@@ -7,14 +8,25 @@ import { LocalSyncHarness } from "@mesh/sync-local";
 // Invariant: poll is tx-closed, principal-filtered, and cursor-exact; fail if masked tx appears or cursor leaks hidden tx.
 // Invariant: subscribeOnce is equivalent to poll for follow-up cursors; fail if replay window duplicates/skips tx.
 // Invariant: end-to-end submit->poll->receipt->replay is coherent and deterministic; fail if receipt/poll/replay disagree.
-describe("CT-SYNC-* Local sync harness", () => {
+describe.each(getConformanceBackends())("CT-SYNC-* Local sync harness (%s)", (backend: ConformanceBackend) => {
+  let store: LocalEventStore;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    const scope = await makeStore(backend);
+    store = scope.store;
+    cleanup = scope.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
   it("[INV:CT-SYNC-1][SURF:Sync] CT-SYNC-1: poll is tx-closed and filtered by principal", async ({ task }) => {
     task.meta.invariantId = "CT-SYNC-1";
     task.meta.surface = "Sync";
     task.meta.oracle = "poll returns only principal-visible txIds and principalCursorAfter equals visible tx count consumed.";
     task.meta.criticality = "Structural";
-    const store = new InMemoryLocalEventStore();
-    const graphSpaceId = "space-sync1";
+        const graphSpaceId = "space-sync1";
     const harness = new LocalSyncHarness(store, graphSpaceId);
 
     await store.appendTx(
@@ -37,8 +49,7 @@ describe("CT-SYNC-* Local sync harness", () => {
     task.meta.surface = "Sync";
     task.meta.oracle = "subscribeOnce follow-up cursor must chain exactly like poll without skip/duplication.";
     task.meta.criticality = "Structural";
-    const store = new InMemoryLocalEventStore();
-    const graphSpaceId = "space-sync2";
+        const graphSpaceId = "space-sync2";
     const harness = new LocalSyncHarness(store, graphSpaceId);
 
     await store.appendTx(graphSpaceId, { txId: "tx-1", metaEvents: [], graphEvents: [{ g: 1 }] }, { actorId: "actor", idempotencyKey: "sync2-k1", payloadHash: "sync2-h1" });
@@ -56,8 +67,7 @@ describe("CT-SYNC-* Local sync harness", () => {
     task.meta.surface = "Sync";
     task.meta.oracle = "submit->poll->receipt->replay remain coherent: committed tx is seen once then replay is empty.";
     task.meta.criticality = "Critical";
-    const store = new InMemoryLocalEventStore();
-    const graphSpaceId = "space-sync3";
+        const graphSpaceId = "space-sync3";
     const harness = new LocalSyncHarness(store, graphSpaceId);
     const kernel = new KernelMinimalImpl(store);
 
@@ -88,8 +98,7 @@ describe("CT-SYNC-* Local sync harness", () => {
     task.meta.surface = "Sync";
     task.meta.oracle = "Rejected submit must never appear in subsequent poll results.";
     task.meta.criticality = "Regression";
-    const store = new InMemoryLocalEventStore();
-    const graphSpaceId = "space-sync4";
+        const graphSpaceId = "space-sync4";
     const harness = new LocalSyncHarness(store, graphSpaceId);
     const kernel = new KernelMinimalImpl(store);
 

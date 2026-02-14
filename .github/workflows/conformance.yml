@@ -7,6 +7,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mesh_backend: [inmemory, persistent]
+    env:
+      MESH_BACKEND: ${{ matrix.mesh_backend }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,16 +24,19 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Enforce conformance test hygiene
+        if: matrix.mesh_backend == 'inmemory'
         run: |
           ! rg -n "TODO|skip\(" packages/conformance-tests/src
-      - name: Test
+      - name: Test (${{ matrix.mesh_backend }})
         run: pnpm test
       - name: Critical gate
+        if: matrix.mesh_backend == 'inmemory'
         run: pnpm --filter @mesh/conformance-tests check:critical
       - name: Artifacts up-to-date
+        if: matrix.mesh_backend == 'inmemory'
         run: pnpm --filter @mesh/conformance-tests check:artifacts-clean
       - name: Upload conformance evidence artifacts
-        if: always()
+        if: always() && matrix.mesh_backend == 'inmemory'
         uses: actions/upload-artifact@v4
         with:
           name: conformance-artifacts

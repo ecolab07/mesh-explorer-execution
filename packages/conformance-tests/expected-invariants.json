@@ -70,6 +70,16 @@
     "criticality": "Regression"
   },
   {
+    "invariantId": "CT-L-7",
+    "surface": "EventStore",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-L-8",
+    "surface": "EventStore",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-P-1",
     "surface": "Projection",
     "criticality": "Structural"

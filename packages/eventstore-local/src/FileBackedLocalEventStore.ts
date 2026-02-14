@@ -1,0 +1,293 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import type {
+  AccessEffect,
+  CommandError,
+  Cursor,
+  EventAccessPolicy,
+  EventEnvelope,
+  FaultInjectionHooks,
+  IdempotencyCtx,
+  PrincipalContext,
+  ReadMode,
+  ReadRangeOptions,
+  StreamName,
+  TransactionReceipt,
+  TxBundle,
+  TxId,
+  TxIndexEntry
+} from "@mesh/shared";
+import { REASON_CODES } from "@mesh/shared";
+import type { LocalEventStore } from "./LocalEventStore.js";
+
+type SpaceState = {
+  meta: EventEnvelope[];
+  graph: EventEnvelope[];
+  txIndex: TxIndexEntry[];
+  idempotency: Record<string, { payloadHash: string; receipt: TransactionReceipt }>;
+};
+
+type PersistedState = {
+  spaces: Record<string, SpaceState>;
+};
+
+const EMPTY_STATE: PersistedState = { spaces: {} };
+
+/**
+ * Node-only minimal persistent implementation for conformance runs.
+ */
+export class FileBackedLocalEventStore implements LocalEventStore {
+  private readonly filePath: string;
+  private state: PersistedState | null = null;
+
+  constructor(filePath: string) {
+    this.filePath = filePath;
+  }
+
+  async appendTx(
+    graphSpaceId: string,
+    txBundle: TxBundle,
+    idempotencyCtx: IdempotencyCtx,
+    hooks?: FaultInjectionHooks
+  ): Promise<TransactionReceipt | CommandError> {
+    await this.loadState();
+
+    if (txBundle.metaEvents.length === 0 && txBundle.graphEvents.length === 0) {
+      return { status: "rejected", category: "VALIDATION", reasonCode: REASON_CODES.EMPTY_TX };
+    }
+
+    const space = this.ensureSpace(graphSpaceId);
+    const idempotencySlot = `${idempotencyCtx.actorId}::${idempotencyCtx.idempotencyKey}`;
+    const existing = space.idempotency[idempotencySlot];
+    if (existing) {
+      if (existing.payloadHash !== idempotencyCtx.payloadHash) {
+        return { status: "rejected", category: "CONFLICT", reasonCode: REASON_CODES.IDEMPOTENCY_PAYLOAD_MISMATCH };
+      }
+      return existing.receipt;
+    }
+
+    this.hitHook(hooks, "BEFORE_ANY_WRITE");
+
+    const metaStart = space.meta.length;
+    const graphStart = space.graph.length;
+
+    const meta = txBundle.metaEvents.map((payload, idx) => ({
+      graphSpaceId,
+      stream: "meta" as const,
+      seq: metaStart + idx + 1,
+      txId: txBundle.txId,
+      eventId: `${txBundle.txId}-m-${idx + 1}`,
+      payload
+    }));
+    const graph = txBundle.graphEvents.map((payload, idx) => ({
+      graphSpaceId,
+      stream: "graph" as const,
+      seq: graphStart + idx + 1,
+      txId: txBundle.txId,
+      eventId: `${txBundle.txId}-g-${idx + 1}`,
+      payload
+    }));
+
+    this.hitHook(hooks, "AFTER_META_EVENTS");
+    this.hitHook(hooks, "AFTER_GRAPH_EVENTS");
+
+    const txIndexEntry: TxIndexEntry = {
+      txId: txBundle.txId,
+      txIndex: space.txIndex.length + 1,
+      meta: {
+        start: meta.length > 0 ? meta[0].seq : metaStart,
+        end: meta.length > 0 ? meta[meta.length - 1].seq : metaStart,
+        count: meta.length
+      },
+      graph: {
+        start: graph.length > 0 ? graph[0].seq : graphStart,
+        end: graph.length > 0 ? graph[graph.length - 1].seq : graphStart,
+        count: graph.length
+      }
+    };
+
+    this.hitHook(hooks, "AFTER_TX_INDEX");
+    this.hitHook(hooks, "AFTER_HEADS_UPDATE");
+
+    const receipt: TransactionReceipt = {
+      status: "committed",
+      commandId: txBundle.txId,
+      txId: txBundle.txId,
+      txIndex: txIndexEntry.txIndex,
+      cursorAfter: { metaSeq: metaStart + meta.length, graphSeq: graphStart + graph.length },
+      eventRefs: {
+        meta: meta.map((e) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId })),
+        graph: graph.map((e) => ({ stream: e.stream, seq: e.seq, eventId: e.eventId }))
+      }
+    };
+
+    this.hitHook(hooks, "AFTER_IDEMPOTENCY_UPSERT");
+    this.hitHook(hooks, "BEFORE_IDB_COMMIT");
+
+    space.meta.push(...meta);
+    space.graph.push(...graph);
+    space.txIndex.push(txIndexEntry);
+    space.idempotency[idempotencySlot] = { payloadHash: idempotencyCtx.payloadHash, receipt };
+
+    await this.persistState();
+    return receipt;
+  }
+
+  async readTx(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null> {
+    const space = this.getSpace(graphSpaceId);
+    if (!space) return null;
+    const meta = space.meta.filter((e) => e.txId === txId);
+    const graph = space.graph.filter((e) => e.txId === txId);
+    if (meta.length === 0 && graph.length === 0) return null;
+    return { txId, meta, graph };
+  }
+
+  async readTxForPrincipal(
+    graphSpaceId: string,
+    txId: TxId,
+    principal?: PrincipalContext
+  ): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | CommandError> {
+    const tx = await this.readTx(graphSpaceId, txId);
+    if (!tx) return this.notFoundOrMasked();
+    return this.getTxVisibility(principal, tx.meta, tx.graph) === "allow" ? tx : this.notFoundOrMasked();
+  }
+
+  async readRange(
+    graphSpaceId: string,
+    stream: StreamName,
+    fromSeqExclusive: number,
+    limit: number,
+    _mode: ReadMode,
+    options?: ReadRangeOptions
+  ): Promise<EventEnvelope[]> {
+    const space = this.getSpace(graphSpaceId);
+    if (!space) return [];
+
+    const snapshotCap = options?.snapshotCursor?.[stream === "meta" ? "metaSeq" : "graphSeq"];
+    const events = (stream === "meta" ? space.meta : space.graph).filter(
+      (e) => e.seq > fromSeqExclusive && (snapshotCap === undefined || e.seq <= snapshotCap)
+    );
+    if (events.length <= limit) return events;
+
+    const initial = events.slice(0, limit);
+    const last = initial[initial.length - 1];
+    if (!last) return initial;
+    const boundary = space.txIndex.find((entry) => entry.txId === last.txId);
+    if (!boundary) return initial;
+    const txEndSeq = boundary[stream].end;
+    if (last.seq >= txEndSeq) return initial;
+    return events.filter((e) => e.seq <= txEndSeq);
+  }
+
+  async readTxIndex(graphSpaceId: string): Promise<TxIndexEntry[]> {
+    const space = this.getSpace(graphSpaceId);
+    return space ? [...space.txIndex] : [];
+  }
+
+  async getCursorHead(graphSpaceId: string): Promise<Cursor> {
+    const space = this.getSpace(graphSpaceId);
+    return { metaSeq: space?.meta.length ?? 0, graphSeq: space?.graph.length ?? 0 };
+  }
+
+  async readPrincipalTxRange(
+    graphSpaceId: string,
+    fromPrincipalCursorExclusive: number,
+    limit: number,
+    principal?: PrincipalContext
+  ): Promise<{ txs: Array<{ txId: TxId; txIndex: number; meta: EventEnvelope[]; graph: EventEnvelope[] }>; cursor: number }> {
+    const space = this.getSpace(graphSpaceId);
+    if (!space) return { txs: [], cursor: fromPrincipalCursorExclusive };
+
+    const visibleTxs = space.txIndex
+      .map((txEntry) => {
+        const meta = space.meta.filter((e) => e.txId === txEntry.txId);
+        const graph = space.graph.filter((e) => e.txId === txEntry.txId);
+        return { txId: txEntry.txId, txIndex: txEntry.txIndex, meta, graph };
+      })
+      .filter((tx) => this.getTxVisibility(principal, tx.meta, tx.graph) === "allow");
+
+    const start = Math.max(0, fromPrincipalCursorExclusive);
+    const txs = visibleTxs.slice(start, start + limit);
+    return { txs, cursor: start + txs.length };
+  }
+
+  async getPrincipalCursorHead(graphSpaceId: string, principal?: PrincipalContext): Promise<number> {
+    const next = await this.readPrincipalTxRange(graphSpaceId, 0, Number.MAX_SAFE_INTEGER, principal);
+    return next.cursor;
+  }
+
+  async resolveRevision(_graphSpaceId: string, _revisionToken: string): Promise<Cursor | null> {
+    return null;
+  }
+
+  async close(): Promise<void> {
+    // No open file descriptors to release.
+  }
+
+  private async loadState(): Promise<PersistedState> {
+    if (this.state) return this.state;
+    try {
+      const raw = await fs.readFile(this.filePath, "utf8");
+      this.state = JSON.parse(raw) as PersistedState;
+    } catch (error) {
+      const nodeError = error as { code?: string };
+      if (nodeError.code === "ENOENT") {
+        this.state = { spaces: {} };
+      } else {
+        throw error;
+      }
+    }
+    return this.state;
+  }
+
+  private async persistState(): Promise<void> {
+    const state = await this.loadState();
+    const dir = path.dirname(this.filePath);
+    await fs.mkdir(dir, { recursive: true });
+    const tempPath = `${this.filePath}.tmp`;
+    await fs.writeFile(tempPath, `${JSON.stringify(state)}\n`, "utf8");
+    await fs.rename(tempPath, this.filePath);
+  }
+
+  private getSpace(graphSpaceId: string): SpaceState | undefined {
+    const state = this.state ?? EMPTY_STATE;
+    return state.spaces[graphSpaceId];
+  }
+
+  private ensureSpace(graphSpaceId: string): SpaceState {
+    if (!this.state) {
+      throw new Error("Store state not loaded");
+    }
+    this.state.spaces[graphSpaceId] ??= { meta: [], graph: [], txIndex: [], idempotency: {} };
+    return this.state.spaces[graphSpaceId];
+  }
+
+  private notFoundOrMasked(): CommandError {
+    return { status: "rejected", category: "NOT_FOUND", reasonCode: REASON_CODES.NOT_FOUND_OR_MASKED };
+  }
+
+  private getTxVisibility(principal: PrincipalContext | undefined, meta: EventEnvelope[], graph: EventEnvelope[]): AccessEffect {
+    if (!principal) return "allow";
+    const effects = [...meta, ...graph].map((event) => this.resolveEventAccess(event, principal.principalId));
+    if (effects.some((effect) => effect === "deny")) return "deny";
+    if (effects.some((effect) => effect === "mask")) return "mask";
+    return "allow";
+  }
+
+  private resolveEventAccess(event: EventEnvelope, principalId: string): AccessEffect {
+    const acl = (event.payload as { _acl?: EventAccessPolicy })._acl;
+    if (!acl) return "allow";
+    return acl[principalId] ?? acl["*"] ?? "allow";
+  }
+
+  private hitHook(hooks: FaultInjectionHooks | undefined, point: Parameters<NonNullable<FaultInjectionHooks["onPoint"]>>[0]): void {
+    hooks?.onPoint?.(point);
+    if (hooks?.failAt === point) throw new Error(`FAULT_INJECTION:${point}`);
+  }
+
+  static async open(filePath: string): Promise<FileBackedLocalEventStore> {
+    const store = new FileBackedLocalEventStore(filePath);
+    await store.loadState();
+    return store;
+  }
+}
