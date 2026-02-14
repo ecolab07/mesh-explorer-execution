@@ -6,7 +6,11 @@ import { PrincipalProjectionEngine } from "@mesh/projection-minimal";
 // Invariant: projection cache is scoped by principal (no cross-principal tx bleed); fail if txIds/cursor leak between users.
 // Invariant: new committed tx invalidates previous observable state after apply/poll cycle; fail if state remains stale.
 describe("CT-P-* Projection determinism", () => {
-  it("[INV:CT-P-1][SURF:Projection] CT-P-1: incremental apply equals rebuild", async () => {
+  it("[INV:CT-P-1][SURF:Projection] CT-P-1: incremental apply equals rebuild", async ({ task }) => {
+    task.meta.invariantId = "CT-P-1";
+    task.meta.surface = "Projection";
+    task.meta.oracle = "Incremental projection from cursor must equal full rebuild snapshot for same principal.";
+    task.meta.criticality = "Structural";
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-p1";
     const engine = new PrincipalProjectionEngine(store, graphSpaceId);
@@ -23,7 +27,11 @@ describe("CT-P-* Projection determinism", () => {
     expect(incremental).toEqual(rebuilt);
   });
 
-  it("[INV:CT-P-2][SURF:Projection] CT-P-2: cache is scoped by principal", async () => {
+  it("[INV:CT-P-2][SURF:Projection] CT-P-2: cache is scoped by principal", async ({ task }) => {
+    task.meta.invariantId = "CT-P-2";
+    task.meta.surface = "Projection";
+    task.meta.oracle = "Projection cache keys are principal-scoped; different principals cannot observe cached snapshots interchangeably.";
+    task.meta.criticality = "Structural";
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-p2";
     const engine = new PrincipalProjectionEngine(store, graphSpaceId);
@@ -38,7 +46,11 @@ describe("CT-P-* Projection determinism", () => {
     expect(aliceV1).not.toEqual(bobV1);
   });
 
-  it("[INV:CT-P-3][SURF:Projection] CT-P-3: invalidation + new tx changes snapshot after incremental apply", async () => {
+  it("[INV:CT-P-3][SURF:Projection] CT-P-3: invalidation + new tx changes snapshot after incremental apply", async ({ task }) => {
+    task.meta.invariantId = "CT-P-3";
+    task.meta.surface = "Projection";
+    task.meta.oracle = "After invalidation and new tx, incremental apply must produce updated snapshot and advanced cursor.";
+    task.meta.criticality = "Regression";
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-p3";
     const engine = new PrincipalProjectionEngine(store, graphSpaceId);

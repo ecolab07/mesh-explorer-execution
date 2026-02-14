@@ -6,7 +6,11 @@ import { REASON_CODES } from "@mesh/shared";
 // Invariant: masking is transaction-wide (one masked event masks the whole tx); fail if any part of that tx is visible.
 // Invariant: no observable side-channel via cursor/extra keys between absent and masked reads; fail if response shape differs.
 describe("CT-S-* Security masking and indistinguishability", () => {
-  it("[INV:CT-S-1][SURF:Security] CT-S-1: absent and masked tx are indistinguishable", async () => {
+  it("[INV:CT-S-1][SURF:Security] CT-S-1: absent and masked tx are indistinguishable", async ({ task }) => {
+    task.meta.invariantId = "CT-S-1";
+    task.meta.surface = "Security";
+    task.meta.oracle = "Masked and absent transaction reads must return identical normalized NOT_FOUND_OR_MASKED rejections.";
+    task.meta.criticality = "Critical";
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-s1";
 
@@ -32,7 +36,11 @@ describe("CT-S-* Security masking and indistinguishability", () => {
     expect(masked).not.toHaveProperty("metadata");
   });
 
-  it("[INV:CT-S-2][SURF:Security] CT-S-2: masked event hides full transaction without observable holes", async () => {
+  it("[INV:CT-S-2][SURF:Security] CT-S-2: masked event hides full transaction without observable holes", async ({ task }) => {
+    task.meta.invariantId = "CT-S-2";
+    task.meta.surface = "Security";
+    task.meta.oracle = "Masked event visibility removes entire transaction from principal range without cursor holes.";
+    task.meta.criticality = "Critical";
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-s2";
 
@@ -86,7 +94,11 @@ describe("CT-S-* Security masking and indistinguishability", () => {
     });
   });
 
-  it("[INV:CT-S-3][SURF:Security] CT-S-3 contradiction: absent vs masked no side-channel shape", async () => {
+  it("[INV:CT-S-3][SURF:Security] CT-S-3 contradiction: absent vs masked no side-channel shape", async ({ task }) => {
+    task.meta.invariantId = "CT-S-3";
+    task.meta.surface = "Security";
+    task.meta.oracle = "Serialized response shape for masked and absent tx lookups must be indistinguishable.";
+    task.meta.criticality = "Regression";
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-s3";
 
