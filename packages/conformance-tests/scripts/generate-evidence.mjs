@@ -79,6 +79,28 @@ function markdownTable(rows) {
   return [header, sep, body].join("\n");
 }
 
+function buildMarkdown(title, suiteNames, vitestVersion, rows, criticalitySummary, criticalInvariantIds, gapsSection) {
+  return [
+    `# ${title}`,
+    "",
+    `- Vitest: ${vitestVersion}`,
+    `- Suites: ${[...new Set(suiteNames)].join(", ")}`,
+    "",
+    "## Invariant Coverage",
+    markdownTable(rows),
+    "",
+    "## Criticality summary",
+    `- Critical: ${criticalitySummary.Critical}`,
+    `- Structural: ${criticalitySummary.Structural}`,
+    `- Regression: ${criticalitySummary.Regression}`,
+    `- Critical IDs: ${criticalInvariantIds.join(", ") || "none"}`,
+    "",
+    "## Coverage gaps",
+    gapsSection,
+    ""
+  ].join("\n");
+}
+
 function escapeCell(value) {
   return value.replace(/\|/g, "\\|");
 }
@@ -250,25 +272,30 @@ async function main() {
       ? "Coverage gaps: none."
       : `Coverage gaps:\n${missingInvariants.map((id) => `- ${id}`).join("\n")}`;
 
-  const markdown = [
-    "# Conformance Evidence",
-    "",
-    `- Vitest: ${vitestVersion}`,
-    `- Suites: ${[...new Set(suiteNames)].join(", ")}`,
-    "",
-    "## Invariant Coverage",
-    markdownTable(escapedRows),
-    "",
-    "## Criticality summary",
-    `- Critical: ${criticalitySummary.Critical}`,
-    `- Structural: ${criticalitySummary.Structural}`,
-    `- Regression: ${criticalitySummary.Regression}`,
-    `- Critical IDs: ${criticalInvariantIds.join(", ") || "none"}`,
-    "",
-    "## Coverage gaps",
-    gapsSection,
-    ""
-  ].join("\n");
+  const markdown = buildMarkdown(
+    "Conformance Evidence",
+    suiteNames,
+    vitestVersion,
+    escapedRows,
+    criticalitySummary,
+    criticalInvariantIds,
+    gapsSection
+  );
+
+  const criticalRows = escapedRows.filter((row) => row.criticality === "Critical");
+  const criticalMarkdown = buildMarkdown(
+    "Conformance Evidence (Critical)",
+    suiteNames,
+    vitestVersion,
+    criticalRows,
+    {
+      Critical: criticalRows.length,
+      Structural: 0,
+      Regression: 0
+    },
+    criticalInvariantIds,
+    "Coverage gaps: none."
+  );
 
   await fs.mkdir(artifactsDir, { recursive: true });
 
@@ -299,14 +326,16 @@ async function main() {
   };
 
   const mdPath = path.resolve(artifactsDir, "conformance-evidence.md");
+  const criticalMdPath = path.resolve(artifactsDir, "conformance-evidence.critical.md");
   const jsonPath = path.resolve(artifactsDir, "conformance-evidence.json");
   const runtimeJsonPath = path.resolve(artifactsDir, "conformance-evidence.runtime.json");
   await fs.writeFile(mdPath, markdown, "utf8");
+  await fs.writeFile(criticalMdPath, criticalMarkdown, "utf8");
   await fs.writeFile(jsonPath, `${JSON.stringify(jsonPayload, null, 2)}\n`, "utf8");
   await fs.writeFile(runtimeJsonPath, `${JSON.stringify(runtimePayload, null, 2)}\n`, "utf8");
   await fs.rm(runtimeMetaPath, { force: true });
 
-  console.log(`Generated evidence:\n- ${mdPath}\n- ${jsonPath}\n- ${runtimeJsonPath}`);
+  console.log(`Generated evidence:\n- ${mdPath}\n- ${criticalMdPath}\n- ${jsonPath}\n- ${runtimeJsonPath}`);
 }
 
 main().catch((error) => {
