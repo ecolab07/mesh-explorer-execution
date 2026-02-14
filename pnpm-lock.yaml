@@ -15,6 +15,9 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9
     optionalDependencies:
+      '@esbuild/linux-x64':
+        specifier: 0.21.5
+        version: 0.21.5
       '@rollup/rollup-linux-x64-gnu':
         specifier: 4.57.1
         version: 4.57.1
@@ -85,6 +88,11 @@ importers:
         version: link:../shared
 
 packages:
+
+  '@esbuild/linux-x64@0.21.5':
+    resolution: {}
+    cpu: [x64]
+    os: [linux]
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -307,6 +315,8 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@esbuild/linux-x64@0.21.5': {}
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
