@@ -10,7 +10,7 @@ const testsRoot = path.resolve(repoRoot, "packages/conformance-tests/src");
 const artifactsDir = path.resolve(repoRoot, "artifacts");
 const expectedInvariantsPath = path.resolve(repoRoot, "packages/conformance-tests/expected-invariants.json");
 const evidenceReporterPath = path.resolve(repoRoot, "packages/conformance-tests/scripts/evidence-meta-reporter.mjs");
-const runtimeMetaPath = path.resolve(artifactsDir, "conformance-runtime-meta.json");
+const runtimeMetaPath = path.resolve(artifactsDir, "conformance-evidence.runtime.meta.json");
 
 const testPattern = /it\(\s*"([^"\n]+)"\s*,/g;
 const conformanceIdPattern = /CT-[A-Z0-9-]+/;
@@ -83,6 +83,10 @@ function escapeCell(value) {
   return value.replace(/\|/g, "\\|");
 }
 
+function sortByInvariantId(left, right) {
+  return left.invariantId.localeCompare(right.invariantId);
+}
+
 async function main() {
   const testFiles = await listTestFiles(testsRoot);
   const expectedInvariants = await readJson(expectedInvariantsPath);
@@ -101,6 +105,13 @@ async function main() {
       throw new Error(`expected-invariants.json has invalid criticality for ${expected.invariantId}`);
     }
     expectedById.set(expected.invariantId, expected);
+  }
+
+  const expectedSorted = [...expectedInvariants].sort(sortByInvariantId);
+  for (let index = 0; index < expectedInvariants.length; index += 1) {
+    if (expectedInvariants[index].invariantId !== expectedSorted[index].invariantId) {
+      throw new Error("expected-invariants.json must be sorted by invariantId");
+    }
   }
 
   const runtimeTests = await collectRuntimeMeta();
@@ -204,13 +215,13 @@ async function main() {
   }
 
   const observed = new Set(evidenceRows.map((row) => row.invariantId));
-  const missingInvariants = [...expectedById.keys()].filter((id) => !observed.has(id));
+  const missingInvariants = [...expectedById.keys()].filter((id) => !observed.has(id)).sort();
 
   if (missingInvariants.length > 0) {
     throw new Error(`Expected invariants without tests: ${missingInvariants.join(", ")}`);
   }
 
-  evidenceRows.sort((a, b) => a.invariantId.localeCompare(b.invariantId));
+  evidenceRows.sort(sortByInvariantId);
 
   const criticalitySummary = {
     Critical: evidenceRows.filter((row) => row.criticality === "Critical").length,
@@ -293,6 +304,7 @@ async function main() {
   await fs.writeFile(mdPath, markdown, "utf8");
   await fs.writeFile(jsonPath, `${JSON.stringify(jsonPayload, null, 2)}\n`, "utf8");
   await fs.writeFile(runtimeJsonPath, `${JSON.stringify(runtimePayload, null, 2)}\n`, "utf8");
+  await fs.rm(runtimeMetaPath, { force: true });
 
   console.log(`Generated evidence:\n- ${mdPath}\n- ${jsonPath}\n- ${runtimeJsonPath}`);
 }
