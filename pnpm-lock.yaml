@@ -14,6 +14,10 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9
+    optionalDependencies:
+      '@rollup/rollup-linux-x64-gnu':
+        specifier: 4.57.1
+        version: 4.57.1
 
   packages/conformance-harness:
     dependencies:
@@ -188,6 +192,12 @@ packages:
   postcss@8.5.6:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
+
+  '@rollup/rollup-linux-x64-gnu@4.57.1':
+    resolution: {}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
 
   rollup@4.57.1:
     resolution: {integrity: sha512-oQL6lgK3e2QZeQ7gcgIkS2YZPg5slw37hYufJ3edKlfQSGGm8ICoxswK15ntSzF/a8+h7ekRy7k7oWc3BQ7y8A==}
@@ -394,8 +404,11 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
+  '@rollup/rollup-linux-x64-gnu@4.57.1': {}
+
   rollup@4.57.1:
     dependencies:
+      '@rollup/rollup-linux-x64-gnu': 4.57.1
       '@types/estree': 1.0.8
 
   siginfo@2.0.0: {}
