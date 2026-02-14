@@ -2,8 +2,8 @@
   "name": "@mesh/conformance-tests",
   "version": "0.1.0",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run"
@@ -11,5 +11,12 @@
   "dependencies": {
     "@mesh/conformance-harness": "workspace:*",
     "@mesh/shared": "workspace:*"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   }
 }
