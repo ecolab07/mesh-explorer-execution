@@ -8,7 +8,7 @@ import { LocalSyncHarness } from "@mesh/sync-local";
 // Invariant: subscribeOnce is equivalent to poll for follow-up cursors; fail if replay window duplicates/skips tx.
 // Invariant: end-to-end submit->poll->receipt->replay is coherent and deterministic; fail if receipt/poll/replay disagree.
 describe("CT-SYNC-* Local sync harness", () => {
-  it("CT-SYNC-1: poll is tx-closed and filtered by principal", async () => {
+  it("[INV:CT-SYNC-1][SURF:Sync] CT-SYNC-1: poll is tx-closed and filtered by principal", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-sync1";
     const harness = new LocalSyncHarness(store, graphSpaceId);
@@ -28,7 +28,7 @@ describe("CT-SYNC-* Local sync harness", () => {
     expect(poll).toEqual({ txIds: ["tx-1"], principalCursorAfter: 1 });
   });
 
-  it("CT-SYNC-2: subscribeOnce returns coherent follow-up cursor", async () => {
+  it("[INV:CT-SYNC-2][SURF:Sync] CT-SYNC-2: subscribeOnce returns coherent follow-up cursor", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-sync2";
     const harness = new LocalSyncHarness(store, graphSpaceId);
@@ -43,7 +43,7 @@ describe("CT-SYNC-* Local sync harness", () => {
     expect(second).toEqual({ txIds: ["tx-2"], principalCursorAfter: 2 });
   });
 
-  it("CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay", async () => {
+  it("[INV:CT-SYNC-3][SURF:Sync] CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-sync3";
     const harness = new LocalSyncHarness(store, graphSpaceId);
@@ -71,7 +71,7 @@ describe("CT-SYNC-* Local sync harness", () => {
     expect(replayPoll).toEqual({ txIds: [], principalCursorAfter: 1 });
   });
 
-  it("CT-SYNC-4 contradiction: rejected submit is never observable in poll", async () => {
+  it("[INV:CT-SYNC-4][SURF:Sync] CT-SYNC-4 contradiction: rejected submit is never observable in poll", async () => {
     const store = new InMemoryLocalEventStore();
     const graphSpaceId = "space-sync4";
     const harness = new LocalSyncHarness(store, graphSpaceId);

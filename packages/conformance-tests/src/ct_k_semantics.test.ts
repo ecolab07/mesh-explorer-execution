@@ -32,7 +32,7 @@ const baseCommand: Command = {
 };
 
 describe("CT-K-* Kernel command semantics", () => {
-  it("CT-K-1: invalid baseRevision returns normalized error", async () => {
+  it("[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error", async () => {
     const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
 
     const result = await kernel.execute({
@@ -49,7 +49,7 @@ describe("CT-K-* Kernel command semantics", () => {
     });
   });
 
-  it("CT-K-2: idempotent resubmission with same key returns same receipt", async () => {
+  it("[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt", async () => {
     const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
 
     const first = await kernel.execute({
@@ -74,7 +74,7 @@ describe("CT-K-* Kernel command semantics", () => {
     });
   });
 
-  it("CT-K-3: idempotency key reuse with payload mismatch is rejected", async () => {
+  it("[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected", async () => {
     const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
 
     const accepted = await kernel.execute({
@@ -95,7 +95,7 @@ describe("CT-K-* Kernel command semantics", () => {
     });
   });
 
-  it("CT-K-4: commit invariants preserve appendTx + base revision preconditions", async () => {
+  it("[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions", async () => {
     const fakeStore = new RevisionMismatchStore();
     const kernel = new KernelMinimalImpl(fakeStore);
 
@@ -115,7 +115,7 @@ describe("CT-K-* Kernel command semantics", () => {
     });
   });
 
-  it("CT-K-5 contradiction: malformed command is rejected", async () => {
+  it("[INV:CT-K-5][SURF:Kernel] CT-K-5 contradiction: malformed command is rejected", async () => {
     const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
 
     const result = await kernel.execute({ ...baseCommand, commandId: "", idempotencyKey: "", payload: undefined as never });
