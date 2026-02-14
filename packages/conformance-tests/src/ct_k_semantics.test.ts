@@ -18,6 +18,11 @@ import {
   type TxId
 } from "@mesh/shared";
 
+// Invariant: invalid baseRevision rejects with normalized VALIDATION/INVALID_BASE_REVISION; fail on any other class/code.
+// Invariant: idempotent replay with same actor+key+payload returns the exact original committed receipt; fail on divergence.
+// Invariant: same idempotency key with different payload rejects as CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH; fail if committed.
+// Invariant: revision mismatch from append layer is propagated as PRECONDITION/REVISION_MISMATCH; fail on remapping.
+// Invariant: malformed command is rejected and never committed; fail if append path accepts it.
 const baseCommand: Command = {
   graphSpaceId: "space-k",
   commandId: "cmd-1",
@@ -36,12 +41,12 @@ describe("CT-K-* Kernel command semantics", () => {
       requireBaseRevision: "rev/unknown"
     });
 
-    expect(result.status).toBe("rejected");
-    if (result.status === "rejected") {
-      expect(result.category).toBe("VALIDATION");
-      expect(result.reasonCode).toBe(REASON_CODES.INVALID_BASE_REVISION);
-      expect(result.commandId).toBe("cmd-k1");
-    }
+    expect(result).toEqual({
+      status: "rejected",
+      commandId: "cmd-k1",
+      category: "VALIDATION",
+      reasonCode: REASON_CODES.INVALID_BASE_REVISION
+    });
   });
 
   it("CT-K-2: idempotent resubmission with same key returns same receipt", async () => {
@@ -56,13 +61,17 @@ describe("CT-K-* Kernel command semantics", () => {
       commandId: "cmd-k2-replayed"
     });
 
-    expect(first.status).toBe("committed");
-    expect(second.status).toBe("committed");
-    if (first.status === "committed" && second.status === "committed") {
-      expect(second).toEqual(first);
-      expect(second.txId).toBe(first.txId);
-      expect(second.eventRefs.graph).toHaveLength(1);
-    }
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({
+      status: "committed",
+      txId: "cmd-k2",
+      txIndex: 1,
+      cursorAfter: { metaSeq: 0, graphSeq: 1 },
+      eventRefs: {
+        meta: [],
+        graph: [{ stream: "graph", seq: 1, eventId: "cmd-k2-g-1" }]
+      }
+    });
   });
 
   it("CT-K-3: idempotency key reuse with payload mismatch is rejected", async () => {
@@ -78,12 +87,12 @@ describe("CT-K-* Kernel command semantics", () => {
       payload: { op: "SET", value: 999 }
     });
 
-    expect(accepted.status).toBe("committed");
-    expect(rejected.status).toBe("rejected");
-    if (rejected.status === "rejected") {
-      expect(rejected.category).toBe("CONFLICT");
-      expect(rejected.reasonCode).toBe(REASON_CODES.IDEMPOTENCY_PAYLOAD_MISMATCH);
-    }
+    expect(accepted).toMatchObject({ status: "committed", txId: "cmd-k3-ok", txIndex: 1 });
+    expect(rejected).toEqual({
+      status: "rejected",
+      category: "CONFLICT",
+      reasonCode: REASON_CODES.IDEMPOTENCY_PAYLOAD_MISMATCH
+    });
   });
 
   it("CT-K-4: commit invariants preserve appendTx + base revision preconditions", async () => {
@@ -98,11 +107,25 @@ describe("CT-K-* Kernel command semantics", () => {
 
     expect(fakeStore.resolveRevisionCalls).toEqual([["space-k", "rev/current"]]);
     expect(fakeStore.appendCalls).toHaveLength(1);
-    expect(result.status).toBe("rejected");
-    if (result.status === "rejected") {
-      expect(result.category).toBe("PRECONDITION");
-      expect(result.reasonCode).toBe(REASON_CODES.REVISION_MISMATCH);
-    }
+    expect(result).toEqual({
+      status: "rejected",
+      category: "PRECONDITION",
+      reasonCode: REASON_CODES.REVISION_MISMATCH,
+      commandId: "cmd-k4"
+    });
+  });
+
+  it("CT-K-5 contradiction: malformed command is rejected", async () => {
+    const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore());
+
+    const result = await kernel.execute({ ...baseCommand, commandId: "", idempotencyKey: "", payload: undefined as never });
+
+    expect(result).toEqual({
+      status: "rejected",
+      commandId: "",
+      category: "VALIDATION",
+      reasonCode: REASON_CODES.MALFORMED_COMMAND
+    });
   });
 });
 
