@@ -124,6 +124,14 @@ class RevisionMismatchStore implements LocalEventStore {
     return null;
   }
 
+  async readTxForPrincipal(
+    graphSpaceId: string,
+    txId: TxId
+  ): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | CommandError> {
+    const tx = await this.readTx(graphSpaceId, txId);
+    return tx ?? { status: "rejected", category: "NOT_FOUND", reasonCode: REASON_CODES.NOT_FOUND_OR_MASKED };
+  }
+
   async readRange(
     _graphSpaceId: string,
     _stream: StreamName,
@@ -141,6 +149,18 @@ class RevisionMismatchStore implements LocalEventStore {
 
   async getCursorHead(_graphSpaceId: string): Promise<Cursor> {
     return { metaSeq: 0, graphSeq: 0 };
+  }
+
+  async readPrincipalTxRange(
+    _graphSpaceId: string,
+    fromPrincipalCursorExclusive: number,
+    _limit: number
+  ): Promise<{ txs: Array<{ txId: TxId; txIndex: number; meta: EventEnvelope[]; graph: EventEnvelope[] }>; cursor: number }> {
+    return { txs: [], cursor: fromPrincipalCursorExclusive };
+  }
+
+  async getPrincipalCursorHead(_graphSpaceId: string): Promise<number> {
+    return 0;
   }
 
   async resolveRevision(graphSpaceId: string, revisionToken: string): Promise<Cursor | null> {

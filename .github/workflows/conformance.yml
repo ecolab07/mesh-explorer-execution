@@ -17,6 +17,9 @@ jobs:
           version: 9
       - name: Install
         run: pnpm install --frozen-lockfile
+      - name: Enforce conformance test hygiene
+        run: |
+          ! rg -n "TODO|skip\(" packages/conformance-tests/src
       - name: Test
         run: pnpm test
       - name: Upload artifacts on failure

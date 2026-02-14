@@ -5,6 +5,7 @@ import type {
   FaultInjectionHooks,
   GraphSpaceId,
   IdempotencyCtx,
+  PrincipalContext,
   ReadRangeOptions,
   ReadMode,
   StreamName,
@@ -25,6 +26,12 @@ export interface LocalEventStore {
 
   readTx(graphSpaceId: GraphSpaceId, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null>;
 
+  readTxForPrincipal(
+    graphSpaceId: GraphSpaceId,
+    txId: TxId,
+    principal?: PrincipalContext
+  ): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | CommandError>;
+
   readRange(
     graphSpaceId: GraphSpaceId,
     stream: StreamName,
@@ -37,6 +44,15 @@ export interface LocalEventStore {
   readTxIndex(graphSpaceId: GraphSpaceId): Promise<TxIndexEntry[]>;
 
   getCursorHead(graphSpaceId: GraphSpaceId): Promise<Cursor>;
+
+  readPrincipalTxRange(
+    graphSpaceId: GraphSpaceId,
+    fromPrincipalCursorExclusive: number,
+    limit: number,
+    principal?: PrincipalContext
+  ): Promise<{ txs: Array<{ txId: TxId; txIndex: number; meta: EventEnvelope[]; graph: EventEnvelope[] }>; cursor: number }>;
+
+  getPrincipalCursorHead(graphSpaceId: GraphSpaceId, principal?: PrincipalContext): Promise<number>;
 
   resolveRevision(graphSpaceId: GraphSpaceId, revisionToken: string): Promise<Cursor | null>;
 }
