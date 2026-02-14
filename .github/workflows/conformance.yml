@@ -1,0 +1,33 @@
+name: conformance
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Install dependencies (clean pnpm store)
+        run: |
+          pnpm store prune
+          pnpm install --frozen-lockfile --prefer-offline=false
+      - name: Test
+        run: pnpm test
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-artifacts
+          path: |
+            **/*.log
+            **/*dump*.json
+            **/vitest*.xml
+          if-no-files-found: ignore
