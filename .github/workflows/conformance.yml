@@ -22,6 +22,8 @@ jobs:
           ! rg -n "TODO|skip\(" packages/conformance-tests/src
       - name: Test
         run: pnpm test
+      - name: Artifacts up-to-date
+        run: pnpm --filter @mesh/conformance-tests check:artifacts-clean
       - name: Upload conformance evidence artifacts
         if: always()
         uses: actions/upload-artifact@v4

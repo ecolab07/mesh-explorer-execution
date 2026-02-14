@@ -1,26 +1,122 @@
 [
-  "CT-C-1",
-  "CT-C-2",
-  "CT-C-3",
-  "CT-K-1",
-  "CT-K-2",
-  "CT-K-3",
-  "CT-K-4",
-  "CT-K-5",
-  "CT-L-1",
-  "CT-L-2",
-  "CT-L-3",
-  "CT-L-4",
-  "CT-L-5",
-  "CT-L-6",
-  "CT-P-1",
-  "CT-P-2",
-  "CT-P-3",
-  "CT-S-1",
-  "CT-S-2",
-  "CT-S-3",
-  "CT-SYNC-1",
-  "CT-SYNC-2",
-  "CT-SYNC-3",
-  "CT-SYNC-4"
+  {
+    "invariantId": "CT-C-1",
+    "surface": "Cursor",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-C-2",
+    "surface": "Cursor",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-C-3",
+    "surface": "Cursor",
+    "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-K-1",
+    "surface": "Kernel",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-K-2",
+    "surface": "Kernel",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-K-3",
+    "surface": "Kernel",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-K-4",
+    "surface": "Kernel",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-K-5",
+    "surface": "Kernel",
+    "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-L-1",
+    "surface": "EventStore",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-L-2",
+    "surface": "EventStore",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-L-3",
+    "surface": "EventStore",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-L-4",
+    "surface": "EventStore",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-L-5",
+    "surface": "EventStore",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-L-6",
+    "surface": "EventStore",
+    "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-P-1",
+    "surface": "Projection",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-P-2",
+    "surface": "Projection",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-P-3",
+    "surface": "Projection",
+    "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-S-1",
+    "surface": "Security",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-S-2",
+    "surface": "Security",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-S-3",
+    "surface": "Security",
+    "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-SYNC-1",
+    "surface": "Sync",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-SYNC-2",
+    "surface": "Sync",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-SYNC-3",
+    "surface": "Sync",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-SYNC-4",
+    "surface": "Sync",
+    "criticality": "Regression"
+  }
 ]
