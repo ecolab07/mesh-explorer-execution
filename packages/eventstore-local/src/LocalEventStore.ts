@@ -5,9 +5,11 @@ import type {
   FaultInjectionHooks,
   GraphSpaceId,
   IdempotencyCtx,
+  ReadRangeOptions,
   ReadMode,
   StreamName,
   TransactionReceipt,
+  TxIndexEntry,
   TxBundle,
   TxId
 } from "@mesh/shared";
@@ -28,8 +30,11 @@ export interface LocalEventStore {
     stream: StreamName,
     fromSeqExclusive: number,
     limit: number,
-    mode: ReadMode
+    mode: ReadMode,
+    options?: ReadRangeOptions
   ): Promise<EventEnvelope[]>;
+
+  readTxIndex(graphSpaceId: GraphSpaceId): Promise<TxIndexEntry[]>;
 
   getCursorHead(graphSpaceId: GraphSpaceId): Promise<Cursor>;
 

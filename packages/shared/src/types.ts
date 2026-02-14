@@ -50,11 +50,19 @@ export interface TransactionReceipt {
   status: "committed";
   commandId: string;
   txId: TxId;
+  txIndex: number;
   cursorAfter: Cursor;
   eventRefs: {
     meta: EventRef[];
     graph: EventRef[];
   };
+}
+
+export interface TxIndexEntry {
+  txId: TxId;
+  txIndex: number;
+  meta: { start: number; end: number; count: number };
+  graph: { start: number; end: number; count: number };
 }
 
 export type CommandErrorCategory =
@@ -77,6 +85,10 @@ export interface CommandError {
 export type CommandOutcome = TransactionReceipt | CommandError;
 
 export type ReadMode = "TX_CLOSED";
+
+export interface ReadRangeOptions {
+  snapshotCursor?: Cursor;
+}
 
 export interface IdempotencyCtx {
   actorId: ActorId;
