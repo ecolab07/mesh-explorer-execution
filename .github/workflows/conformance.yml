@@ -6,6 +6,20 @@ on:
     branches: [main]
 
 jobs:
+  workflow-self-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Validate conformance workflow invariants
+        run: pnpm ci:validate-workflows
+
   test:
     runs-on: ubuntu-latest
     strategy:
