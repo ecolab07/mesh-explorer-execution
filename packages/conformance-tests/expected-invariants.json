@@ -80,6 +80,21 @@
     "criticality": "Critical"
   },
   {
+    "invariantId": "CT-MW-1",
+    "surface": "V2-MultiWriter",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-MW-2",
+    "surface": "V2-MultiWriter",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-MW-3",
+    "surface": "V2-MultiWriter",
+    "criticality": "Structural"
+  },
+  {
     "invariantId": "CT-P-1",
     "surface": "Projection",
     "criticality": "Structural"
@@ -92,6 +107,21 @@
   {
     "invariantId": "CT-P-3",
     "surface": "Projection",
+    "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-RS-1",
+    "surface": "V2-RemoteSync",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-RS-2",
+    "surface": "V2-RemoteSync",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-RS-3",
+    "surface": "V2-RemoteSync",
     "criticality": "Regression"
   },
   {

@@ -190,6 +190,39 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-MW-1",
+          "surface": "V2-MultiWriter",
+          "backend": "InMemory",
+          "testName": "[INV:CT-MW-1][SURF:V2-MultiWriter] CT-MW-1: conflicting baseRevision at most one commit succeeds",
+          "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+          "oracle": "Across deterministic seeds [1..5], two conflicting writers yield exactly one committed receipt and one normalized precondition/validation rejection.",
+          "criticality": "Critical",
+          "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-MW-2",
+          "surface": "V2-MultiWriter",
+          "backend": "InMemory",
+          "testName": "[INV:CT-MW-2][SURF:V2-MultiWriter] CT-MW-2: same idempotencyKey concurrently does not double-commit",
+          "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+          "oracle": "Across deterministic seeds [1..5], concurrent same actorId+idempotencyKey produces one visible transaction and equivalent receipts.",
+          "criticality": "Critical",
+          "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-MW-3",
+          "surface": "V2-MultiWriter",
+          "backend": "InMemory",
+          "testName": "[INV:CT-MW-3][SURF:V2-MultiWriter] CT-MW-3: tx-closed visibility survives deterministic interleavings",
+          "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+          "oracle": "Across deterministic seeds [1..5], interleaved reads over graph stream only observe tx-closed slices (no partial tx visible).",
+          "criticality": "Structural",
+          "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-P-1",
           "surface": "Projection",
           "backend": "InMemory",
@@ -220,6 +253,39 @@
           "oracle": "After invalidation and new tx, incremental apply must produce updated snapshot and advanced cursor.",
           "criticality": "Regression",
           "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-RS-1",
+          "surface": "V2-RemoteSync",
+          "backend": "InMemory",
+          "testName": "[INV:CT-RS-1][SURF:V2-RemoteSync] CT-RS-1: eventual delivery converges under dup+reorder",
+          "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+          "oracle": "Across deterministic seeds [1..5], sufficient ticks without drops make both peers converge on identical txId sets despite duplicates/reorder.",
+          "criticality": "Structural",
+          "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-1-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-RS-2",
+          "surface": "V2-RemoteSync",
+          "backend": "InMemory",
+          "testName": "[INV:CT-RS-2][SURF:V2-RemoteSync] CT-RS-2: duplicate deliveries are idempotent",
+          "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+          "oracle": "Across deterministic seeds [1..5], applying the same replication envelope twice does not create extra tx nor divergence.",
+          "criticality": "Critical",
+          "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-2-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-RS-3",
+          "surface": "V2-RemoteSync",
+          "backend": "InMemory",
+          "testName": "[INV:CT-RS-3][SURF:V2-RemoteSync] CT-RS-3: principal cursor remains monotone with disorder",
+          "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+          "oracle": "Across deterministic seeds [1..5], consumer polling on replicated peer observes monotone principalCursorAfter under network disorder.",
+          "criticality": "Regression",
+          "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-3-${seed}`",
           "limitations": ""
         },
         {
@@ -301,9 +367,9 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 13,
-        "Structural": 7,
-        "Regression": 6
+        "Critical": 16,
+        "Structural": 9,
+        "Regression": 7
       },
       "criticalInvariantIds": [
         "CT-K-2",
@@ -316,6 +382,9 @@
         "CT-L-5",
         "CT-L-7",
         "CT-L-8",
+        "CT-MW-1",
+        "CT-MW-2",
+        "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
         "CT-SYNC-3"
@@ -501,6 +570,39 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-MW-1",
+          "surface": "V2-MultiWriter",
+          "backend": "Persistent",
+          "testName": "[INV:CT-MW-1][SURF:V2-MultiWriter] CT-MW-1: conflicting baseRevision at most one commit succeeds",
+          "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+          "oracle": "Across deterministic seeds [1..5], two conflicting writers yield exactly one committed receipt and one normalized precondition/validation rejection.",
+          "criticality": "Critical",
+          "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-MW-2",
+          "surface": "V2-MultiWriter",
+          "backend": "Persistent",
+          "testName": "[INV:CT-MW-2][SURF:V2-MultiWriter] CT-MW-2: same idempotencyKey concurrently does not double-commit",
+          "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+          "oracle": "Across deterministic seeds [1..5], concurrent same actorId+idempotencyKey produces one visible transaction and equivalent receipts.",
+          "criticality": "Critical",
+          "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-MW-3",
+          "surface": "V2-MultiWriter",
+          "backend": "Persistent",
+          "testName": "[INV:CT-MW-3][SURF:V2-MultiWriter] CT-MW-3: tx-closed visibility survives deterministic interleavings",
+          "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+          "oracle": "Across deterministic seeds [1..5], interleaved reads over graph stream only observe tx-closed slices (no partial tx visible).",
+          "criticality": "Structural",
+          "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-P-1",
           "surface": "Projection",
           "backend": "Persistent",
@@ -531,6 +633,39 @@
           "oracle": "After invalidation and new tx, incremental apply must produce updated snapshot and advanced cursor.",
           "criticality": "Regression",
           "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-RS-1",
+          "surface": "V2-RemoteSync",
+          "backend": "Persistent",
+          "testName": "[INV:CT-RS-1][SURF:V2-RemoteSync] CT-RS-1: eventual delivery converges under dup+reorder",
+          "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+          "oracle": "Across deterministic seeds [1..5], sufficient ticks without drops make both peers converge on identical txId sets despite duplicates/reorder.",
+          "criticality": "Structural",
+          "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-1-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-RS-2",
+          "surface": "V2-RemoteSync",
+          "backend": "Persistent",
+          "testName": "[INV:CT-RS-2][SURF:V2-RemoteSync] CT-RS-2: duplicate deliveries are idempotent",
+          "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+          "oracle": "Across deterministic seeds [1..5], applying the same replication envelope twice does not create extra tx nor divergence.",
+          "criticality": "Critical",
+          "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-2-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-RS-3",
+          "surface": "V2-RemoteSync",
+          "backend": "Persistent",
+          "testName": "[INV:CT-RS-3][SURF:V2-RemoteSync] CT-RS-3: principal cursor remains monotone with disorder",
+          "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+          "oracle": "Across deterministic seeds [1..5], consumer polling on replicated peer observes monotone principalCursorAfter under network disorder.",
+          "criticality": "Regression",
+          "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-3-${seed}`",
           "limitations": ""
         },
         {
@@ -612,9 +747,9 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 13,
-        "Structural": 7,
-        "Regression": 6
+        "Critical": 16,
+        "Structural": 9,
+        "Regression": 7
       },
       "criticalInvariantIds": [
         "CT-K-2",
@@ -627,6 +762,9 @@
         "CT-L-5",
         "CT-L-7",
         "CT-L-8",
+        "CT-MW-1",
+        "CT-MW-2",
+        "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
         "CT-SYNC-3"
@@ -812,6 +950,39 @@
       "limitations": ""
     },
     {
+      "invariantId": "CT-MW-1",
+      "surface": "V2-MultiWriter",
+      "backend": "InMemory",
+      "testName": "[INV:CT-MW-1][SURF:V2-MultiWriter] CT-MW-1: conflicting baseRevision at most one commit succeeds",
+      "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+      "oracle": "Across deterministic seeds [1..5], two conflicting writers yield exactly one committed receipt and one normalized precondition/validation rejection.",
+      "criticality": "Critical",
+      "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-MW-2",
+      "surface": "V2-MultiWriter",
+      "backend": "InMemory",
+      "testName": "[INV:CT-MW-2][SURF:V2-MultiWriter] CT-MW-2: same idempotencyKey concurrently does not double-commit",
+      "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+      "oracle": "Across deterministic seeds [1..5], concurrent same actorId+idempotencyKey produces one visible transaction and equivalent receipts.",
+      "criticality": "Critical",
+      "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-MW-3",
+      "surface": "V2-MultiWriter",
+      "backend": "InMemory",
+      "testName": "[INV:CT-MW-3][SURF:V2-MultiWriter] CT-MW-3: tx-closed visibility survives deterministic interleavings",
+      "file": "packages/conformance-tests/src/ct_v2_multiwriter.test.ts",
+      "oracle": "Across deterministic seeds [1..5], interleaved reads over graph stream only observe tx-closed slices (no partial tx visible).",
+      "criticality": "Structural",
+      "setup": "const kernel = new KernelMinimalImpl(store); const writers = new SimWriters(kernel, 2)",
+      "limitations": ""
+    },
+    {
       "invariantId": "CT-P-1",
       "surface": "Projection",
       "backend": "InMemory",
@@ -842,6 +1013,39 @@
       "oracle": "After invalidation and new tx, incremental apply must produce updated snapshot and advanced cursor.",
       "criticality": "Regression",
       "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p3\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-RS-1",
+      "surface": "V2-RemoteSync",
+      "backend": "InMemory",
+      "testName": "[INV:CT-RS-1][SURF:V2-RemoteSync] CT-RS-1: eventual delivery converges under dup+reorder",
+      "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+      "oracle": "Across deterministic seeds [1..5], sufficient ticks without drops make both peers converge on identical txId sets despite duplicates/reorder.",
+      "criticality": "Structural",
+      "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-1-${seed}`",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-RS-2",
+      "surface": "V2-RemoteSync",
+      "backend": "InMemory",
+      "testName": "[INV:CT-RS-2][SURF:V2-RemoteSync] CT-RS-2: duplicate deliveries are idempotent",
+      "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+      "oracle": "Across deterministic seeds [1..5], applying the same replication envelope twice does not create extra tx nor divergence.",
+      "criticality": "Critical",
+      "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-2-${seed}`",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-RS-3",
+      "surface": "V2-RemoteSync",
+      "backend": "InMemory",
+      "testName": "[INV:CT-RS-3][SURF:V2-RemoteSync] CT-RS-3: principal cursor remains monotone with disorder",
+      "file": "packages/conformance-tests/src/ct_v2_remote_sync.test.ts",
+      "oracle": "Across deterministic seeds [1..5], consumer polling on replicated peer observes monotone principalCursorAfter under network disorder.",
+      "criticality": "Regression",
+      "setup": "const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-3-${seed}`",
       "limitations": ""
     },
     {
@@ -923,9 +1127,9 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 13,
-    "Structural": 7,
-    "Regression": 6
+    "Critical": 16,
+    "Structural": 9,
+    "Regression": 7
   },
   "criticalInvariantIds": [
     "CT-K-2",
@@ -938,6 +1142,9 @@
     "CT-L-5",
     "CT-L-7",
     "CT-L-8",
+    "CT-MW-1",
+    "CT-MW-2",
+    "CT-RS-2",
     "CT-S-1",
     "CT-S-2",
     "CT-SYNC-3"
