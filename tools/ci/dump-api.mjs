@@ -3,11 +3,12 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { generatedNameForPackage, normalizeConfigPath, packageSlug } from "./api-contract-paths.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
-const manifestPath = path.resolve(repoRoot, "contracts/v1/manifest.json");
+const manifestPath = path.resolve(repoRoot, "contracts", "v1", "manifest.json");
 
 function parseArgs(argv) {
   const options = { mode: "golden", skipBuild: false };
@@ -48,9 +49,6 @@ function normalizeDts(text) {
     .concat("\n");
 }
 
-function pkgOutputName(name) {
-  return name.replace(/^@/, "").replace(/\//g, "__");
-}
 
 function collectExportLines(text) {
   const lines = text.split("\n");
@@ -62,14 +60,14 @@ function collectExportLines(text) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const manifestRaw = await fs.readFile(manifestPath, "utf8");
+  const manifestRaw = await fs.readFile(normalizeConfigPath(manifestPath), "utf8");
   const manifest = JSON.parse(manifestRaw);
 
   if (!Array.isArray(manifest) || manifest.length === 0) {
     throw new Error("contracts/v1/manifest.json must be a non-empty array");
   }
 
-  const outRoot = path.resolve(repoRoot, `contracts/v1/${options.mode}`);
+  const outRoot = path.resolve(repoRoot, "contracts", "v1", options.mode);
   const buildRoot = path.resolve(repoRoot, ".tmp/api-contract");
 
   if (!options.skipBuild) {
@@ -91,17 +89,17 @@ async function main() {
 
     const pkgDir = pkgDirFromName(item.name);
     const tsconfigPath = path.join(pkgDir, "tsconfig.json");
-    const pkgBuildOut = path.join(buildRoot, pkgOutputName(item.name));
+    const pkgBuildOut = path.join(buildRoot, packageSlug(item.name));
     await fs.mkdir(pkgBuildOut, { recursive: true });
 
     await run("pnpm", ["exec", "tsc", "-p", tsconfigPath, "--emitDeclarationOnly", "--declarationMap", "false", "--outDir", pkgBuildOut]);
 
-    const entryDts = `${item.entry.replace(/^src\//, "").replace(/\.ts$/, ".d.ts")}`;
+    const entryDts = normalizeConfigPath(item.entry).replace(/^src[\\/]/, "").replace(/\.ts$/, ".d.ts");
     const entryPath = path.join(pkgBuildOut, entryDts);
 
     const dtsRaw = await fs.readFile(entryPath, "utf8");
     const dtsNormalized = normalizeDts(dtsRaw);
-    const outName = `${pkgOutputName(item.name)}.d.ts`;
+    const outName = generatedNameForPackage(item.name);
     const outPath = path.join(outRoot, outName);
     await fs.writeFile(outPath, dtsNormalized, "utf8");
 
@@ -116,7 +114,7 @@ async function main() {
     }
   }
 
-  await fs.writeFile(path.join(outRoot, "INDEX.txt"), `${indexRows.join("\n")}\n`, "utf8");
+  await fs.writeFile(path.join(outRoot, "INDEX"), `${indexRows.join("\n")}\n`, "utf8");
 }
 
 main().catch((error) => {

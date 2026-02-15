@@ -3,12 +3,14 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { generatedNameForPackage, goldenNameForPackage, isGoldenDeclarationFile, isIndexTextFile, normalizeConfigPath, stripIndexExtension } from "./api-contract-paths.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
-const goldenDir = path.resolve(repoRoot, "contracts/v1/golden");
-const generatedDir = path.resolve(repoRoot, "contracts/v1/generated");
+const manifestPath = path.resolve(repoRoot, "contracts", "v1", "manifest.json");
+const goldenDir = path.resolve(repoRoot, "contracts", "v1", "golden");
+const generatedDir = path.resolve(repoRoot, "contracts", "v1", "generated");
 
 async function run(cmd, args, cwd = repoRoot) {
   await new Promise((resolve, reject) => {
@@ -77,20 +79,51 @@ function validateNoInternalLeaks(fileName, text) {
 }
 
 async function main() {
-  await run("node", ["tools/ci/dump-api.mjs", "--mode=generated", "--skip-build"]);
+  await run("node", [path.join("tools", "ci", "dump-api.mjs"), "--mode=generated", "--skip-build"]);
 
-  const goldenEntries = (await fs.readdir(goldenDir)).filter((name) => name.endsWith(".d.ts") || name === "INDEX.txt").sort();
-  const generatedEntries = (await fs.readdir(generatedDir)).filter((name) => name.endsWith(".d.ts") || name === "INDEX.txt").sort();
+  const manifest = JSON.parse(await fs.readFile(normalizeConfigPath(manifestPath), "utf8"));
+  const publicItems = manifest.filter((item) => item?.kind === "public" && typeof item?.name === "string");
 
-  const missingInGenerated = goldenEntries.filter((name) => !generatedEntries.includes(name));
-  const extraInGenerated = generatedEntries.filter((name) => !goldenEntries.includes(name));
+  const goldenEntries = (await fs.readdir(goldenDir)).filter((name) => isGoldenDeclarationFile(name) || isIndexTextFile(name)).sort();
+  const generatedEntries = (await fs.readdir(generatedDir)).filter((name) => name.endsWith(".d.ts") || isIndexTextFile(name)).sort();
 
-  if (missingInGenerated.length > 0 || extraInGenerated.length > 0) {
+  const expectedPairs = [];
+  for (const item of publicItems) {
+    const goldenName = await goldenNameForPackage(item.name, goldenDir);
+    expectedPairs.push({
+      generatedName: generatedNameForPackage(item.name),
+      goldenName
+    });
+  }
+
+  const missingInGenerated = expectedPairs.filter(({ generatedName }) => !generatedEntries.includes(generatedName)).map(({ generatedName }) => generatedName);
+  const missingInGolden = expectedPairs.filter(({ goldenName }) => !goldenEntries.includes(goldenName)).map(({ goldenName }) => goldenName);
+  const expectedGeneratedSet = new Set(expectedPairs.map(({ generatedName }) => generatedName));
+  const expectedGoldenSet = new Set(expectedPairs.map(({ goldenName }) => goldenName));
+  const extraInGenerated = generatedEntries.filter((name) => !isIndexTextFile(name) && !expectedGeneratedSet.has(name));
+  const extraInGolden = goldenEntries.filter((name) => !isIndexTextFile(name) && !expectedGoldenSet.has(name));
+
+  const goldenIndexName = goldenEntries.find((name) => stripIndexExtension(name) === "INDEX");
+  const generatedIndexName = generatedEntries.find((name) => stripIndexExtension(name) === "INDEX");
+
+  if (missingInGenerated.length > 0 || missingInGolden.length > 0 || extraInGenerated.length > 0 || extraInGolden.length > 0 || !goldenIndexName || !generatedIndexName) {
     if (missingInGenerated.length > 0) {
       console.error(`Missing generated contract files: ${missingInGenerated.join(", ")}`);
     }
+    if (missingInGolden.length > 0) {
+      console.error(`Missing golden contract files: ${missingInGolden.join(", ")}`);
+    }
     if (extraInGenerated.length > 0) {
       console.error(`Unexpected generated contract files: ${extraInGenerated.join(", ")}`);
+    }
+    if (extraInGolden.length > 0) {
+      console.error(`Unexpected golden contract files: ${extraInGolden.join(", ")}`);
+    }
+    if (!goldenIndexName) {
+      console.error("Missing golden contract index file: expected INDEX or INDEX.txt");
+    }
+    if (!generatedIndexName) {
+      console.error("Missing generated contract index file: expected INDEX or INDEX.txt");
     }
     process.exitCode = 1;
     return;
@@ -103,13 +136,26 @@ async function main() {
     validateNoInternalLeaks(name, generatedText);
   }
 
-  for (const name of goldenEntries) {
-    const goldenPath = path.join(goldenDir, name);
-    const generatedPath = path.join(generatedDir, name);
+  for (const { goldenName, generatedName } of expectedPairs) {
+    const goldenPath = path.join(normalizeConfigPath(goldenDir), goldenName);
+    const generatedPath = path.join(normalizeConfigPath(generatedDir), generatedName);
     const [goldenText, generatedText] = await Promise.all([readText(goldenPath), readText(generatedPath)]);
     if (goldenText !== generatedText) {
-      console.error(`API contract mismatch: ${name}`);
+      console.error(`API contract mismatch: golden=${goldenName}, generated=${generatedName}`);
       console.error(simpleDiff(goldenText, generatedText));
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  if (goldenIndexName && generatedIndexName) {
+    const [goldenIndex, generatedIndex] = await Promise.all([
+      readText(path.join(normalizeConfigPath(goldenDir), goldenIndexName)),
+      readText(path.join(normalizeConfigPath(generatedDir), generatedIndexName))
+    ]);
+    if (goldenIndex !== generatedIndex) {
+      console.error(`API contract INDEX mismatch: golden=${goldenIndexName}, generated=${generatedIndexName}`);
+      console.error(simpleDiff(goldenIndex, generatedIndex));
       process.exitCode = 1;
       return;
     }
