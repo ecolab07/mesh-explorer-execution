@@ -1,5 +1,6 @@
 import type { LocalEventStore } from "@mesh/eventstore-local";
-import { REASON_CODES, canonicalStringify, sha256Hex, type Command, type CommandOutcome, type IdempotencyCtx } from "@mesh/shared";
+import { REASON_CODES, type Command, type CommandOutcome, type IdempotencyCtx } from "@mesh/shared";
+import { canonicalStringify, sha256Hex } from "./canonicalHash.js";
 import type { KernelMinimal } from "./KernelMinimal.js";
 
 export class KernelMinimalImpl implements KernelMinimal {

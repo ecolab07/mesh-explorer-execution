@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalStringify, sha256Hex } from "../src/canonical.js";
+import { canonicalStringify, sha256Hex } from "../src/canonicalHash.js";
 
 describe("canonicalStringify", () => {
   it("normalizes object key order for semantic equivalence", () => {
