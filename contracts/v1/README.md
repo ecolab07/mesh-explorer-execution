@@ -7,10 +7,8 @@ Cette arborescence fige la surface **Public API v1** consommable par une applica
 La liste canonique est définie dans `contracts/v1/manifest.json` :
 
 - `@mesh/shared` (types, reasonCodes, cursor/receipt primitives)
-- `@mesh/eventstore-local` (signature API event store)
+- `@mesh/kernel-minimal` (contrat d'exécution minimal)
 - `@mesh/sync-local` (sync receipts côté app)
-- `@mesh/snapshot-minimal` (snapshot envelope/store)
-- `@mesh/projection-minimal` (projection + cursor app-facing)
 
 ## Règles SemVer
 
