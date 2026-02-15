@@ -3,7 +3,8 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { createRuntimeLocal } from "../dist/index.js";
 
-const rootDir = path.resolve(process.cwd(), ".mesh-runtime-example");
+const runId = `${process.pid}-${Date.now()}`;
+const rootDir = path.resolve(process.cwd(), `.mesh-runtime-example-${runId}`);
 const config = {
   rootDir,
   graphSpaceId: "space-example",
