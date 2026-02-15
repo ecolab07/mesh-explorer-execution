@@ -29,8 +29,7 @@ jobs:
           ! rg -n "TODO|skip\(" packages/conformance-tests/src
       - name: Test (${{ matrix.mesh_backend }})
         run: pnpm test
-      - name: Critical gate
-        if: matrix.mesh_backend == 'inmemory'
+      - name: Critical gate (${{ matrix.mesh_backend }})
         run: pnpm --filter @mesh/conformance-tests check:critical
       - name: Artifacts up-to-date
         if: matrix.mesh_backend == 'inmemory'
@@ -44,6 +43,7 @@ jobs:
             artifacts/conformance-evidence.md
             artifacts/conformance-evidence.critical.md
             artifacts/conformance-evidence.json
+            artifacts/conformance-evidence.persistent.md
             artifacts/conformance-evidence.runtime.json
             **/*.log
             **/*dump*.json

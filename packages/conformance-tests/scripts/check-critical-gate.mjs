@@ -15,16 +15,24 @@ async function readJson(filePath) {
   return JSON.parse(raw);
 }
 
+function selectBackendPayload(evidence) {
+  const requested = process.env.MESH_BACKEND?.trim().toLowerCase();
+  const backendKey = requested === "persistent" ? "Persistent" : "InMemory";
+  if (evidence?.backends?.[backendKey]) {
+    return { backend: backendKey, payload: evidence.backends[backendKey] };
+  }
+  return { backend: "InMemory", payload: evidence };
+}
+
 async function main() {
   const [evidence, expectedInvariants] = await Promise.all([readJson(evidencePath), readJson(expectedInvariantsPath)]);
+  const { backend, payload } = selectBackendPayload(evidence);
 
-  const criticalCount = Number(evidence?.criticalitySummary?.Critical ?? 0);
-  const criticalIds = Array.isArray(evidence?.criticalInvariantIds)
-    ? evidence.criticalInvariantIds.filter((id) => typeof id === "string")
+  const criticalCount = Number(payload?.criticalitySummary?.Critical ?? 0);
+  const criticalIds = Array.isArray(payload?.criticalInvariantIds)
+    ? payload.criticalInvariantIds.filter((id) => typeof id === "string")
     : [];
-  const coverageGaps = Array.isArray(evidence?.coverageGaps)
-    ? evidence.coverageGaps.filter((id) => typeof id === "string")
-    : [];
+  const coverageGaps = Array.isArray(payload?.coverageGaps) ? payload.coverageGaps.filter((id) => typeof id === "string") : [];
 
   const expectedCriticalIds = expectedInvariants
     .filter((item) => item?.criticality === "Critical" && typeof item?.invariantId === "string")
@@ -43,6 +51,7 @@ async function main() {
     violations.push(`coverageGaps includes Critical invariant(s): ${missingCriticalCoverage.join(", ")}`);
   }
 
+  console.log(`Backend: ${backend}`);
   console.log(`Critical invariants: ${criticalCount}`);
   console.log(`Critical IDs: ${criticalIds.join(", ") || "none"}`);
   console.log(`Status: ${violations.length === 0 ? "PASS" : "FAIL"}`);
