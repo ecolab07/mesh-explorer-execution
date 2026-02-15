@@ -28,6 +28,9 @@ jobs:
         mesh_backend: [inmemory, persistent]
     env:
       MESH_BACKEND: ${{ matrix.mesh_backend }}
+      MESH_CHAOS_SEEDS: "1,2,3,4,5"
+      MESH_CHAOS_STEPS: "200"
+      MESH_CHAOS_BACKEND: "inmemory"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

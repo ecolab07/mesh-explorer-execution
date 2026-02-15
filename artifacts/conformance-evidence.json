@@ -8,6 +8,7 @@
       "CT-MW-* V2-lite multi-writer (%s)",
       "CT-P-* Projection determinism",
       "CT-PR-* V2 passive replication (%s)",
+      "CT-PR-FUZZ V2 passive replication fuzz (%s)",
       "CT-PRC-* V2 passive replication chaos (%s)",
       "CT-RS-* V2-lite remote sync (%s)",
       "CT-S-* Security masking and indistinguishability (%s)",

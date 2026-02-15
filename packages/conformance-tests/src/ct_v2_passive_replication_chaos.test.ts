@@ -1,14 +1,16 @@
 import { describe, expect, test } from "vitest";
 import type { CommandOutcome, IdempotencyCtx, TxBundle } from "@mesh/shared";
 import { REASON_CODES } from "@mesh/shared";
-import { getConformanceBackends, type ConformanceBackend } from "./backends.js";
+import type { ConformanceBackend } from "./backends.js";
 import { makeSimNetwork } from "./v2/sim/simNetwork.js";
 import { makePassiveReplicationHarness, type PassiveNode, type ReplicatedTxEnvelope } from "./v2/sim/passiveReplicator.js";
 import { createSeededRng } from "./v2/sim/seededRng.js";
+import { getChaosBackends, getChaosSeeds, getChaosStepCount } from "./v2/sim/chaosConfig.js";
+import { recordChaosStats, type ChaosStatsRecord } from "./v2/sim/chaosStats.js";
 
-const seeds = [1, 2, 3, 4, 5, 6] as const;
-const backends: ConformanceBackend[] = getConformanceBackends();
-const STEP_COUNT = 140;
+const seeds = getChaosSeeds();
+const backends: ConformanceBackend[] = getChaosBackends();
+const STEP_COUNT = getChaosStepCount();
 
 describe.each(backends)("CT-PRC-* V2 passive replication chaos (%s)", (backend: ConformanceBackend) => {
   test(
@@ -21,8 +23,9 @@ describe.each(backends)("CT-PRC-* V2 passive replication chaos (%s)", (backend: 
       task.meta.criticality = "Structural";
 
       for (const seed of seeds) {
-        const result = await runChaosScenario({ backend, seed, steps: STEP_COUNT, maxQueueSize: 12 });
-        expect(result.replicasConverged, `seed=${seed}`).toBe(true);
+        const result = await runChaosScenario({ testId: "CT-PRC-1", backend, seed, steps: STEP_COUNT, maxQueueSize: 12 });
+        const repro = reproLine({ backend, seed, steps: STEP_COUNT, testId: "CT-PRC-1" });
+        expect(result.replicasConverged, `${repro}`).toBe(true);
       }
     }
   );
@@ -35,10 +38,17 @@ describe.each(backends)("CT-PRC-* V2 passive replication chaos (%s)", (backend: 
     task.meta.criticality = "Critical";
 
     for (const seed of seeds) {
-      const result = await runChaosScenario({ backend, seed: seed + 100, steps: STEP_COUNT, maxQueueSize: 12 });
-      expect(result.restartAttempts, `seed=${seed}`).toBeGreaterThan(0);
-      expect(result.duplicateApplyDetected, `seed=${seed}`).toBe(false);
-      expect(result.replicasConverged, `seed=${seed}`).toBe(true);
+      const result = await runChaosScenario({
+        testId: "CT-PRC-2",
+        backend,
+        seed: seed + 100,
+        steps: STEP_COUNT,
+        maxQueueSize: 12
+      });
+      const repro = reproLine({ backend, seed: seed + 100, steps: STEP_COUNT, testId: "CT-PRC-2" });
+      expect(result.restartAttempts, `${repro}`).toBeGreaterThan(0);
+      expect(result.duplicateApplyDetected, `${repro}`).toBe(false);
+      expect(result.replicasConverged, `${repro}`).toBe(true);
     }
   });
 
@@ -50,32 +60,41 @@ describe.each(backends)("CT-PRC-* V2 passive replication chaos (%s)", (backend: 
     task.meta.criticality = "Regression";
 
     for (const seed of seeds) {
-      const result = await runChaosScenario({ backend, seed: seed + 200, steps: STEP_COUNT, maxQueueSize: 6 });
-      expect(result.networkStats.dropped, `seed=${seed}`).toBeGreaterThan(0);
-      expect(result.corruptionDetected, `seed=${seed}`).toBe(false);
+      const result = await runChaosScenario({
+        testId: "CT-PRC-3",
+        backend,
+        seed: seed + 200,
+        steps: STEP_COUNT,
+        maxQueueSize: 6
+      });
+      const repro = reproLine({ backend, seed: seed + 200, steps: STEP_COUNT, testId: "CT-PRC-3" });
+      expect(result.networkStats.dropped, `${repro}`).toBeGreaterThan(0);
+      expect(result.corruptionDetected, `${repro}`).toBe(false);
     }
   });
 });
 
-
-
-async function runChaosScenario({
-  backend,
-  seed,
-  steps,
-  maxQueueSize
-}: {
-  backend: ConformanceBackend;
-  seed: number;
-  steps: number;
-  maxQueueSize: number;
-}): Promise<{
+type ChaosScenarioResult = {
   replicasConverged: boolean;
   restartAttempts: number;
   duplicateApplyDetected: boolean;
   corruptionDetected: boolean;
   networkStats: { delivered: number; dropped: number; duplicated: number; reordered: number };
-}> {
+};
+
+async function runChaosScenario({
+  testId,
+  backend,
+  seed,
+  steps,
+  maxQueueSize
+}: {
+  testId: string;
+  backend: ConformanceBackend;
+  seed: number;
+  steps: number;
+  maxQueueSize: number;
+}): Promise<ChaosScenarioResult> {
   const rng = createSeededRng(seed);
   const harness = await makePassiveReplicationHarness(backend, 2);
   const graphSpaceId = `space-v2-pr-chaos-${backend}-${seed}`;
@@ -85,6 +104,9 @@ async function runChaosScenario({
   let restartAttempts = 0;
   let duplicateApplyDetected = false;
   let corruptionDetected = false;
+  let convergenceStep: number | null = null;
+  let lastAction = "init";
+  let failureStep: number | null = null;
 
   try {
     for (let step = 0; step < steps; step += 1) {
@@ -92,7 +114,8 @@ async function runChaosScenario({
         txCounter += 1;
         const txId = `prc-${seed}-${txCounter}`;
         const outcome = await harness.appendOnPrimary(graphSpaceId, makeTxBundle(txId, seed + step), makeIdem(txId));
-        expect(outcome.status).toBe("committed");
+        expect(outcome.status, reproLine({ backend, seed, steps, testId, step, lastAction: `append:${txId}` })).toBe("committed");
+        lastAction = `append:${txId}`;
       }
 
       for (const replica of harness.replicas) {
@@ -100,21 +123,25 @@ async function runChaosScenario({
         const shipped = await harness.shipFrom(harness.primary, graphSpaceId, await lastAppliedTxIndex(replica, graphSpaceId));
         for (const envelope of shipped.txEnvelopes.slice(0, 1)) {
           network.send({ from: harness.primary.id, to: replica.id, payload: envelope });
+          lastAction = `ship:${harness.primary.id}->${replica.id}`;
         }
       }
 
       if (rng.chance(0.18)) {
         const replica = harness.replicas[rng.nextInt(harness.replicas.length)];
         network.partition(harness.primary.id, replica.id);
+        lastAction = `partition:${replica.id}`;
       }
       if (rng.chance(0.12)) {
         network.heal();
+        lastAction = "heal";
       }
 
       network.drop(0.08);
       network.duplicate(0.06);
       if (rng.chance(0.2)) {
         network.reorder();
+        lastAction = "reorder";
       }
 
       if (step > 0 && step % 50 === 0) {
@@ -122,16 +149,19 @@ async function runChaosScenario({
         await harness.restartPrimary();
         restartAttempts += 1;
         await harness.restartReplica(harness.replicas[step % harness.replicas.length]);
+        lastAction = "scheduled-restart";
       }
 
       if (rng.chance(0.08)) {
         restartAttempts += 1;
         await harness.restartPrimary();
+        lastAction = "restart-primary";
       }
       if (rng.chance(0.12)) {
         restartAttempts += 1;
         const replica = harness.replicas[rng.nextInt(harness.replicas.length)];
         await harness.restartReplica(replica);
+        lastAction = `restart-${replica.id}`;
       }
 
       const deliveries = 1 + rng.nextInt(3);
@@ -140,6 +170,7 @@ async function runChaosScenario({
         if (!message) break;
         const outcome = await harness.applyToReplica(resolveReplica(harness.replicas, message.to), message.payload);
         assertExpectedReplicationOutcome(outcome);
+        lastAction = `deliver:${message.to}`;
       }
 
       if ((step + 1) % 10 === 0) {
@@ -152,6 +183,10 @@ async function runChaosScenario({
           }
         }
         duplicateApplyDetected ||= snapshot.hasDuplicateEntries;
+
+        if (snapshot.replicas.every((replicaSet) => sameSet(replicaSet, snapshot.primary)) && convergenceStep === null) {
+          convergenceStep = step + 1;
+        }
       }
     }
 
@@ -159,16 +194,123 @@ async function runChaosScenario({
     const finalSnapshot = await readTxSets(harness.primary, harness.replicas, graphSpaceId);
     duplicateApplyDetected ||= finalSnapshot.hasDuplicateEntries;
 
-    return {
+    const result: ChaosScenarioResult = {
       replicasConverged: finalSnapshot.replicas.every((replicaSet) => sameSet(replicaSet, finalSnapshot.primary)),
       restartAttempts,
       duplicateApplyDetected,
       corruptionDetected,
       networkStats: network.stats()
     };
+
+    await recordChaosStats(toChaosStats({
+      testId,
+      backend,
+      seed,
+      steps,
+      result,
+      convergenceStep,
+      failureStep,
+      lastAction,
+      finalSnapshot
+    }));
+
+    return result;
+  } catch (error) {
+    failureStep = inferFailureStep(error) ?? failureStep;
+    const finalSnapshot = await readTxSets(harness.primary, harness.replicas, graphSpaceId);
+    await recordChaosStats(toChaosStats({
+      testId,
+      backend,
+      seed,
+      steps,
+      result: {
+        replicasConverged: false,
+        restartAttempts,
+        duplicateApplyDetected,
+        corruptionDetected,
+        networkStats: network.stats()
+      },
+      convergenceStep,
+      failureStep,
+      lastAction,
+      finalSnapshot,
+      failedInvariantId: testId
+    }));
+    throw error;
   } finally {
     await harness.cleanup();
   }
+}
+
+function toChaosStats({
+  testId,
+  backend,
+  seed,
+  steps,
+  result,
+  convergenceStep,
+  failureStep,
+  lastAction,
+  finalSnapshot,
+  failedInvariantId
+}: {
+  testId: string;
+  backend: ConformanceBackend;
+  seed: number;
+  steps: number;
+  result: ChaosScenarioResult;
+  convergenceStep: number | null;
+  failureStep: number | null;
+  lastAction: string;
+  finalSnapshot: Awaited<ReturnType<typeof readTxSets>>;
+  failedInvariantId?: string;
+}): ChaosStatsRecord {
+  return {
+    testId,
+    seed,
+    steps,
+    backend,
+    delivered: result.networkStats.delivered,
+    dropped: result.networkStats.dropped,
+    duplicated: result.networkStats.duplicated,
+    reordered: result.networkStats.reordered,
+    nbTxPrimary: finalSnapshot.primary.size,
+    nbTxReplicaA: finalSnapshot.replicas[0]?.size ?? 0,
+    nbTxReplicaB: finalSnapshot.replicas[1]?.size ?? 0,
+    convergenceReached: result.replicasConverged,
+    convergenceStep,
+    failedInvariantId: failedInvariantId ?? null,
+    failureStep,
+    lastAction
+  };
+}
+
+function inferFailureStep(error: unknown): number | null {
+  if (!(error instanceof Error)) return null;
+  const matched = error.message.match(/step=(\d+)/);
+  if (!matched) return null;
+  return Number.parseInt(matched[1], 10);
+}
+
+function reproLine({
+  backend,
+  seed,
+  steps,
+  testId,
+  step,
+  lastAction
+}: {
+  backend: ConformanceBackend;
+  seed: number;
+  steps: number;
+  testId: string;
+  step?: number;
+  lastAction?: string;
+}): string {
+  const suffix = [step !== undefined ? `step=${step}` : null, lastAction ? `lastAction=${lastAction}` : null]
+    .filter(Boolean)
+    .join(" ");
+  return `REPRO: seed=${seed} steps=${steps} backend=${backend} test=${testId}${suffix ? ` ${suffix}` : ""}`;
 }
 
 async function flushUntilConverged(
