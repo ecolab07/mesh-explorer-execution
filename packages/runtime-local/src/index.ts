@@ -60,7 +60,9 @@ class RuntimeLocalImpl implements RuntimeLocal {
         principalId: this.principal.principalId
       });
 
-      if (await this.shouldSnapshot()) {
+      // Snapshot policy controls startup maintenance only; read() output must stay deterministic.
+      const shouldCreateSnapshot = await this.shouldSnapshot();
+      if (shouldCreateSnapshot) {
         const startedAt = Date.now();
         const rebuilt = await this.projectionEngine.rebuildWithSnapshot({
           principal: this.principal,
@@ -71,6 +73,8 @@ class RuntimeLocalImpl implements RuntimeLocal {
           graphSpaceId: this.config.graphSpaceId,
           principalId: this.principal.principalId
         });
+      } else {
+        await this.projectionEngine.rebuild(this.principal);
       }
     }
 
@@ -115,6 +119,7 @@ class RuntimeLocalImpl implements RuntimeLocal {
     const intervalMs = this.config.snapshotPolicy.intervalMs;
     if (typeof intervalMs === "number" && intervalMs > 0) {
       const createdAtMs = this.lastSnapshot.createdAt ? Date.parse(this.lastSnapshot.createdAt) : Number.NaN;
+      // Time gates snapshot maintenance only; it must never influence read() view contents.
       if (Number.isFinite(createdAtMs) && Date.now() - createdAtMs < intervalMs) {
         return false;
       }
