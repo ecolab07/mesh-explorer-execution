@@ -8,6 +8,7 @@
       "CT-MW-* V2-lite multi-writer (%s)",
       "CT-P-* Projection determinism",
       "CT-PR-* V2 passive replication (%s)",
+      "CT-PRC-* V2 passive replication chaos (%s)",
       "CT-RS-* V2-lite remote sync (%s)",
       "CT-S-* Security masking and indistinguishability (%s)",
       "CT-SYNC-* Local sync harness (%s)"
@@ -307,6 +308,39 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-PRC-1",
+          "surface": "V2-PassiveReplication",
+          "backend": "InMemory",
+          "testName": "[INV:CT-PRC-1][SURF:V2-PassiveReplication] CT-PRC-1 no divergence under chaos; replicas eventually converge when healed",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+          "oracle": "Under deterministic chaos (drop/dup/reorder/partition/restart), replicas can lag but always converge to the primary txId set after heal + flush.",
+          "criticality": "Structural",
+          "setup": "Setup inferred from test body.",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PRC-2",
+          "surface": "V2-PassiveReplication",
+          "backend": "InMemory",
+          "testName": "[INV:CT-PRC-2][SURF:V2-PassiveReplication] CT-PRC-2 restart safety under chaos",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+          "oracle": "Deterministic primary/replica restarts under chaos never cause double-apply corruption and convergence remains reachable when healed.",
+          "criticality": "Critical",
+          "setup": "Setup inferred from test body.",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PRC-3",
+          "surface": "V2-PassiveReplication",
+          "backend": "InMemory",
+          "testName": "[INV:CT-PRC-3][SURF:V2-PassiveReplication] CT-PRC-3 bounded backlog behavior",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+          "oracle": "When maxQueueSize overflows during deterministic chaos, drops are surfaced via network stats and state integrity remains recoverable without silent corruption.",
+          "criticality": "Regression",
+          "setup": "Setup inferred from test body.",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-RS-1",
           "surface": "V2-RemoteSync",
           "backend": "InMemory",
@@ -418,9 +452,9 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 18,
-        "Structural": 11,
-        "Regression": 7
+        "Critical": 19,
+        "Structural": 12,
+        "Regression": 8
       },
       "criticalInvariantIds": [
         "CT-K-2",
@@ -437,6 +471,7 @@
         "CT-MW-2",
         "CT-PR-1",
         "CT-PR-4",
+        "CT-PRC-2",
         "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
@@ -733,6 +768,39 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-PRC-1",
+          "surface": "V2-PassiveReplication",
+          "backend": "Persistent",
+          "testName": "[INV:CT-PRC-1][SURF:V2-PassiveReplication] CT-PRC-1 no divergence under chaos; replicas eventually converge when healed",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+          "oracle": "Under deterministic chaos (drop/dup/reorder/partition/restart), replicas can lag but always converge to the primary txId set after heal + flush.",
+          "criticality": "Structural",
+          "setup": "Setup inferred from test body.",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PRC-2",
+          "surface": "V2-PassiveReplication",
+          "backend": "Persistent",
+          "testName": "[INV:CT-PRC-2][SURF:V2-PassiveReplication] CT-PRC-2 restart safety under chaos",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+          "oracle": "Deterministic primary/replica restarts under chaos never cause double-apply corruption and convergence remains reachable when healed.",
+          "criticality": "Critical",
+          "setup": "Setup inferred from test body.",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PRC-3",
+          "surface": "V2-PassiveReplication",
+          "backend": "Persistent",
+          "testName": "[INV:CT-PRC-3][SURF:V2-PassiveReplication] CT-PRC-3 bounded backlog behavior",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+          "oracle": "When maxQueueSize overflows during deterministic chaos, drops are surfaced via network stats and state integrity remains recoverable without silent corruption.",
+          "criticality": "Regression",
+          "setup": "Setup inferred from test body.",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-RS-1",
           "surface": "V2-RemoteSync",
           "backend": "Persistent",
@@ -844,9 +912,9 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 18,
-        "Structural": 11,
-        "Regression": 7
+        "Critical": 19,
+        "Structural": 12,
+        "Regression": 8
       },
       "criticalInvariantIds": [
         "CT-K-2",
@@ -863,6 +931,7 @@
         "CT-MW-2",
         "CT-PR-1",
         "CT-PR-4",
+        "CT-PRC-2",
         "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
@@ -1159,6 +1228,39 @@
       "limitations": ""
     },
     {
+      "invariantId": "CT-PRC-1",
+      "surface": "V2-PassiveReplication",
+      "backend": "InMemory",
+      "testName": "[INV:CT-PRC-1][SURF:V2-PassiveReplication] CT-PRC-1 no divergence under chaos; replicas eventually converge when healed",
+      "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+      "oracle": "Under deterministic chaos (drop/dup/reorder/partition/restart), replicas can lag but always converge to the primary txId set after heal + flush.",
+      "criticality": "Structural",
+      "setup": "Setup inferred from test body.",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-PRC-2",
+      "surface": "V2-PassiveReplication",
+      "backend": "InMemory",
+      "testName": "[INV:CT-PRC-2][SURF:V2-PassiveReplication] CT-PRC-2 restart safety under chaos",
+      "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+      "oracle": "Deterministic primary/replica restarts under chaos never cause double-apply corruption and convergence remains reachable when healed.",
+      "criticality": "Critical",
+      "setup": "Setup inferred from test body.",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-PRC-3",
+      "surface": "V2-PassiveReplication",
+      "backend": "InMemory",
+      "testName": "[INV:CT-PRC-3][SURF:V2-PassiveReplication] CT-PRC-3 bounded backlog behavior",
+      "file": "packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts",
+      "oracle": "When maxQueueSize overflows during deterministic chaos, drops are surfaced via network stats and state integrity remains recoverable without silent corruption.",
+      "criticality": "Regression",
+      "setup": "Setup inferred from test body.",
+      "limitations": ""
+    },
+    {
       "invariantId": "CT-RS-1",
       "surface": "V2-RemoteSync",
       "backend": "InMemory",
@@ -1270,9 +1372,9 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 18,
-    "Structural": 11,
-    "Regression": 7
+    "Critical": 19,
+    "Structural": 12,
+    "Regression": 8
   },
   "criticalInvariantIds": [
     "CT-K-2",
@@ -1289,6 +1391,7 @@
     "CT-MW-2",
     "CT-PR-1",
     "CT-PR-4",
+    "CT-PRC-2",
     "CT-RS-2",
     "CT-S-1",
     "CT-S-2",
