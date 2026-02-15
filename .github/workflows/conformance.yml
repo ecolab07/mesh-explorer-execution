@@ -1,8 +1,9 @@
-name: conformance
+name: Conformance
 
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
 
 jobs:
   test:
@@ -23,6 +24,8 @@ jobs:
           version: 10
       - name: Install
         run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm -r build
       - name: Enforce conformance test hygiene
         if: matrix.mesh_backend == 'inmemory'
         run: |
