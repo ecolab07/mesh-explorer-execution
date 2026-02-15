@@ -8,7 +8,7 @@
     "test:all": "pnpm -r test",
     "smoke:node": "node ./scripts/smoke-node.mjs",
     "ci:validate-workflows": "node scripts/ci/validate-conformance-workflow.mjs",
-    "api:contract:update": "node tools/ci/dump-api.mjs --mode=golden",
+    "api:contract:update": "node tools/ci/update-api-contract.mjs",
     "check:api-contract": "node tools/ci/check-api-contract.mjs"
   },
   "devDependencies": {
