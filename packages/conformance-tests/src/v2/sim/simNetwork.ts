@@ -15,6 +15,8 @@ export interface SimNetworkStats {
   dropped: number;
   duplicated: number;
   reordered: number;
+  partitions: number;
+  heals: number;
 }
 
 export class SimNetwork<TPayload> {
@@ -25,7 +27,9 @@ export class SimNetwork<TPayload> {
     delivered: 0,
     dropped: 0,
     duplicated: 0,
-    reordered: 0
+    reordered: 0,
+    partitions: 0,
+    heals: 0
   };
 
   constructor(
@@ -98,10 +102,12 @@ export class SimNetwork<TPayload> {
 
   partition(peerA: string, peerB: string): void {
     this.partitions.add(makePartitionKey(peerA, peerB));
+    this.counters.partitions += 1;
   }
 
   heal(): void {
     this.partitions.clear();
+    this.counters.heals += 1;
   }
 
   stats(): SimNetworkStats {

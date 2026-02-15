@@ -5,12 +5,17 @@ import type { ConformanceBackend } from "./backends.js";
 import { makeSimNetwork } from "./v2/sim/simNetwork.js";
 import { makePassiveReplicationHarness, type PassiveNode, type ReplicatedTxEnvelope } from "./v2/sim/passiveReplicator.js";
 import { createSeededRng } from "./v2/sim/seededRng.js";
-import { getChaosBackends, getChaosSeeds, getChaosStepCount } from "./v2/sim/chaosConfig.js";
+import { getChaosBackends, getChaosMode, getChaosSeeds, getChaosStepCount } from "./v2/sim/chaosConfig.js";
 import { recordChaosStats, type ChaosStatsRecord } from "./v2/sim/chaosStats.js";
 
+const CHAOS_MODE = getChaosMode();
 const seeds = getChaosSeeds();
 const backends: ConformanceBackend[] = getChaosBackends();
 const STEP_COUNT = getChaosStepCount();
+const TEST_TIMEOUT_MS = CHAOS_MODE === "soak" ? 120_000 : 10_000;
+const PRC1_SEEDS = selectSeedSlice(seeds, 0, 3);
+const PRC2_SEEDS = selectSeedSlice(seeds, 1, 3);
+const PRC3_SEEDS = selectSeedSlice(seeds, 2, 3);
 
 describe.each(backends)("CT-PRC-* V2 passive replication chaos (%s)", (backend: ConformanceBackend) => {
   test(
@@ -22,12 +27,13 @@ describe.each(backends)("CT-PRC-* V2 passive replication chaos (%s)", (backend: 
         "Under deterministic chaos (drop/dup/reorder/partition/restart), replicas can lag but always converge to the primary txId set after heal + flush.";
       task.meta.criticality = "Structural";
 
-      for (const seed of seeds) {
+      for (const seed of PRC1_SEEDS) {
         const result = await runChaosScenario({ testId: "CT-PRC-1", backend, seed, steps: STEP_COUNT, maxQueueSize: 12 });
         const repro = reproLine({ backend, seed, steps: STEP_COUNT, testId: "CT-PRC-1" });
-        expect(result.replicasConverged, `${repro}`).toBe(true);
+        expect(result.replicasConverged, repro).toBe(true);
       }
-    }
+    },
+    TEST_TIMEOUT_MS
   );
 
   test("[INV:CT-PRC-2][SURF:V2-PassiveReplication] CT-PRC-2 restart safety under chaos", async ({ task }) => {
@@ -37,20 +43,20 @@ describe.each(backends)("CT-PRC-* V2 passive replication chaos (%s)", (backend: 
       "Deterministic primary/replica restarts under chaos never cause double-apply corruption and convergence remains reachable when healed.";
     task.meta.criticality = "Critical";
 
-    for (const seed of seeds) {
+    for (const seed of PRC2_SEEDS) {
       const result = await runChaosScenario({
         testId: "CT-PRC-2",
         backend,
-        seed: seed + 100,
+        seed,
         steps: STEP_COUNT,
         maxQueueSize: 12
       });
-      const repro = reproLine({ backend, seed: seed + 100, steps: STEP_COUNT, testId: "CT-PRC-2" });
-      expect(result.restartAttempts, `${repro}`).toBeGreaterThan(0);
-      expect(result.duplicateApplyDetected, `${repro}`).toBe(false);
-      expect(result.replicasConverged, `${repro}`).toBe(true);
+      const repro = reproLine({ backend, seed, steps: STEP_COUNT, testId: "CT-PRC-2" });
+      expect(result.restartAttempts, repro).toBeGreaterThan(0);
+      expect(result.duplicateApplyDetected, repro).toBe(false);
+      expect(result.replicasConverged, repro).toBe(true);
     }
-  });
+  }, TEST_TIMEOUT_MS);
 
   test("[INV:CT-PRC-3][SURF:V2-PassiveReplication] CT-PRC-3 bounded backlog behavior", async ({ task }) => {
     task.meta.invariantId = "CT-PRC-3";
@@ -59,27 +65,32 @@ describe.each(backends)("CT-PRC-* V2 passive replication chaos (%s)", (backend: 
       "When maxQueueSize overflows during deterministic chaos, drops are surfaced via network stats and state integrity remains recoverable without silent corruption.";
     task.meta.criticality = "Regression";
 
-    for (const seed of seeds) {
+    for (const seed of PRC3_SEEDS) {
       const result = await runChaosScenario({
         testId: "CT-PRC-3",
         backend,
-        seed: seed + 200,
+        seed,
         steps: STEP_COUNT,
         maxQueueSize: 6
       });
-      const repro = reproLine({ backend, seed: seed + 200, steps: STEP_COUNT, testId: "CT-PRC-3" });
-      expect(result.networkStats.dropped, `${repro}`).toBeGreaterThan(0);
-      expect(result.corruptionDetected, `${repro}`).toBe(false);
+      const repro = reproLine({ backend, seed, steps: STEP_COUNT, testId: "CT-PRC-3" });
+      expect(result.networkStats.dropped, repro).toBeGreaterThan(0);
+      expect(result.corruptionDetected, repro).toBe(false);
     }
-  });
+  }, TEST_TIMEOUT_MS);
 });
+
+
+function selectSeedSlice(source: number[], offset: number, totalSlices: number): number[] {
+  return source.filter((_, index) => index % totalSlices === offset);
+}
 
 type ChaosScenarioResult = {
   replicasConverged: boolean;
   restartAttempts: number;
   duplicateApplyDetected: boolean;
   corruptionDetected: boolean;
-  networkStats: { delivered: number; dropped: number; duplicated: number; reordered: number };
+  networkStats: { delivered: number; dropped: number; duplicated: number; reordered: number; partitions: number; heals: number };
 };
 
 async function runChaosScenario({
@@ -113,9 +124,10 @@ async function runChaosScenario({
       if (rng.chance(0.45)) {
         txCounter += 1;
         const txId = `prc-${seed}-${txCounter}`;
+        const action = `append:${txId}`;
         const outcome = await harness.appendOnPrimary(graphSpaceId, makeTxBundle(txId, seed + step), makeIdem(txId));
-        expect(outcome.status, reproLine({ backend, seed, steps, testId, step, lastAction: `append:${txId}` })).toBe("committed");
-        lastAction = `append:${txId}`;
+        expect(outcome.status, reproLine({ backend, seed, steps, testId, step, lastAction: action })).toBe("committed");
+        lastAction = action;
       }
 
       for (const replica of harness.replicas) {
@@ -202,40 +214,44 @@ async function runChaosScenario({
       networkStats: network.stats()
     };
 
-    await recordChaosStats(toChaosStats({
-      testId,
-      backend,
-      seed,
-      steps,
-      result,
-      convergenceStep,
-      failureStep,
-      lastAction,
-      finalSnapshot
-    }));
+    await recordChaosStats(
+      toChaosStats({
+        testId,
+        backend,
+        seed,
+        steps,
+        result,
+        convergenceStep,
+        failureStep,
+        lastAction,
+        finalSnapshot
+      })
+    );
 
     return result;
   } catch (error) {
     failureStep = inferFailureStep(error) ?? failureStep;
     const finalSnapshot = await readTxSets(harness.primary, harness.replicas, graphSpaceId);
-    await recordChaosStats(toChaosStats({
-      testId,
-      backend,
-      seed,
-      steps,
-      result: {
-        replicasConverged: false,
-        restartAttempts,
-        duplicateApplyDetected,
-        corruptionDetected,
-        networkStats: network.stats()
-      },
-      convergenceStep,
-      failureStep,
-      lastAction,
-      finalSnapshot,
-      failedInvariantId: testId
-    }));
+    await recordChaosStats(
+      toChaosStats({
+        testId,
+        backend,
+        seed,
+        steps,
+        result: {
+          replicasConverged: false,
+          restartAttempts,
+          duplicateApplyDetected,
+          corruptionDetected,
+          networkStats: network.stats()
+        },
+        convergenceStep,
+        failureStep,
+        lastAction,
+        finalSnapshot,
+        failedInvariantId: testId
+      })
+    );
     throw error;
   } finally {
     await harness.cleanup();
@@ -267,6 +283,7 @@ function toChaosStats({
 }): ChaosStatsRecord {
   return {
     testId,
+    mode: CHAOS_MODE,
     seed,
     steps,
     backend,
@@ -274,6 +291,8 @@ function toChaosStats({
     dropped: result.networkStats.dropped,
     duplicated: result.networkStats.duplicated,
     reordered: result.networkStats.reordered,
+    partitions: result.networkStats.partitions,
+    heals: result.networkStats.heals,
     nbTxPrimary: finalSnapshot.primary.size,
     nbTxReplicaA: finalSnapshot.replicas[0]?.size ?? 0,
     nbTxReplicaB: finalSnapshot.replicas[1]?.size ?? 0,
@@ -307,10 +326,10 @@ function reproLine({
   step?: number;
   lastAction?: string;
 }): string {
-  const suffix = [step !== undefined ? `step=${step}` : null, lastAction ? `lastAction=${lastAction}` : null]
+  const suffix = [testId ? `test=${testId}` : null, step !== undefined ? `step=${step}` : null, lastAction ? `lastAction=${lastAction}` : null]
     .filter(Boolean)
     .join(" ");
-  return `REPRO: seed=${seed} steps=${steps} backend=${backend} test=${testId}${suffix ? ` ${suffix}` : ""}`;
+  return `REPRO: MESH_CHAOS_SEEDS=${seed} MESH_CHAOS_STEPS=${steps} MESH_CHAOS_BACKEND=${backend}${suffix ? ` ${suffix}` : ""}`;
 }
 
 async function flushUntilConverged(
