@@ -110,6 +110,26 @@
     "criticality": "Regression"
   },
   {
+    "invariantId": "CT-PR-1",
+    "surface": "V2-PassiveReplication",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-PR-2",
+    "surface": "V2-PassiveReplication",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-PR-3",
+    "surface": "V2-PassiveReplication",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-PR-4",
+    "surface": "V2-PassiveReplication",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-RS-1",
     "surface": "V2-RemoteSync",
     "criticality": "Structural"

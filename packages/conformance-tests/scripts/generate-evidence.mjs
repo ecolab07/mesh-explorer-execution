@@ -157,8 +157,9 @@ async function main() {
     const relativePath = path.relative(repoRoot, filePath).replaceAll(path.sep, "/");
     const content = await fs.readFile(filePath, "utf8");
 
-    const describeMatches = content.matchAll(/describe(?:\.each)?\(\s*"([^"\n]+)"/g);
-    for (const match of describeMatches) {
+    const describeMatches = content.matchAll(/describe\(\s*"([^"\n]+)"/g);
+    const describeEachMatches = content.matchAll(/describe\.each\([^\n]+?\)\(\s*"([^"\n]+)"/g);
+    for (const match of [...describeMatches, ...describeEachMatches]) {
       suiteNames.push(match[1]);
     }
 
