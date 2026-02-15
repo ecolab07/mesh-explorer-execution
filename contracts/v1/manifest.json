@@ -1,0 +1,27 @@
+[
+  {
+    "name": "@mesh/shared",
+    "entry": "src/index.ts",
+    "kind": "public"
+  },
+  {
+    "name": "@mesh/eventstore-local",
+    "entry": "src/index.ts",
+    "kind": "public"
+  },
+  {
+    "name": "@mesh/sync-local",
+    "entry": "src/index.ts",
+    "kind": "public"
+  },
+  {
+    "name": "@mesh/snapshot-minimal",
+    "entry": "src/index.ts",
+    "kind": "public"
+  },
+  {
+    "name": "@mesh/projection-minimal",
+    "entry": "src/index.ts",
+    "kind": "public"
+  }
+]

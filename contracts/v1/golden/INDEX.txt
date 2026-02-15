@@ -1,0 +1,25 @@
+[@mesh/shared] mesh__shared.d.ts
+  export * from "./types.js";
+  export * from "./reasonCodes.js";
+  export * from "./normalizer.js";
+[@mesh/eventstore-local] mesh__eventstore-local.d.ts
+  export * from "./LocalEventStore.js";
+  export * from "./InMemoryLocalEventStore.js";
+  export * from "./FileBackedLocalEventStore.js";
+[@mesh/sync-local] mesh__sync-local.d.ts
+  export interface SyncPollReceipt {
+  export declare class LocalSyncHarness {
+[@mesh/snapshot-minimal] mesh__snapshot-minimal.d.ts
+  export type SnapshotId = string;
+  export type SnapshotVersion = number;
+  export declare const SNAPSHOT_VERSION_V1 = 1;
+  export interface SnapshotEnvelope<TPayload = unknown> {
+  export interface SnapshotStore<TPayload = unknown> {
+  export declare class SnapshotValidationError extends Error {
+  export declare class InMemorySnapshotStore<TPayload = unknown> implements SnapshotStore<TPayload> {
+  export declare class FileBackedSnapshotStore<TPayload = unknown> implements SnapshotStore<TPayload> {
+[@mesh/projection-minimal] mesh__projection-minimal.d.ts
+  export interface ProjectionSnapshot {
+  export interface RebuildStats {
+  export type ProjectionSnapshotEnvelope = SnapshotEnvelope<ProjectionSnapshot>;
+  export declare class PrincipalProjectionEngine {
