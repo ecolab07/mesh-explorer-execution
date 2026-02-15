@@ -130,6 +130,21 @@
     "criticality": "Critical"
   },
   {
+    "invariantId": "CT-PRC-1",
+    "surface": "V2-PassiveReplication",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-PRC-2",
+    "surface": "V2-PassiveReplication",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-PRC-3",
+    "surface": "V2-PassiveReplication",
+    "criticality": "Regression"
+  },
+  {
     "invariantId": "CT-RS-1",
     "surface": "V2-RemoteSync",
     "criticality": "Structural"

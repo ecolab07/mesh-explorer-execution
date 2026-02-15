@@ -32,6 +32,8 @@ export interface PassiveReplicationHarness {
   appendOnNode: (node: PassiveNode, graphSpaceId: string, txBundle: TxBundle, idempotencyCtx: IdempotencyCtx) => Promise<TransactionReceipt | CommandError>;
   shipFrom: (primary: PassiveNode, graphSpaceId: string, cursor: number) => Promise<{ txEnvelopes: ReplicatedTxEnvelope[]; cursorAfter: number }>;
   applyToReplica: (replica: PassiveNode, txEnvelope: ReplicatedTxEnvelope) => Promise<TransactionReceipt | CommandError>;
+  restartPrimary: () => Promise<boolean>;
+  restartReplica: (replica: PassiveNode) => Promise<boolean>;
   cleanup: () => Promise<void>;
 }
 
@@ -58,10 +60,11 @@ export async function makePassiveReplicationHarness(
 
   const replicaStateById = new Map<string, ReplicaState>();
 
-  function getReplicaState(replica: PassiveNode): ReplicaState {
+  async function getReplicaState(replica: PassiveNode, graphSpaceId: string): Promise<ReplicaState> {
     let state = replicaStateById.get(replica.id);
     if (!state) {
-      state = { lastAppliedTxIndex: 0, txHashById: new Map() };
+      const index = await replica.store.readTxIndex(graphSpaceId);
+      state = { lastAppliedTxIndex: index.at(-1)?.txIndex ?? 0, txHashById: new Map() };
       replicaStateById.set(replica.id, state);
     }
     return state;
@@ -133,7 +136,7 @@ export async function makePassiveReplicationHarness(
       throw new Error("applyToReplica requires a read-only replica node");
     }
 
-    const state = getReplicaState(replica);
+    const state = await getReplicaState(replica, txEnvelope.graphSpaceId);
     const expectedNext = state.lastAppliedTxIndex + 1;
 
     if (txEnvelope.txIndex > expectedNext) {
@@ -193,6 +196,19 @@ export async function makePassiveReplicationHarness(
     appendOnNode,
     shipFrom,
     applyToReplica,
+    restartPrimary: async () => {
+      if (backend !== "persistent") return false;
+      primary.store = await writerScope.reopen();
+      return true;
+    },
+    restartReplica: async (replica) => {
+      if (backend !== "persistent") return false;
+      const idx = replicas.findIndex((node) => node.id === replica.id);
+      if (idx < 0) return false;
+      replicas[idx].store = await replicaScopes[idx].reopen();
+      replicaStateById.delete(replicas[idx].id);
+      return true;
+    },
     cleanup: async () => {
       await Promise.all([primary.cleanup(), ...replicas.map((replica) => replica.cleanup())]);
     }

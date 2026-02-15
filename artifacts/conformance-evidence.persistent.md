@@ -1,7 +1,7 @@
 # Conformance Evidence (Persistent backend)
 
 - Vitest: ^2.1.8
-- Suites: CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-S-* Security masking and indistinguishability (%s), CT-SYNC-* Local sync harness (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-RS-* V2-lite remote sync (%s)
+- Suites: CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-S-* Security masking and indistinguishability (%s), CT-SYNC-* Local sync harness (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-RS-* V2-lite remote sync (%s)
 
 ## Invariant Coverage
 | InvariantID | Surface | Backend | Test(s) | Oracle | Criticality | Preconditions / Setup | Limitations connues |
@@ -32,6 +32,9 @@
 | CT-PR-2 | V2-PassiveReplication | Persistent | packages/conformance-tests/src/ct_v2_passive_replication.test.ts::[INV:CT-PR-2][SURF:V2-PassiveReplication] CT-PR-2: tx-order preservation across shipping | Across deterministic seeds [1..10], replica applies txIndex-ordered stream safely under reorder: out-of-order deliveries are rejected until gaps are filled without state corruption. | Structural | const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-2-${seed}` |  |
 | CT-PR-3 | V2-PassiveReplication | Persistent | packages/conformance-tests/src/ct_v2_passive_replication.test.ts::[INV:CT-PR-3][SURF:V2-PassiveReplication] CT-PR-3: catch-up after downtime | Across deterministic seeds [1..10], a replica offline for K tx catches up via poll-from-cursor and converges to primary txId set. | Structural | const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-3-${seed}` |  |
 | CT-PR-4 | V2-PassiveReplication | Persistent | packages/conformance-tests/src/ct_v2_passive_replication.test.ts::[INV:CT-PR-4][SURF:V2-PassiveReplication] CT-PR-4: divergence detection | Across deterministic seeds [1..10], intentional envelope corruption is surfaced as normalized REPLICATION_DIVERGENCE_DETECTED error and replication does not proceed silently. | Critical | const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-4-${seed}` |  |
+| CT-PRC-1 | V2-PassiveReplication | Persistent | packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts::[INV:CT-PRC-1][SURF:V2-PassiveReplication] CT-PRC-1 no divergence under chaos; replicas eventually converge when healed | Under deterministic chaos (drop/dup/reorder/partition/restart), replicas can lag but always converge to the primary txId set after heal + flush. | Structural | Setup inferred from test body. |  |
+| CT-PRC-2 | V2-PassiveReplication | Persistent | packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts::[INV:CT-PRC-2][SURF:V2-PassiveReplication] CT-PRC-2 restart safety under chaos | Deterministic primary/replica restarts under chaos never cause double-apply corruption and convergence remains reachable when healed. | Critical | Setup inferred from test body. |  |
+| CT-PRC-3 | V2-PassiveReplication | Persistent | packages/conformance-tests/src/ct_v2_passive_replication_chaos.test.ts::[INV:CT-PRC-3][SURF:V2-PassiveReplication] CT-PRC-3 bounded backlog behavior | When maxQueueSize overflows during deterministic chaos, drops are surfaced via network stats and state integrity remains recoverable without silent corruption. | Regression | Setup inferred from test body. |  |
 | CT-RS-1 | V2-RemoteSync | Persistent | packages/conformance-tests/src/ct_v2_remote_sync.test.ts::[INV:CT-RS-1][SURF:V2-RemoteSync] CT-RS-1: eventual delivery converges under dup+reorder | Across deterministic seeds [1..5], sufficient ticks without drops make both peers converge on identical txId sets despite duplicates/reorder. | Structural | const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-1-${seed}` |  |
 | CT-RS-2 | V2-RemoteSync | Persistent | packages/conformance-tests/src/ct_v2_remote_sync.test.ts::[INV:CT-RS-2][SURF:V2-RemoteSync] CT-RS-2: duplicate deliveries are idempotent | Across deterministic seeds [1..5], applying the same replication envelope twice does not create extra tx nor divergence. | Critical | const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-2-${seed}` |  |
 | CT-RS-3 | V2-RemoteSync | Persistent | packages/conformance-tests/src/ct_v2_remote_sync.test.ts::[INV:CT-RS-3][SURF:V2-RemoteSync] CT-RS-3: principal cursor remains monotone with disorder | Across deterministic seeds [1..5], consumer polling on replicated peer observes monotone principalCursorAfter under network disorder. | Regression | const peers = await makeSimPeers(backend); const graphSpaceId = `space-v2-rs-3-${seed}` |  |
@@ -44,10 +47,10 @@
 | CT-SYNC-4 | Sync | Persistent | packages/conformance-tests/src/ct_sync_harness.test.ts::[INV:CT-SYNC-4][SURF:Sync] CT-SYNC-4 contradiction: rejected submit is never observable in poll | Rejected submit must never appear in subsequent poll results. | Regression | const graphSpaceId = "space-sync4"; const harness = new LocalSyncHarness(store, graphSpaceId) |  |
 
 ## Criticality summary
-- Critical: 18
-- Structural: 11
-- Regression: 7
-- Critical IDs: CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-PR-1, CT-PR-4, CT-RS-2, CT-S-1, CT-S-2, CT-SYNC-3
+- Critical: 19
+- Structural: 12
+- Regression: 8
+- Critical IDs: CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-PR-1, CT-PR-4, CT-PRC-2, CT-RS-2, CT-S-1, CT-S-2, CT-SYNC-3
 
 ## Coverage gaps
 Coverage gaps: none.
