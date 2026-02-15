@@ -3,7 +3,14 @@
     "vitestVersion": "^2.1.8",
     "suites": [
       "CT-C-* Cursor semantics per principal",
-      "CT-P-* Projection determinism"
+      "CT-K-* Kernel command semantics (%s)",
+      "CT-L-* Core Local (%s)",
+      "CT-MW-* V2-lite multi-writer (%s)",
+      "CT-P-* Projection determinism",
+      "CT-PR-* V2 passive replication (%s)",
+      "CT-RS-* V2-lite remote sync (%s)",
+      "CT-S-* Security masking and indistinguishability (%s)",
+      "CT-SYNC-* Local sync harness (%s)"
     ],
     "backends": [
       "InMemory",
@@ -256,6 +263,50 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-PR-1",
+          "surface": "V2-PassiveReplication",
+          "backend": "InMemory",
+          "testName": "[INV:CT-PR-1][SURF:V2-PassiveReplication] CT-PR-1: exactly-once apply under duplicate delivery",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+          "oracle": "Across deterministic seeds [1..10], duplicate tx-envelope deliveries from writer-authority yield same final replica state and stable committed receipts.",
+          "criticality": "Critical",
+          "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-1-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PR-2",
+          "surface": "V2-PassiveReplication",
+          "backend": "InMemory",
+          "testName": "[INV:CT-PR-2][SURF:V2-PassiveReplication] CT-PR-2: tx-order preservation across shipping",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+          "oracle": "Across deterministic seeds [1..10], replica applies txIndex-ordered stream safely under reorder: out-of-order deliveries are rejected until gaps are filled without state corruption.",
+          "criticality": "Structural",
+          "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-2-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PR-3",
+          "surface": "V2-PassiveReplication",
+          "backend": "InMemory",
+          "testName": "[INV:CT-PR-3][SURF:V2-PassiveReplication] CT-PR-3: catch-up after downtime",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+          "oracle": "Across deterministic seeds [1..10], a replica offline for K tx catches up via poll-from-cursor and converges to primary txId set.",
+          "criticality": "Structural",
+          "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-3-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PR-4",
+          "surface": "V2-PassiveReplication",
+          "backend": "InMemory",
+          "testName": "[INV:CT-PR-4][SURF:V2-PassiveReplication] CT-PR-4: divergence detection",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+          "oracle": "Across deterministic seeds [1..10], intentional envelope corruption is surfaced as normalized REPLICATION_DIVERGENCE_DETECTED error and replication does not proceed silently.",
+          "criticality": "Critical",
+          "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-4-${seed}`",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-RS-1",
           "surface": "V2-RemoteSync",
           "backend": "InMemory",
@@ -367,8 +418,8 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 16,
-        "Structural": 9,
+        "Critical": 18,
+        "Structural": 11,
         "Regression": 7
       },
       "criticalInvariantIds": [
@@ -384,6 +435,8 @@
         "CT-L-8",
         "CT-MW-1",
         "CT-MW-2",
+        "CT-PR-1",
+        "CT-PR-4",
         "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
@@ -636,6 +689,50 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-PR-1",
+          "surface": "V2-PassiveReplication",
+          "backend": "Persistent",
+          "testName": "[INV:CT-PR-1][SURF:V2-PassiveReplication] CT-PR-1: exactly-once apply under duplicate delivery",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+          "oracle": "Across deterministic seeds [1..10], duplicate tx-envelope deliveries from writer-authority yield same final replica state and stable committed receipts.",
+          "criticality": "Critical",
+          "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-1-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PR-2",
+          "surface": "V2-PassiveReplication",
+          "backend": "Persistent",
+          "testName": "[INV:CT-PR-2][SURF:V2-PassiveReplication] CT-PR-2: tx-order preservation across shipping",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+          "oracle": "Across deterministic seeds [1..10], replica applies txIndex-ordered stream safely under reorder: out-of-order deliveries are rejected until gaps are filled without state corruption.",
+          "criticality": "Structural",
+          "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-2-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PR-3",
+          "surface": "V2-PassiveReplication",
+          "backend": "Persistent",
+          "testName": "[INV:CT-PR-3][SURF:V2-PassiveReplication] CT-PR-3: catch-up after downtime",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+          "oracle": "Across deterministic seeds [1..10], a replica offline for K tx catches up via poll-from-cursor and converges to primary txId set.",
+          "criticality": "Structural",
+          "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-3-${seed}`",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-PR-4",
+          "surface": "V2-PassiveReplication",
+          "backend": "Persistent",
+          "testName": "[INV:CT-PR-4][SURF:V2-PassiveReplication] CT-PR-4: divergence detection",
+          "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+          "oracle": "Across deterministic seeds [1..10], intentional envelope corruption is surfaced as normalized REPLICATION_DIVERGENCE_DETECTED error and replication does not proceed silently.",
+          "criticality": "Critical",
+          "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-4-${seed}`",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-RS-1",
           "surface": "V2-RemoteSync",
           "backend": "Persistent",
@@ -747,8 +844,8 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 16,
-        "Structural": 9,
+        "Critical": 18,
+        "Structural": 11,
         "Regression": 7
       },
       "criticalInvariantIds": [
@@ -764,6 +861,8 @@
         "CT-L-8",
         "CT-MW-1",
         "CT-MW-2",
+        "CT-PR-1",
+        "CT-PR-4",
         "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
@@ -1016,6 +1115,50 @@
       "limitations": ""
     },
     {
+      "invariantId": "CT-PR-1",
+      "surface": "V2-PassiveReplication",
+      "backend": "InMemory",
+      "testName": "[INV:CT-PR-1][SURF:V2-PassiveReplication] CT-PR-1: exactly-once apply under duplicate delivery",
+      "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+      "oracle": "Across deterministic seeds [1..10], duplicate tx-envelope deliveries from writer-authority yield same final replica state and stable committed receipts.",
+      "criticality": "Critical",
+      "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-1-${seed}`",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-PR-2",
+      "surface": "V2-PassiveReplication",
+      "backend": "InMemory",
+      "testName": "[INV:CT-PR-2][SURF:V2-PassiveReplication] CT-PR-2: tx-order preservation across shipping",
+      "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+      "oracle": "Across deterministic seeds [1..10], replica applies txIndex-ordered stream safely under reorder: out-of-order deliveries are rejected until gaps are filled without state corruption.",
+      "criticality": "Structural",
+      "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-2-${seed}`",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-PR-3",
+      "surface": "V2-PassiveReplication",
+      "backend": "InMemory",
+      "testName": "[INV:CT-PR-3][SURF:V2-PassiveReplication] CT-PR-3: catch-up after downtime",
+      "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+      "oracle": "Across deterministic seeds [1..10], a replica offline for K tx catches up via poll-from-cursor and converges to primary txId set.",
+      "criticality": "Structural",
+      "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-3-${seed}`",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-PR-4",
+      "surface": "V2-PassiveReplication",
+      "backend": "InMemory",
+      "testName": "[INV:CT-PR-4][SURF:V2-PassiveReplication] CT-PR-4: divergence detection",
+      "file": "packages/conformance-tests/src/ct_v2_passive_replication.test.ts",
+      "oracle": "Across deterministic seeds [1..10], intentional envelope corruption is surfaced as normalized REPLICATION_DIVERGENCE_DETECTED error and replication does not proceed silently.",
+      "criticality": "Critical",
+      "setup": "const harness = await makePassiveReplicationHarness(backend, 1); const graphSpaceId = `space-v2-pr-4-${seed}`",
+      "limitations": ""
+    },
+    {
       "invariantId": "CT-RS-1",
       "surface": "V2-RemoteSync",
       "backend": "InMemory",
@@ -1127,8 +1270,8 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 16,
-    "Structural": 9,
+    "Critical": 18,
+    "Structural": 11,
     "Regression": 7
   },
   "criticalInvariantIds": [
@@ -1144,6 +1287,8 @@
     "CT-L-8",
     "CT-MW-1",
     "CT-MW-2",
+    "CT-PR-1",
+    "CT-PR-4",
     "CT-RS-2",
     "CT-S-1",
     "CT-S-2",
