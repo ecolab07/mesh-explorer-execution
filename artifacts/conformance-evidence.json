@@ -3,11 +3,7 @@
     "vitestVersion": "^2.1.8",
     "suites": [
       "CT-C-* Cursor semantics per principal",
-      "CT-K-* Kernel command semantics",
-      "CT-L-* Core Local",
-      "CT-P-* Projection determinism",
-      "CT-S-* Security masking and indistinguishability",
-      "CT-SYNC-* Local sync harness"
+      "CT-P-* Projection determinism"
     ]
   },
   "invariants": [
@@ -48,7 +44,7 @@
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.",
       "criticality": "Structural",
-      "setup": "const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore()); const result = await kernel.execute({",
+      "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({",
       "limitations": ""
     },
     {
@@ -58,7 +54,7 @@
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.",
       "criticality": "Critical",
-      "setup": "const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore()); const first = await kernel.execute({",
+      "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({",
       "limitations": ""
     },
     {
@@ -68,7 +64,7 @@
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
       "criticality": "Critical",
-      "setup": "const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore()); const accepted = await kernel.execute({",
+      "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({",
       "limitations": ""
     },
     {
@@ -88,7 +84,7 @@
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Malformed command input must be rejected with VALIDATION/MALFORMED_COMMAND.",
       "criticality": "Regression",
-      "setup": "const kernel = new KernelMinimalImpl(new InMemoryLocalEventStore()); const result = await kernel.execute({ ...baseCommand, commandId: \"\", idempotencyKey: \"\", payload: undefined as never })",
+      "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({ ...baseCommand, commandId: \"\", idempotencyKey: \"\", payload: undefined as never })",
       "limitations": ""
     },
     {
@@ -98,7 +94,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Appended transaction envelopes are immutable in canonical form across repeated reads.",
       "criticality": "Critical",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l1\"",
+      "setup": "const store = scope.store; const graphSpaceId = \"space-l1\"",
       "limitations": ""
     },
     {
@@ -108,7 +104,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Extending read ranges preserves tx-closed boundaries and stable event ordering.",
       "criticality": "Critical",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l2\"",
+      "setup": "const store = scope.store; const graphSpaceId = \"space-l2\"",
       "limitations": ""
     },
     {
@@ -118,7 +114,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "txIndex increases monotonically and stream sequence ordering stays consistent across tx boundaries.",
       "criticality": "Critical",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l3\"",
+      "setup": "const store = scope.store; const graphSpaceId = \"space-l3\"",
       "limitations": ""
     },
     {
@@ -128,7 +124,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "A transaction is atomically persisted once and idempotent replay returns the original committed receipt.",
       "criticality": "Critical",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l4\"",
+      "setup": "const store = scope.store; const graphSpaceId = \"space-l4\"",
       "limitations": ""
     },
     {
@@ -138,7 +134,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Crash before commit must leave no partial transaction state (neither events nor idempotency entry).",
       "criticality": "Critical",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l5\"",
+      "setup": "const store = scope.store; const graphSpaceId = \"space-l5\"",
       "limitations": ""
     },
     {
@@ -148,7 +144,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Empty transaction payload must be rejected with VALIDATION/EMPTY_TRANSACTION.",
       "criticality": "Regression",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-l6\"",
+      "setup": "const store = scope.store; const graphSpaceId = \"space-l6\"",
       "limitations": ""
     },
     {
@@ -208,7 +204,7 @@
       "file": "packages/conformance-tests/src/ct_s_security.test.ts",
       "oracle": "Masked and absent transaction reads must return identical normalized NOT_FOUND_OR_MASKED rejections.",
       "criticality": "Critical",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-s1\"",
+      "setup": "const graphSpaceId = \"space-s1\"; await store.appendTx(",
       "limitations": ""
     },
     {
@@ -218,7 +214,7 @@
       "file": "packages/conformance-tests/src/ct_s_security.test.ts",
       "oracle": "Masked event visibility removes entire transaction from principal range without cursor holes.",
       "criticality": "Critical",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-s2\"",
+      "setup": "const graphSpaceId = \"space-s2\"; await store.appendTx(",
       "limitations": ""
     },
     {
@@ -228,7 +224,7 @@
       "file": "packages/conformance-tests/src/ct_s_security.test.ts",
       "oracle": "Serialized response shape for masked and absent tx lookups must be indistinguishable.",
       "criticality": "Regression",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-s3\"",
+      "setup": "const graphSpaceId = \"space-s3\"; await store.appendTx(",
       "limitations": ""
     },
     {
@@ -238,7 +234,7 @@
       "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
       "oracle": "poll returns only principal-visible txIds and principalCursorAfter equals visible tx count consumed.",
       "criticality": "Structural",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-sync1\"",
+      "setup": "const graphSpaceId = \"space-sync1\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
       "limitations": ""
     },
     {
@@ -248,7 +244,7 @@
       "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
       "oracle": "subscribeOnce follow-up cursor must chain exactly like poll without skip/duplication.",
       "criticality": "Structural",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-sync2\"",
+      "setup": "const graphSpaceId = \"space-sync2\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
       "limitations": ""
     },
     {
@@ -258,7 +254,7 @@
       "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
       "oracle": "submit->poll->receipt->replay remain coherent: committed tx is seen once then replay is empty.",
       "criticality": "Critical",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-sync3\"",
+      "setup": "const graphSpaceId = \"space-sync3\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
       "limitations": ""
     },
     {
@@ -268,7 +264,7 @@
       "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
       "oracle": "Rejected submit must never appear in subsequent poll results.",
       "criticality": "Regression",
-      "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-sync4\"",
+      "setup": "const graphSpaceId = \"space-sync4\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
       "limitations": ""
     }
   ],
