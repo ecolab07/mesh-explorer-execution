@@ -1,0 +1,25 @@
+{
+  "name": "@mesh/runtime-local",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mesh/shared": "workspace:*",
+    "@mesh/kernel-minimal": "workspace:*",
+    "@mesh/eventstore-local": "workspace:*",
+    "@mesh/projection-minimal": "workspace:*",
+    "@mesh/snapshot-minimal": "workspace:*"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  }
+}
