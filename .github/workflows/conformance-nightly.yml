@@ -1,0 +1,43 @@
+name: Conformance Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  nightly-soak:
+    runs-on: ubuntu-latest
+    env:
+      MESH_BACKEND: "persistent"
+      MESH_CHAOS_SEEDS: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50"
+      MESH_CHAOS_STEPS: "1000"
+      MESH_CHAOS_BACKEND: "persistent"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm -r build
+      - name: Test (nightly soak)
+        run: pnpm test
+      - name: Critical gate
+        run: pnpm --filter @mesh/conformance-tests check:critical
+      - name: Upload nightly conformance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-nightly-artifacts
+          path: |
+            artifacts/conformance-evidence.runtime.json
+            artifacts/chaos-stats.json
+            **/*.log
+            **/*dump*.json
+            **/vitest*.xml
+          if-no-files-found: ignore
