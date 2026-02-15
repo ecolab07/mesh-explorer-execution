@@ -3,8 +3,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const WORKFLOWS_DIR = '.github/workflows';
-const EXPECTED_FILE = 'conformance.yml';
-const EXPECTED_PATH = join(WORKFLOWS_DIR, EXPECTED_FILE);
+const PRIMARY_FILE = 'conformance.yml';
+const NIGHTLY_FILE = 'conformance-nightly.yml';
+const ALLOWED_CONFORMANCE_FILES = [PRIMARY_FILE, NIGHTLY_FILE];
 
 function fail(message) {
   console.error(message);
@@ -40,19 +41,34 @@ function checkRequiredPattern(content, pattern, message) {
   }
 }
 
+function readWorkflowContent(fileName) {
+  const workflowPath = join(WORKFLOWS_DIR, fileName);
+  try {
+    return readFileSync(workflowPath, 'utf8');
+  } catch {
+    fail(`Missing required workflow file: ${workflowPath}`);
+    return '';
+  }
+}
+
 const workflowFiles = listWorkflowFiles();
 const conformanceFiles = workflowFiles.filter((name) => /^conformance.*\.ya?ml$/i.test(name));
 
-if (conformanceFiles.length !== 1) {
-  fail(`Multiple conformance workflows found: ${conformanceFiles.join(', ') || '(none)'}`);
+const unexpectedConformanceFiles = conformanceFiles.filter(
+  (name) => !ALLOWED_CONFORMANCE_FILES.includes(name),
+);
+
+if (unexpectedConformanceFiles.length > 0) {
+  fail(
+    `Unexpected conformance workflow(s): ${unexpectedConformanceFiles.join(', ')}. Allowed: ${ALLOWED_CONFORMANCE_FILES.join(', ')}`,
+  );
 }
 
-let workflowContent = '';
-try {
-  workflowContent = readFileSync(EXPECTED_PATH, 'utf8');
-} catch {
-  fail(`Missing required workflow file: ${EXPECTED_PATH}`);
+if (!workflowFiles.includes(PRIMARY_FILE)) {
+  fail(`Missing required workflow file: ${join(WORKFLOWS_DIR, PRIMARY_FILE)}`);
 }
+
+const workflowContent = readWorkflowContent(PRIMARY_FILE);
 
 if (!workflowContent) {
   process.exit(process.exitCode ?? 1);
@@ -118,6 +134,69 @@ for (const requiredPath of requiredPaths) {
 
 if (!/github\.event_name|\$\{\{\s*github\.event_name\s*}}/.test(workflowContent)) {
   console.log('Info: no explicit github.event_name condition found (optional check skipped).');
+}
+
+if (workflowFiles.includes(NIGHTLY_FILE)) {
+  const nightlyContent = readWorkflowContent(NIGHTLY_FILE);
+
+  checkRequiredPattern(
+    nightlyContent,
+    /(^|\n)on:\s*[\s\S]*?\bschedule\s*:/m,
+    'Missing step: trigger schedule in conformance-nightly.yml',
+  );
+
+  checkRequiredPattern(
+    nightlyContent,
+    /(^|\n)on:\s*[\s\S]*?\bworkflow_dispatch\s*:/m,
+    'Missing step: trigger workflow_dispatch in conformance-nightly.yml',
+  );
+
+  if (/(^|\n)on:\s*[\s\S]*?\bpull_request\s*:/m.test(nightlyContent)) {
+    fail('Forbidden trigger in conformance-nightly.yml: pull_request');
+  }
+
+  if (/(^|\n)on:\s*[\s\S]*?\bpush\s*:/m.test(nightlyContent)) {
+    fail('Forbidden trigger in conformance-nightly.yml: push');
+  }
+
+  checkRequiredPattern(
+    nightlyContent,
+    /pnpm\s+install\s+--frozen-lockfile/m,
+    'Missing step in conformance-nightly.yml: pnpm install --frozen-lockfile',
+  );
+
+  checkRequiredPattern(
+    nightlyContent,
+    /pnpm\s+-r\s+build/m,
+    'Missing step in conformance-nightly.yml: pnpm -r build',
+  );
+
+  checkRequiredPattern(
+    nightlyContent,
+    /pnpm\s+(?:--filter\s+@mesh\/conformance-tests\s+test|test)\b/m,
+    'Missing step in conformance-nightly.yml: pnpm test OR pnpm --filter @mesh/conformance-tests test',
+  );
+
+  checkRequiredPattern(
+    nightlyContent,
+    /pnpm\s+--filter\s+@mesh\/conformance-tests\s+check:critical\b/m,
+    'Missing step in conformance-nightly.yml: pnpm --filter @mesh/conformance-tests check:critical',
+  );
+
+  if (/pnpm\s+--filter\s+@mesh\/conformance-tests\s+check:artifacts-clean\b/m.test(nightlyContent)) {
+    fail('Forbidden step in conformance-nightly.yml: pnpm --filter @mesh/conformance-tests check:artifacts-clean');
+  }
+
+  if (!/uses:\s*actions\/upload-artifact@/m.test(nightlyContent)) {
+    fail('Missing step in conformance-nightly.yml: upload artifacts');
+  }
+
+  const nightlyRequiredPaths = ['artifacts/conformance-evidence.runtime.json', 'artifacts/chaos-stats.json'];
+  for (const requiredPath of nightlyRequiredPaths) {
+    if (!nightlyContent.includes(requiredPath)) {
+      fail(`Upload artifact path missing in conformance-nightly.yml: ${requiredPath}`);
+    }
+  }
 }
 
 if (process.exitCode && process.exitCode !== 0) {
