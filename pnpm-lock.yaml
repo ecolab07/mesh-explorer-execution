@@ -82,6 +82,24 @@ importers:
         specifier: workspace:*
         version: link:../snapshot-minimal
 
+  packages/runtime-local:
+    dependencies:
+      '@mesh/eventstore-local':
+        specifier: workspace:*
+        version: link:../eventstore-local
+      '@mesh/kernel-minimal':
+        specifier: workspace:*
+        version: link:../kernel-minimal
+      '@mesh/projection-minimal':
+        specifier: workspace:*
+        version: link:../projection-minimal
+      '@mesh/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@mesh/snapshot-minimal':
+        specifier: workspace:*
+        version: link:../snapshot-minimal
+
   packages/shared: {}
 
   packages/snapshot-minimal:
