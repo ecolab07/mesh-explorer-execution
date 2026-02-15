@@ -22,6 +22,15 @@ importers:
         specifier: 4.57.1
         version: 4.57.1
 
+  packages/cli:
+    dependencies:
+      '@mesh/runtime-local':
+        specifier: workspace:*
+        version: link:../runtime-local
+      '@mesh/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/conformance-harness:
     dependencies:
       '@mesh/eventstore-local':
