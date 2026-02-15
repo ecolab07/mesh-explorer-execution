@@ -1,5 +1,5 @@
 {
-  "name": "@mesh/projection-minimal",
+  "name": "@mesh/snapshot-minimal",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,9 +9,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@mesh/eventstore-local": "workspace:*",
-    "@mesh/shared": "workspace:*",
-    "@mesh/snapshot-minimal": "workspace:*"
+    "@mesh/shared": "workspace:*"
   },
   "exports": {
     ".": {

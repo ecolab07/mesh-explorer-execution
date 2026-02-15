@@ -206,18 +206,44 @@ export class FileBackedLocalEventStore implements LocalEventStore {
       })
       .filter((tx) => this.getTxVisibility(principal, tx.meta, tx.graph) === "allow");
 
-    const start = Math.max(0, fromPrincipalCursorExclusive);
-    const txs = visibleTxs.slice(start, start + limit);
-    return { txs, cursor: start + txs.length };
+    if (fromPrincipalCursorExclusive <= visibleTxs.length) {
+      const txs = visibleTxs.slice(fromPrincipalCursorExclusive, fromPrincipalCursorExclusive + limit);
+      return { txs, cursor: fromPrincipalCursorExclusive + txs.length };
+    }
+
+    const txs = visibleTxs.filter((tx) => tx.txIndex > fromPrincipalCursorExclusive).slice(0, limit);
+    return { txs, cursor: txs[txs.length - 1]?.txIndex ?? fromPrincipalCursorExclusive };
   }
 
   async getPrincipalCursorHead(graphSpaceId: string, principal?: PrincipalContext): Promise<number> {
-    const next = await this.readPrincipalTxRange(graphSpaceId, 0, Number.MAX_SAFE_INTEGER, principal);
-    return next.cursor;
+    const space = this.getSpace(graphSpaceId);
+    if (!space) return 0;
+    return space.txIndex
+      .map((txEntry) => {
+        const meta = space.meta.filter((e) => e.txId === txEntry.txId);
+        const graph = space.graph.filter((e) => e.txId === txEntry.txId);
+        return { meta, graph };
+      })
+      .filter((tx) => this.getTxVisibility(principal, tx.meta, tx.graph) === "allow").length;
   }
 
   async resolveRevision(_graphSpaceId: string, _revisionToken: string): Promise<Cursor | null> {
     return null;
+  }
+
+  async compactUpToCursor(params: { graphSpaceId: string; cursorExclusive: number }): Promise<void> {
+    await this.loadState();
+    const space = this.getSpace(params.graphSpaceId);
+    if (!space) return;
+
+    const cutoff = Math.max(0, params.cursorExclusive);
+    const prunedTxIds = new Set(space.txIndex.filter((entry) => entry.txIndex < cutoff).map((entry) => entry.txId));
+    if (prunedTxIds.size === 0) return;
+
+    space.txIndex = space.txIndex.filter((entry) => !prunedTxIds.has(entry.txId));
+    space.meta = space.meta.filter((event) => !prunedTxIds.has(event.txId));
+    space.graph = space.graph.filter((event) => !prunedTxIds.has(event.txId));
+    await this.persistState();
   }
 
   async close(): Promise<void> {

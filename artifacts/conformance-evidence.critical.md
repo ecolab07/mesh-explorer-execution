@@ -1,11 +1,13 @@
 # Conformance Evidence (Critical)
 
 - Vitest: ^2.1.8
-- Suites: CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-S-* Security masking and indistinguishability (%s), CT-SYNC-* Local sync harness (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-PR-FUZZ V2 passive replication fuzz (%s), CT-RS-* V2-lite remote sync (%s)
+- Suites: CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-S-* Security masking and indistinguishability (%s), CT-SNAP/COMP-* (%s), CT-SYNC-* Local sync harness (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-PR-FUZZ V2 passive replication fuzz (%s), CT-RS-* V2-lite remote sync (%s)
 
 ## Invariant Coverage
 | InvariantID | Surface | Backend | Test(s) | Oracle | Criticality | Preconditions / Setup | Limitations connues |
 |---|---|---|---|---|---|---|---|
+| CT-COMP-1 | Compaction | InMemory | packages/conformance-tests/src/ct_snapshots_compaction.test.ts::[INV:CT-COMP-1][SURF:Compaction] CT-COMP-1 compaction safety | Compacting tx below a durable snapshot cursor preserves final projection state after snapshot+replay rebuild. | Critical | const graphSpaceId = "space-comp-1"; const principal = { principalId: "alice" } |  |
+| CT-COMP-2 | Compaction | InMemory | packages/conformance-tests/src/ct_snapshots_compaction.test.ts::[INV:CT-COMP-2][SURF:Compaction] CT-COMP-2 compaction does not break idempotency | Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids. | Critical | const graphSpaceId = "space-comp-2"; const txBundle = { txId: "tx-idem", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] } |  |
 | CT-K-2 | Kernel | InMemory | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt | Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt. | Critical | const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({ |  |
 | CT-K-3 | Kernel | InMemory | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected | Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH. | Critical | const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({ |  |
 | CT-K-4 | Kernel | InMemory | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions | Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH. | Critical | const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore) |  |
@@ -25,6 +27,8 @@
 | CT-S-1 | Security | InMemory | packages/conformance-tests/src/ct_s_security.test.ts::[INV:CT-S-1][SURF:Security] CT-S-1: absent and masked tx are indistinguishable | Masked and absent transaction reads must return identical normalized NOT_FOUND_OR_MASKED rejections. | Critical | const graphSpaceId = "space-s1"; await store.appendTx( |  |
 | CT-S-2 | Security | InMemory | packages/conformance-tests/src/ct_s_security.test.ts::[INV:CT-S-2][SURF:Security] CT-S-2: masked event hides full transaction without observable holes | Masked event visibility removes entire transaction from principal range without cursor holes. | Critical | const graphSpaceId = "space-s2"; await store.appendTx( |  |
 | CT-SYNC-3 | Sync | InMemory | packages/conformance-tests/src/ct_sync_harness.test.ts::[INV:CT-SYNC-3][SURF:Sync] CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay | submit->poll->receipt->replay remain coherent: committed tx is seen once then replay is empty. | Critical | const graphSpaceId = "space-sync3"; const harness = new LocalSyncHarness(store, graphSpaceId) |  |
+| CT-COMP-1 | Compaction | Persistent | packages/conformance-tests/src/ct_snapshots_compaction.test.ts::[INV:CT-COMP-1][SURF:Compaction] CT-COMP-1 compaction safety | Compacting tx below a durable snapshot cursor preserves final projection state after snapshot+replay rebuild. | Critical | const graphSpaceId = "space-comp-1"; const principal = { principalId: "alice" } |  |
+| CT-COMP-2 | Compaction | Persistent | packages/conformance-tests/src/ct_snapshots_compaction.test.ts::[INV:CT-COMP-2][SURF:Compaction] CT-COMP-2 compaction does not break idempotency | Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids. | Critical | const graphSpaceId = "space-comp-2"; const txBundle = { txId: "tx-idem", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] } |  |
 | CT-K-2 | Kernel | Persistent | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt | Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt. | Critical | const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({ |  |
 | CT-K-3 | Kernel | Persistent | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected | Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH. | Critical | const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({ |  |
 | CT-K-4 | Kernel | Persistent | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions | Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH. | Critical | const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore) |  |
@@ -46,10 +50,10 @@
 | CT-SYNC-3 | Sync | Persistent | packages/conformance-tests/src/ct_sync_harness.test.ts::[INV:CT-SYNC-3][SURF:Sync] CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay | submit->poll->receipt->replay remain coherent: committed tx is seen once then replay is empty. | Critical | const graphSpaceId = "space-sync3"; const harness = new LocalSyncHarness(store, graphSpaceId) |  |
 
 ## Criticality summary
-- Critical: 38
+- Critical: 42
 - Structural: 0
 - Regression: 0
-- Critical IDs: CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-PR-1, CT-PR-4, CT-PRC-2, CT-RS-2, CT-S-1, CT-S-2, CT-SYNC-3, CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-PR-1, CT-PR-4, CT-PRC-2, CT-RS-2, CT-S-1, CT-S-2, CT-SYNC-3
+- Critical IDs: CT-COMP-1, CT-COMP-2, CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-PR-1, CT-PR-4, CT-PRC-2, CT-RS-2, CT-S-1, CT-S-2, CT-SYNC-3, CT-COMP-1, CT-COMP-2, CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-PR-1, CT-PR-4, CT-PRC-2, CT-RS-2, CT-S-1, CT-S-2, CT-SYNC-3
 
 ## Coverage gaps
 Coverage gaps: none.

@@ -18,7 +18,8 @@
     "@mesh/eventstore-local": "workspace:*",
     "@mesh/kernel-minimal": "workspace:*",
     "@mesh/projection-minimal": "workspace:*",
-    "@mesh/sync-local": "workspace:*"
+    "@mesh/sync-local": "workspace:*",
+    "@mesh/snapshot-minimal": "workspace:*"
   },
   "exports": {
     ".": {

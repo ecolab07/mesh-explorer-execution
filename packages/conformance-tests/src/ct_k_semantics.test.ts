@@ -222,4 +222,8 @@ class RevisionMismatchStore implements LocalEventStore {
     this.resolveRevisionCalls.push([graphSpaceId, revisionToken]);
     return { metaSeq: 0, graphSeq: 0 };
   }
+
+  async compactUpToCursor(_params: { graphSpaceId: string; cursorExclusive: number }): Promise<void> {
+    return;
+  }
 }
