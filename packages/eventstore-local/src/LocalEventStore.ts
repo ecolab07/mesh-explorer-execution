@@ -55,4 +55,6 @@ export interface LocalEventStore {
   getPrincipalCursorHead(graphSpaceId: GraphSpaceId, principal?: PrincipalContext): Promise<number>;
 
   resolveRevision(graphSpaceId: GraphSpaceId, revisionToken: string): Promise<Cursor | null>;
+
+  compactUpToCursor(params: { graphSpaceId: GraphSpaceId; cursorExclusive: number }): Promise<void>;
 }

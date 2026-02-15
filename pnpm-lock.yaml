@@ -48,6 +48,9 @@ importers:
       '@mesh/shared':
         specifier: workspace:*
         version: link:../shared
+      '@mesh/snapshot-minimal':
+        specifier: workspace:*
+        version: link:../snapshot-minimal
       '@mesh/sync-local':
         specifier: workspace:*
         version: link:../sync-local
@@ -75,8 +78,17 @@ importers:
       '@mesh/shared':
         specifier: workspace:*
         version: link:../shared
+      '@mesh/snapshot-minimal':
+        specifier: workspace:*
+        version: link:../snapshot-minimal
 
   packages/shared: {}
+
+  packages/snapshot-minimal:
+    dependencies:
+      '@mesh/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/sync-local:
     dependencies:
@@ -96,6 +108,12 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@rollup/rollup-linux-x64-gnu@4.57.1':
+    resolution: {}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
@@ -200,12 +218,6 @@ packages:
   postcss@8.5.6:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
-
-  '@rollup/rollup-linux-x64-gnu@4.57.1':
-    resolution: {}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
 
   rollup@4.57.1:
     resolution: {integrity: sha512-oQL6lgK3e2QZeQ7gcgIkS2YZPg5slw37hYufJ3edKlfQSGGm8ICoxswK15ntSzF/a8+h7ekRy7k7oWc3BQ7y8A==}
@@ -316,9 +328,13 @@ packages:
 
 snapshots:
 
-  '@esbuild/linux-x64@0.21.5': {}
+  '@esbuild/linux-x64@0.21.5':
+    optional: true
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
+
+  '@rollup/rollup-linux-x64-gnu@4.57.1':
+    optional: true
 
   '@types/estree@1.0.8': {}
 
@@ -414,11 +430,8 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  '@rollup/rollup-linux-x64-gnu@4.57.1': {}
-
   rollup@4.57.1:
     dependencies:
-      '@rollup/rollup-linux-x64-gnu': 4.57.1
       '@types/estree': 1.0.8
 
   siginfo@2.0.0: {}

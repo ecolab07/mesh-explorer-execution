@@ -15,6 +15,16 @@
     "criticality": "Regression"
   },
   {
+    "invariantId": "CT-COMP-1",
+    "surface": "Compaction",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-COMP-2",
+    "surface": "Compaction",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-K-1",
     "surface": "Kernel",
     "criticality": "Structural"
@@ -173,6 +183,21 @@
     "invariantId": "CT-S-3",
     "surface": "Security",
     "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-SNAP-1",
+    "surface": "Snapshot",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-SNAP-2",
+    "surface": "Snapshot",
+    "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-SNAP-3",
+    "surface": "Snapshot",
+    "criticality": "Structural"
   },
   {
     "invariantId": "CT-SYNC-1",

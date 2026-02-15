@@ -12,6 +12,7 @@
       "CT-PRC-* V2 passive replication chaos (%s)",
       "CT-RS-* V2-lite remote sync (%s)",
       "CT-S-* Security masking and indistinguishability (%s)",
+      "CT-SNAP/COMP-* (%s)",
       "CT-SYNC-* Local sync harness (%s)"
     ],
     "backends": [
@@ -53,6 +54,28 @@
           "oracle": "Direct read of a masked transaction must be rejected with NOT_FOUND/NOT_FOUND_OR_MASKED.",
           "criticality": "Regression",
           "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-COMP-1",
+          "surface": "Compaction",
+          "backend": "InMemory",
+          "testName": "[INV:CT-COMP-1][SURF:Compaction] CT-COMP-1 compaction safety",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Compacting tx below a durable snapshot cursor preserves final projection state after snapshot+replay rebuild.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-comp-1\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-COMP-2",
+          "surface": "Compaction",
+          "backend": "InMemory",
+          "testName": "[INV:CT-COMP-2][SURF:Compaction] CT-COMP-2 compaction does not break idempotency",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-comp-2\"; const txBundle = { txId: \"tx-idem\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
           "limitations": ""
         },
         {
@@ -408,6 +431,39 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-SNAP-1",
+          "surface": "Snapshot",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SNAP-1][SURF:Snapshot] CT-SNAP-1 snapshot rebuild equivalence",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Full projection rebuild equals rebuildWithSnapshot for identical principal state and cursor.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-snap-1\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SNAP-2",
+          "surface": "Snapshot",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SNAP-2][SURF:Snapshot] CT-SNAP-2 snapshot determinism + versioning",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Snapshot version is stable at V1 and unsupported versions fail with VALIDATION/UNSUPPORTED_SNAPSHOT_VERSION.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-snap-2\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SNAP-3",
+          "surface": "Snapshot",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SNAP-3][SURF:Snapshot] CT-SNAP-3 snapshot reduces replay work",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "With a prior snapshot at threshold N, rebuildWithSnapshot replays fewer tx than full rebuild.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-snap-3\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-SYNC-1",
           "surface": "Sync",
           "backend": "InMemory",
@@ -453,11 +509,13 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 19,
-        "Structural": 12,
-        "Regression": 8
+        "Critical": 21,
+        "Structural": 14,
+        "Regression": 9
       },
       "criticalInvariantIds": [
+        "CT-COMP-1",
+        "CT-COMP-2",
         "CT-K-2",
         "CT-K-3",
         "CT-K-4",
@@ -516,6 +574,28 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-COMP-1",
+          "surface": "Compaction",
+          "backend": "Persistent",
+          "testName": "[INV:CT-COMP-1][SURF:Compaction] CT-COMP-1 compaction safety",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Compacting tx below a durable snapshot cursor preserves final projection state after snapshot+replay rebuild.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-comp-1\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-COMP-2",
+          "surface": "Compaction",
+          "backend": "Persistent",
+          "testName": "[INV:CT-COMP-2][SURF:Compaction] CT-COMP-2 compaction does not break idempotency",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-comp-2\"; const txBundle = { txId: \"tx-idem\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-K-1",
           "surface": "Kernel",
           "backend": "Persistent",
@@ -868,6 +948,39 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-SNAP-1",
+          "surface": "Snapshot",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SNAP-1][SURF:Snapshot] CT-SNAP-1 snapshot rebuild equivalence",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Full projection rebuild equals rebuildWithSnapshot for identical principal state and cursor.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-snap-1\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SNAP-2",
+          "surface": "Snapshot",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SNAP-2][SURF:Snapshot] CT-SNAP-2 snapshot determinism + versioning",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Snapshot version is stable at V1 and unsupported versions fail with VALIDATION/UNSUPPORTED_SNAPSHOT_VERSION.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-snap-2\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SNAP-3",
+          "surface": "Snapshot",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SNAP-3][SURF:Snapshot] CT-SNAP-3 snapshot reduces replay work",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "With a prior snapshot at threshold N, rebuildWithSnapshot replays fewer tx than full rebuild.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-snap-3\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-SYNC-1",
           "surface": "Sync",
           "backend": "Persistent",
@@ -913,11 +1026,13 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 19,
-        "Structural": 12,
-        "Regression": 8
+        "Critical": 21,
+        "Structural": 14,
+        "Regression": 9
       },
       "criticalInvariantIds": [
+        "CT-COMP-1",
+        "CT-COMP-2",
         "CT-K-2",
         "CT-K-3",
         "CT-K-4",
@@ -973,6 +1088,28 @@
       "oracle": "Direct read of a masked transaction must be rejected with NOT_FOUND/NOT_FOUND_OR_MASKED.",
       "criticality": "Regression",
       "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c3\"",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-COMP-1",
+      "surface": "Compaction",
+      "backend": "InMemory",
+      "testName": "[INV:CT-COMP-1][SURF:Compaction] CT-COMP-1 compaction safety",
+      "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+      "oracle": "Compacting tx below a durable snapshot cursor preserves final projection state after snapshot+replay rebuild.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-comp-1\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-COMP-2",
+      "surface": "Compaction",
+      "backend": "InMemory",
+      "testName": "[INV:CT-COMP-2][SURF:Compaction] CT-COMP-2 compaction does not break idempotency",
+      "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+      "oracle": "Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-comp-2\"; const txBundle = { txId: \"tx-idem\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
       "limitations": ""
     },
     {
@@ -1328,6 +1465,39 @@
       "limitations": ""
     },
     {
+      "invariantId": "CT-SNAP-1",
+      "surface": "Snapshot",
+      "backend": "InMemory",
+      "testName": "[INV:CT-SNAP-1][SURF:Snapshot] CT-SNAP-1 snapshot rebuild equivalence",
+      "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+      "oracle": "Full projection rebuild equals rebuildWithSnapshot for identical principal state and cursor.",
+      "criticality": "Structural",
+      "setup": "const graphSpaceId = \"space-snap-1\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-SNAP-2",
+      "surface": "Snapshot",
+      "backend": "InMemory",
+      "testName": "[INV:CT-SNAP-2][SURF:Snapshot] CT-SNAP-2 snapshot determinism + versioning",
+      "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+      "oracle": "Snapshot version is stable at V1 and unsupported versions fail with VALIDATION/UNSUPPORTED_SNAPSHOT_VERSION.",
+      "criticality": "Regression",
+      "setup": "const graphSpaceId = \"space-snap-2\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-SNAP-3",
+      "surface": "Snapshot",
+      "backend": "InMemory",
+      "testName": "[INV:CT-SNAP-3][SURF:Snapshot] CT-SNAP-3 snapshot reduces replay work",
+      "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+      "oracle": "With a prior snapshot at threshold N, rebuildWithSnapshot replays fewer tx than full rebuild.",
+      "criticality": "Structural",
+      "setup": "const graphSpaceId = \"space-snap-3\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
       "invariantId": "CT-SYNC-1",
       "surface": "Sync",
       "backend": "InMemory",
@@ -1373,11 +1543,13 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 19,
-    "Structural": 12,
-    "Regression": 8
+    "Critical": 21,
+    "Structural": 14,
+    "Regression": 9
   },
   "criticalInvariantIds": [
+    "CT-COMP-1",
+    "CT-COMP-2",
     "CT-K-2",
     "CT-K-3",
     "CT-K-4",

@@ -237,21 +237,51 @@ export class InMemoryLocalEventStore implements LocalEventStore {
       })
       .filter((tx) => this.getTxVisibility(principal, tx.meta, tx.graph) === "allow");
 
-    const start = Math.max(0, fromPrincipalCursorExclusive);
-    const txs = visibleTxs.slice(start, start + limit);
+    if (fromPrincipalCursorExclusive <= visibleTxs.length) {
+      const txs = visibleTxs.slice(fromPrincipalCursorExclusive, fromPrincipalCursorExclusive + limit);
+      return {
+        txs,
+        cursor: fromPrincipalCursorExclusive + txs.length
+      };
+    }
+
+    const txs = visibleTxs.filter((tx) => tx.txIndex > fromPrincipalCursorExclusive).slice(0, limit);
     return {
       txs,
-      cursor: start + txs.length
+      cursor: txs[txs.length - 1]?.txIndex ?? fromPrincipalCursorExclusive
     };
   }
 
   async getPrincipalCursorHead(graphSpaceId: string, principal?: PrincipalContext): Promise<number> {
-    const next = await this.readPrincipalTxRange(graphSpaceId, 0, Number.MAX_SAFE_INTEGER, principal);
-    return next.cursor;
+    const current = this.bySpace.get(graphSpaceId);
+    if (!current) return 0;
+    const visible = current.txIndex
+      .map((txEntry) => {
+        const meta = current.meta.filter((e) => e.txId === txEntry.txId);
+        const graph = current.graph.filter((e) => e.txId === txEntry.txId);
+        return { meta, graph };
+      })
+      .filter((tx) => this.getTxVisibility(principal, tx.meta, tx.graph) === "allow");
+    return visible.length;
   }
 
   async resolveRevision(_graphSpaceId: string, _revisionToken: string): Promise<Cursor | null> {
     return null;
+  }
+
+  async compactUpToCursor(params: { graphSpaceId: string; cursorExclusive: number }): Promise<void> {
+    const current = this.bySpace.get(params.graphSpaceId);
+    if (!current) return;
+
+    const cutoff = Math.max(0, params.cursorExclusive);
+    const prunedTxIds = new Set(current.txIndex.filter((entry) => entry.txIndex < cutoff).map((entry) => entry.txId));
+    if (prunedTxIds.size === 0) return;
+
+    current.txIndex = current.txIndex.filter((entry) => !prunedTxIds.has(entry.txId));
+    current.meta = current.meta.filter((event) => !prunedTxIds.has(event.txId));
+    current.graph = current.graph.filter((event) => !prunedTxIds.has(event.txId));
+    current.txById = new Map(current.txIndex.map((entry) => [entry.txId, entry]));
+    this.bySpace.set(params.graphSpaceId, current);
   }
 
   private notFoundOrMasked(): CommandError {
