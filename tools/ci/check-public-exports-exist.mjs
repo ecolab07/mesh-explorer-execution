@@ -2,16 +2,14 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { goldenNameForPackage, normalizeConfigPath } from "./api-contract-paths.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
-const manifestPath = path.join(repoRoot, "contracts/v1/manifest.json");
-const goldenDir = path.join(repoRoot, "contracts/v1/golden");
+const manifestPath = path.join(repoRoot, "contracts", "v1", "manifest.json");
+const goldenDir = path.join(repoRoot, "contracts", "v1", "golden");
 
-function pkgOutputName(name) {
-  return name.replace(/^@/, "").replace(/\//g, "__");
-}
 
 function pkgDirFromName(name) {
   return path.join(repoRoot, "packages", name.replace("@mesh/", ""));
@@ -36,7 +34,7 @@ async function exists(filePath) {
 }
 
 async function main() {
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  const manifest = JSON.parse(await fs.readFile(normalizeConfigPath(manifestPath), "utf8"));
   if (!Array.isArray(manifest)) {
     throw new Error("contracts/v1/manifest.json must contain an array");
   }
@@ -51,7 +49,7 @@ async function main() {
 
     const pkgDir = pkgDirFromName(item.name);
     const distDir = path.join(pkgDir, "dist");
-    const goldenPath = path.join(goldenDir, `${pkgOutputName(item.name)}.d.ts`);
+    const goldenPath = path.join(goldenDir, await goldenNameForPackage(item.name, goldenDir));
 
     if (!(await exists(path.join(distDir, "index.js")))) {
       missing.push(path.relative(repoRoot, path.join(distDir, "index.js")));

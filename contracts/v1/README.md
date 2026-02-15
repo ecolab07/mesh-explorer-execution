@@ -22,9 +22,14 @@ La liste canonique est définie dans `contracts/v1/manifest.json` :
   - `pnpm api:contract:update`
 - Script utilisé: `tools/ci/update-api-contract.mjs`
   - lit `contracts/v1/manifest.json`
-  - régénère les `.d.ts` des packages `kind: "public"`
+  - régénère les déclarations des packages `kind: "public"` (`.d` ou `.d.ts`)
   - normalise le contenu (timestamps/chemins absolus/en-têtes variables)
-  - écrase `contracts/v1/golden/*.d.ts`
+  - écrase `contracts/v1/golden/*.d` ou `contracts/v1/golden/*.d.ts` en conservant le format déjà présent
   - affiche la liste des fichiers écrasés
 - Vérifier la compatibilité (bloquant CI):
   - `pnpm check:api-contract`
+
+## Notes d'implémentation
+
+- Les scripts API contract sont **cross-platform** (Windows/POSIX) et utilisent `node:path` (`path.join`, `path.normalize`, `path.resolve`) pour éviter les séparateurs hardcodés.
+- Le fichier `INDEX` est traité comme un fichier texte, avec tolérance pour `INDEX` ou `INDEX.txt`.

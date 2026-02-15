@@ -3,12 +3,13 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { goldenNameForPackage, normalizeConfigPath, packageSlug } from "./api-contract-paths.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
-const manifestPath = path.resolve(repoRoot, "contracts/v1/manifest.json");
-const goldenDir = path.resolve(repoRoot, "contracts/v1/golden");
+const manifestPath = path.resolve(repoRoot, "contracts", "v1", "manifest.json");
+const goldenDir = path.resolve(repoRoot, "contracts", "v1", "golden");
 const tmpDir = path.resolve(repoRoot, ".tmp/api-contract-update");
 
 async function run(cmd, args, cwd = repoRoot) {
@@ -23,10 +24,6 @@ async function run(cmd, args, cwd = repoRoot) {
 
 function pkgDirFromName(name) {
   return path.resolve(repoRoot, "packages", name.replace("@mesh/", ""));
-}
-
-function pkgOutputName(name) {
-  return name.replace(/^@/, "").replace(/\//g, "__");
 }
 
 function normalizeDts(text) {
@@ -45,7 +42,7 @@ function normalizeDts(text) {
 }
 
 async function main() {
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  const manifest = JSON.parse(await fs.readFile(normalizeConfigPath(manifestPath), "utf8"));
   if (!Array.isArray(manifest) || manifest.length === 0) {
     throw new Error("contracts/v1/manifest.json must be a non-empty array");
   }
@@ -64,14 +61,14 @@ async function main() {
       throw new Error(`Invalid manifest item: ${JSON.stringify(item)}`);
     }
 
-    const pkgOutDir = path.join(tmpDir, pkgOutputName(item.name));
+    const pkgOutDir = path.join(tmpDir, packageSlug(item.name));
     await fs.mkdir(pkgOutDir, { recursive: true });
 
     await run("pnpm", [
       "exec",
       "tsc",
       "-p",
-      path.join(pkgDirFromName(item.name), "tsconfig.json"),
+      path.join(normalizeConfigPath(pkgDirFromName(item.name)), "tsconfig.json"),
       "--emitDeclarationOnly",
       "--declarationMap",
       "false",
@@ -79,9 +76,10 @@ async function main() {
       pkgOutDir
     ]);
 
-    const entryDts = item.entry.replace(/^src\//, "").replace(/\.ts$/, ".d.ts");
+    const normalizedEntry = normalizeConfigPath(item.entry);
+    const entryDts = normalizedEntry.replace(/^src[\\/]/, "").replace(/\.ts$/, ".d.ts");
     const sourceDtsPath = path.join(pkgOutDir, entryDts);
-    const targetName = `${pkgOutputName(item.name)}.d.ts`;
+    const targetName = await goldenNameForPackage(item.name, goldenDir);
     const targetPath = path.join(goldenDir, targetName);
 
     const sourceText = await fs.readFile(sourceDtsPath, "utf8");

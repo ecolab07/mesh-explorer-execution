@@ -2,17 +2,14 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { goldenNameForPackage, normalizeConfigPath } from "./api-contract-paths.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
 
-const manifestPath = path.join(repoRoot, "contracts/v1/manifest.json");
-const policyPath = path.join(repoRoot, "contracts/v1/reasonCodes-policy.md");
-
-function pkgOutputName(name) {
-  return name.replace(/^@/, "").replace(/\//g, "__");
-}
+const manifestPath = path.join(repoRoot, "contracts", "v1", "manifest.json");
+const policyPath = path.join(repoRoot, "contracts", "v1", "reasonCodes-policy.md");
 
 function uniq(values) {
   return [...new Set(values)];
@@ -57,28 +54,30 @@ function parseReasonCodesFromPolicy(text) {
 }
 
 async function resolveReasonCodesSourcePath() {
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  const manifest = JSON.parse(await fs.readFile(normalizeConfigPath(manifestPath), "utf8"));
   const shared = manifest.find((item) => item?.kind === "public" && item?.name === "@mesh/shared");
   if (!shared || typeof shared.entry !== "string") {
     throw new Error("Unable to resolve @mesh/shared entry from contracts/v1/manifest.json");
   }
 
-  const goldenEntry = path.join(repoRoot, "contracts/v1/golden", `${pkgOutputName(shared.name)}.d.ts`);
+  const goldenDir = path.join(repoRoot, "contracts", "v1", "golden");
+  const goldenName = await goldenNameForPackage(shared.name, goldenDir);
+  const goldenEntry = path.join(goldenDir, goldenName);
   const goldenText = await fs.readFile(goldenEntry, "utf8");
   const exportMatch = goldenText.match(/^export\s+\*\s+from\s+["'](\.\/reasonCodes\.js)["'];\s*$/m);
   if (!exportMatch) {
     throw new Error(`Could not find reasonCodes export in ${path.relative(repoRoot, goldenEntry)}`);
   }
 
-  const entryDir = path.dirname(shared.entry);
+  const entryDir = path.dirname(normalizeConfigPath(shared.entry));
   const reasonCodesRelTs = exportMatch[1].replace(/^\.\//, "").replace(/\.js$/, ".ts");
-  return path.join(repoRoot, "packages/shared", entryDir, reasonCodesRelTs);
+  return path.join(repoRoot, "packages", "shared", entryDir, reasonCodesRelTs);
 }
 
 async function main() {
   const [reasonCodesSourcePath, policyText] = await Promise.all([
     resolveReasonCodesSourcePath(),
-    fs.readFile(policyPath, "utf8")
+    fs.readFile(normalizeConfigPath(policyPath), "utf8")
   ]);
 
   const contractText = await fs.readFile(reasonCodesSourcePath, "utf8");
