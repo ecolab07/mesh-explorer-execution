@@ -20,5 +20,11 @@ La liste canonique est définie dans `contracts/v1/manifest.json` :
 
 - Mettre à jour les golden files (après décision de versioning):
   - `pnpm api:contract:update`
+- Script utilisé: `tools/ci/update-api-contract.mjs`
+  - lit `contracts/v1/manifest.json`
+  - régénère les `.d.ts` des packages `kind: "public"`
+  - normalise le contenu (timestamps/chemins absolus/en-têtes variables)
+  - écrase `contracts/v1/golden/*.d.ts`
+  - affiche la liste des fichiers écrasés
 - Vérifier la compatibilité (bloquant CI):
   - `pnpm check:api-contract`
