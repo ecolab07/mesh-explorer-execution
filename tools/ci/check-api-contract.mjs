@@ -38,6 +38,44 @@ function simpleDiff(expected, actual, maxChanges = 20) {
   return chunks.join("\n");
 }
 
+function collectExportNameLeaks(line) {
+  const leaks = [];
+
+  const exportedNames = line.match(/^export\s*\{([^}]*)\}/);
+  if (exportedNames) {
+    const parts = exportedNames[1].split(",").map((part) => part.trim()).filter(Boolean);
+    for (const part of parts) {
+      const alias = part.match(/\bas\s+([A-Za-z0-9_$]+)/);
+      const exported = alias ? alias[1] : part;
+      if (exported.startsWith("_")) leaks.push(exported);
+    }
+  }
+
+  const declaredName = line.match(/^export\s+(?:declare\s+)?(?:abstract\s+)?(?:class|interface|type|const|function|enum|namespace|let|var)\s+([A-Za-z0-9_$]+)/);
+  if (declaredName && declaredName[1].startsWith("_")) {
+    leaks.push(declaredName[1]);
+  }
+
+  return leaks;
+}
+
+function validateNoInternalLeaks(fileName, text) {
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line.startsWith("export ")) continue;
+
+    if (/from\s+["'][^"']*\/internal\//.test(line)) {
+      throw new Error(`API contract leak in ${fileName}: export from internal path at line ${i + 1}`);
+    }
+
+    const leakedNames = collectExportNameLeaks(line);
+    if (leakedNames.length > 0) {
+      throw new Error(`API contract leak in ${fileName}: underscored export ${leakedNames[0]} at line ${i + 1}`);
+    }
+  }
+}
+
 async function main() {
   await run("node", ["tools/ci/dump-api.mjs", "--mode=generated", "--skip-build"]);
 
@@ -56,6 +94,13 @@ async function main() {
     }
     process.exitCode = 1;
     return;
+  }
+
+  for (const name of generatedEntries) {
+    if (!name.endsWith(".d.ts")) continue;
+    const generatedPath = path.join(generatedDir, name);
+    const generatedText = await readText(generatedPath);
+    validateNoInternalLeaks(name, generatedText);
   }
 
   for (const name of goldenEntries) {

@@ -5,7 +5,7 @@
     "kind": "public"
   },
   {
-    "name": "@mesh/eventstore-local",
+    "name": "@mesh/kernel-minimal",
     "entry": "src/index.ts",
     "kind": "public"
   },
@@ -15,13 +15,18 @@
     "kind": "public"
   },
   {
+    "name": "@mesh/eventstore-local",
+    "entry": "src/index.ts",
+    "kind": "internal"
+  },
+  {
     "name": "@mesh/snapshot-minimal",
     "entry": "src/index.ts",
-    "kind": "public"
+    "kind": "internal"
   },
   {
     "name": "@mesh/projection-minimal",
     "entry": "src/index.ts",
-    "kind": "public"
+    "kind": "internal"
   }
 ]
