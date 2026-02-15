@@ -206,13 +206,9 @@ export class FileBackedLocalEventStore implements LocalEventStore {
       })
       .filter((tx) => this.getTxVisibility(principal, tx.meta, tx.graph) === "allow");
 
-    if (fromPrincipalCursorExclusive <= visibleTxs.length) {
-      const txs = visibleTxs.slice(fromPrincipalCursorExclusive, fromPrincipalCursorExclusive + limit);
-      return { txs, cursor: fromPrincipalCursorExclusive + txs.length };
-    }
-
-    const txs = visibleTxs.filter((tx) => tx.txIndex > fromPrincipalCursorExclusive).slice(0, limit);
-    return { txs, cursor: txs[txs.length - 1]?.txIndex ?? fromPrincipalCursorExclusive };
+    const safeCursor = Math.max(0, fromPrincipalCursorExclusive);
+    const txs = visibleTxs.slice(safeCursor, safeCursor + limit);
+    return { txs, cursor: safeCursor + txs.length };
   }
 
   async getPrincipalCursorHead(graphSpaceId: string, principal?: PrincipalContext): Promise<number> {

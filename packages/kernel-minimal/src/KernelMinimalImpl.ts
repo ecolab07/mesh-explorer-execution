@@ -1,5 +1,6 @@
 import type { LocalEventStore } from "@mesh/eventstore-local";
 import { REASON_CODES, type Command, type CommandOutcome, type IdempotencyCtx } from "@mesh/shared";
+import { canonicalStringify, sha256Hex } from "./canonicalHash.js";
 import type { KernelMinimal } from "./KernelMinimal.js";
 
 export class KernelMinimalImpl implements KernelMinimal {
@@ -18,8 +19,7 @@ export class KernelMinimalImpl implements KernelMinimal {
     const idempotencyCtx: IdempotencyCtx = {
       actorId: command.actorId,
       idempotencyKey: command.idempotencyKey,
-      // TODO(spec-ref: §14.2): replace placeholder with CanonicalHasher-based semantic hash.
-      payloadHash: JSON.stringify({ payload: command.payload, requireBaseRevision: command.requireBaseRevision })
+      payloadHash: sha256Hex(canonicalStringify({ payload: command.payload, requireBaseRevision: command.requireBaseRevision }))
     };
 
     if (command.requireBaseRevision) {
