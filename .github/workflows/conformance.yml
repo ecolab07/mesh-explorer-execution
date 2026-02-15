@@ -44,6 +44,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm -r build
+      - name: Check public exports exist in dist
+        run: pnpm check:public-exports-exist
       - name: Check API contract v1
         run: pnpm check:api-contract
       - name: Check reasonCodes policy
