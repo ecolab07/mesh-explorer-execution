@@ -15,6 +15,10 @@ const runtimeMetaPath = path.resolve(artifactsDir, "conformance-evidence.runtime
 const testPattern = /it\(\s*"([^"\n]+)"\s*,/g;
 const conformanceIdPattern = /CT-[A-Z0-9-]+/;
 const allowedCriticality = new Set(["Critical", "Structural", "Regression"]);
+const BACKENDS = [
+  { env: "inmemory", label: "InMemory", requiredCriticalOnly: false },
+  { env: "persistent", label: "Persistent", requiredCriticalOnly: true }
+];
 
 async function listTestFiles(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -58,22 +62,22 @@ function runCommand(cmd, env = {}) {
   return execSync(cmd, { cwd: repoRoot, encoding: "utf8", env: { ...process.env, ...env } }).trim();
 }
 
-function collectRuntimeMeta() {
+function collectRuntimeMeta(backendEnv) {
   runCommand(
     `pnpm exec vitest run packages/conformance-tests/src --reporter ${evidenceReporterPath}`,
-    { MESH_EVIDENCE_META_PATH: runtimeMetaPath }
+    { MESH_EVIDENCE_META_PATH: runtimeMetaPath, MESH_BACKEND: backendEnv }
   );
 
   return readJson(runtimeMetaPath);
 }
 
 function markdownTable(rows) {
-  const header = "| InvariantID | Surface | Test(s) | Oracle | Criticality | Preconditions / Setup | Limitations connues |";
-  const sep = "|---|---|---|---|---|---|---|";
+  const header = "| InvariantID | Surface | Backend | Test(s) | Oracle | Criticality | Preconditions / Setup | Limitations connues |";
+  const sep = "|---|---|---|---|---|---|---|---|";
   const body = rows
     .map((row) => {
       const testRef = `${row.file}::${row.testName}`;
-      return `| ${row.invariantId} | ${row.surface} | ${testRef} | ${row.oracle} | ${row.criticality} | ${row.setup} | ${row.limitations ?? ""} |`;
+      return `| ${row.invariantId} | ${row.surface} | ${row.backend} | ${testRef} | ${row.oracle} | ${row.criticality} | ${row.setup} | ${row.limitations ?? ""} |`;
     })
     .join("\n");
   return [header, sep, body].join("\n");
@@ -109,6 +113,16 @@ function sortByInvariantId(left, right) {
   return left.invariantId.localeCompare(right.invariantId);
 }
 
+function summarize(rows) {
+  const criticalitySummary = {
+    Critical: rows.filter((row) => row.criticality === "Critical").length,
+    Structural: rows.filter((row) => row.criticality === "Structural").length,
+    Regression: rows.filter((row) => row.criticality === "Regression").length
+  };
+  const criticalInvariantIds = rows.filter((row) => row.criticality === "Critical").map((row) => row.invariantId);
+  return { criticalitySummary, criticalInvariantIds };
+}
+
 async function main() {
   const testFiles = await listTestFiles(testsRoot);
   const expectedInvariants = await readJson(expectedInvariantsPath);
@@ -136,7 +150,6 @@ async function main() {
     }
   }
 
-  const runtimeTests = await collectRuntimeMeta();
   const suiteNames = [];
   const setupByTestRef = new Map();
 
@@ -144,7 +157,7 @@ async function main() {
     const relativePath = path.relative(repoRoot, filePath).replaceAll(path.sep, "/");
     const content = await fs.readFile(filePath, "utf8");
 
-    const describeMatches = content.matchAll(/describe\(\s*"([^"\n]+)"/g);
+    const describeMatches = content.matchAll(/describe(?:\.each)?\(\s*"([^"\n]+)"/g);
     for (const match of describeMatches) {
       suiteNames.push(match[1]);
     }
@@ -162,95 +175,109 @@ async function main() {
     }
   }
 
-  const invalidConformance = [];
-  const evidenceRows = [];
-  const seenInvariantIds = new Map();
-  for (const test of runtimeTests) {
-    const relativePath = path.relative(repoRoot, test.file).replaceAll(path.sep, "/");
-    const testRef = `${relativePath}::${test.name}`;
-    const hasConformanceIdInName = conformanceIdPattern.test(test.name);
-    const invariantId = test.meta?.invariantId;
-    const isConformance = hasConformanceIdInName || (typeof invariantId === "string" && conformanceIdPattern.test(invariantId));
+  const backendPayloads = {};
+  for (const backend of BACKENDS) {
+    const runtimeTests = await collectRuntimeMeta(backend.env);
+    const invalidConformance = [];
+    const evidenceRows = [];
+    const seenInvariantIds = new Map();
 
-    if (!isConformance) continue;
+    for (const test of runtimeTests) {
+      const relativePath = path.relative(repoRoot, test.file).replaceAll(path.sep, "/");
+      const testRef = `${relativePath}::${test.name}`;
+      const hasConformanceIdInName = conformanceIdPattern.test(test.name);
+      const invariantId = test.meta?.invariantId;
+      const isConformance = hasConformanceIdInName || (typeof invariantId === "string" && conformanceIdPattern.test(invariantId));
 
-    const oracle = test.meta?.oracle;
-    const criticality = test.meta?.criticality;
-    const surface = test.meta?.surface;
+      if (!isConformance) continue;
 
-    if (typeof invariantId !== "string" || !conformanceIdPattern.test(invariantId)) {
-      invalidConformance.push(`${testRef} -> missing/invalid meta.invariantId`);
-    }
-    if (typeof surface !== "string" || surface.trim().length === 0) {
-      invalidConformance.push(`${testRef} -> missing meta.surface`);
-    }
-    if (typeof oracle !== "string" || oracle.trim().length === 0) {
-      invalidConformance.push(`${testRef} -> missing meta.oracle`);
-    }
-    if (typeof criticality !== "string" || !allowedCriticality.has(criticality)) {
-      invalidConformance.push(`${testRef} -> missing/invalid meta.criticality`);
-    }
-    if (typeof invariantId === "string" && seenInvariantIds.has(invariantId)) {
-      invalidConformance.push(
-        `${testRef} -> duplicate meta.invariantId already declared by ${seenInvariantIds.get(invariantId)}`
-      );
+      const oracle = test.meta?.oracle;
+      const criticality = test.meta?.criticality;
+      const surface = test.meta?.surface;
+
+      if (typeof invariantId !== "string" || !conformanceIdPattern.test(invariantId)) {
+        invalidConformance.push(`${testRef} -> missing/invalid meta.invariantId`);
+      }
+      if (typeof surface !== "string" || surface.trim().length === 0) {
+        invalidConformance.push(`${testRef} -> missing meta.surface`);
+      }
+      if (typeof oracle !== "string" || oracle.trim().length === 0) {
+        invalidConformance.push(`${testRef} -> missing meta.oracle`);
+      }
+      if (typeof criticality !== "string" || !allowedCriticality.has(criticality)) {
+        invalidConformance.push(`${testRef} -> missing/invalid meta.criticality`);
+      }
+      if (typeof invariantId === "string" && seenInvariantIds.has(invariantId)) {
+        invalidConformance.push(
+          `${testRef} -> duplicate meta.invariantId already declared by ${seenInvariantIds.get(invariantId)}`
+        );
+      }
+
+      const expected = typeof invariantId === "string" ? expectedById.get(invariantId) : undefined;
+      if (typeof invariantId === "string" && !expected) {
+        invalidConformance.push(`${testRef} -> invariantId not declared in expected-invariants.json`);
+      }
+      if (expected && typeof surface === "string" && expected.surface !== surface) {
+        invalidConformance.push(
+          `${testRef} -> surface mismatch for ${invariantId}: expected ${expected.surface}, got ${surface}`
+        );
+      }
+      if (expected && typeof criticality === "string" && expected.criticality !== criticality) {
+        invalidConformance.push(
+          `${testRef} -> criticality mismatch for ${invariantId}: expected ${expected.criticality}, got ${criticality}`
+        );
+      }
+
+      if (
+        typeof invariantId === "string" &&
+        typeof surface === "string" &&
+        typeof oracle === "string" &&
+        typeof criticality === "string" &&
+        allowedCriticality.has(criticality)
+      ) {
+        evidenceRows.push({
+          invariantId,
+          surface,
+          backend: backend.label,
+          testName: test.name,
+          file: relativePath,
+          oracle: compact(oracle),
+          criticality,
+          setup: setupByTestRef.get(testRef) ?? "Setup inferred from test body.",
+          limitations: ""
+        });
+        seenInvariantIds.set(invariantId, testRef);
+      }
     }
 
-    const expected = typeof invariantId === "string" ? expectedById.get(invariantId) : undefined;
-    if (typeof invariantId === "string" && !expected) {
-      invalidConformance.push(`${testRef} -> invariantId not declared in expected-invariants.json`);
-    }
-    if (expected && typeof surface === "string" && expected.surface !== surface) {
-      invalidConformance.push(
-        `${testRef} -> surface mismatch for ${invariantId}: expected ${expected.surface}, got ${surface}`
-      );
-    }
-    if (expected && typeof criticality === "string" && expected.criticality !== criticality) {
-      invalidConformance.push(
-        `${testRef} -> criticality mismatch for ${invariantId}: expected ${expected.criticality}, got ${criticality}`
-      );
+    if (invalidConformance.length > 0) {
+      throw new Error(`Conformance tests missing required meta (${backend.label}):\n${invalidConformance.join("\n")}`);
     }
 
-    if (
-      typeof invariantId === "string" &&
-      typeof surface === "string" &&
-      typeof oracle === "string" &&
-      typeof criticality === "string" &&
-      allowedCriticality.has(criticality)
-    ) {
-      evidenceRows.push({
-        invariantId,
-        surface,
-        testName: test.name,
-        file: relativePath,
-        oracle: compact(oracle),
-        criticality,
-        setup: setupByTestRef.get(testRef) ?? "Setup inferred from test body.",
-        limitations: ""
-      });
-      seenInvariantIds.set(invariantId, testRef);
+    evidenceRows.sort(sortByInvariantId);
+
+    const observed = new Set(evidenceRows.map((row) => row.invariantId));
+    const expectedScope = backend.requiredCriticalOnly
+      ? expectedInvariants.filter((item) => item.criticality === "Critical")
+      : expectedInvariants;
+    const missingInvariants = expectedScope
+      .map((item) => item.invariantId)
+      .filter((id) => !observed.has(id))
+      .sort();
+
+    if (missingInvariants.length > 0) {
+      const scopeText = backend.requiredCriticalOnly ? "critical invariants" : "expected invariants";
+      throw new Error(`${backend.label} backend missing ${scopeText}: ${missingInvariants.join(", ")}`);
     }
+
+    const { criticalitySummary, criticalInvariantIds } = summarize(evidenceRows);
+    backendPayloads[backend.label] = {
+      invariants: evidenceRows,
+      criticalitySummary,
+      criticalInvariantIds,
+      coverageGaps: missingInvariants
+    };
   }
-
-  if (invalidConformance.length > 0) {
-    throw new Error(`Conformance tests missing required meta:\n${invalidConformance.join("\n")}`);
-  }
-
-  const observed = new Set(evidenceRows.map((row) => row.invariantId));
-  const missingInvariants = [...expectedById.keys()].filter((id) => !observed.has(id)).sort();
-
-  if (missingInvariants.length > 0) {
-    throw new Error(`Expected invariants without tests: ${missingInvariants.join(", ")}`);
-  }
-
-  evidenceRows.sort(sortByInvariantId);
-
-  const criticalitySummary = {
-    Critical: evidenceRows.filter((row) => row.criticality === "Critical").length,
-    Structural: evidenceRows.filter((row) => row.criticality === "Structural").length,
-    Regression: evidenceRows.filter((row) => row.criticality === "Regression").length
-  };
-  const criticalInvariantIds = evidenceRows.filter((row) => row.criticality === "Critical").map((row) => row.invariantId);
 
   const commitSha = commandOutput("git rev-parse HEAD");
   const nodeVersion = process.version;
@@ -259,7 +286,7 @@ async function main() {
   const vitestVersion = rootPackage.devDependencies?.vitest ?? "unknown";
   const generatedAt = commandOutput("git show -s --format=%cI HEAD");
 
-  const escapedRows = evidenceRows.map((row) => ({
+  const escapedAllRows = BACKENDS.flatMap(({ label }) => backendPayloads[label].invariants).map((row) => ({
     ...row,
     oracle: escapeCell(row.oracle),
     criticality: escapeCell(row.criticality),
@@ -267,33 +294,43 @@ async function main() {
     limitations: escapeCell(row.limitations ?? "")
   }));
 
-  const gapsSection =
-    missingInvariants.length === 0
-      ? "Coverage gaps: none."
-      : `Coverage gaps:\n${missingInvariants.map((id) => `- ${id}`).join("\n")}`;
-
+  const combinedSummary = summarize(escapedAllRows);
   const markdown = buildMarkdown(
     "Conformance Evidence",
     suiteNames,
     vitestVersion,
-    escapedRows,
-    criticalitySummary,
-    criticalInvariantIds,
-    gapsSection
+    escapedAllRows,
+    combinedSummary.criticalitySummary,
+    combinedSummary.criticalInvariantIds,
+    "Coverage gaps: none."
   );
 
-  const criticalRows = escapedRows.filter((row) => row.criticality === "Critical");
+  const criticalRows = escapedAllRows.filter((row) => row.criticality === "Critical");
   const criticalMarkdown = buildMarkdown(
     "Conformance Evidence (Critical)",
     suiteNames,
     vitestVersion,
     criticalRows,
-    {
-      Critical: criticalRows.length,
-      Structural: 0,
-      Regression: 0
-    },
-    criticalInvariantIds,
+    { Critical: criticalRows.length, Structural: 0, Regression: 0 },
+    combinedSummary.criticalInvariantIds,
+    "Coverage gaps: none."
+  );
+
+  const persistentRows = backendPayloads.Persistent.invariants.map((row) => ({
+    ...row,
+    oracle: escapeCell(row.oracle),
+    criticality: escapeCell(row.criticality),
+    setup: escapeCell(row.setup),
+    limitations: escapeCell(row.limitations ?? "")
+  }));
+
+  const persistentMarkdown = buildMarkdown(
+    "Conformance Evidence (Persistent backend)",
+    suiteNames,
+    vitestVersion,
+    persistentRows,
+    backendPayloads.Persistent.criticalitySummary,
+    backendPayloads.Persistent.criticalInvariantIds,
     "Coverage gaps: none."
   );
 
@@ -302,12 +339,14 @@ async function main() {
   const jsonPayload = {
     metadata: {
       vitestVersion,
-      suites: [...new Set(suiteNames)].sort()
+      suites: [...new Set(suiteNames)].sort(),
+      backends: BACKENDS.map((backend) => backend.label)
     },
-    invariants: evidenceRows,
-    criticalitySummary,
-    criticalInvariantIds,
-    coverageGaps: missingInvariants
+    backends: backendPayloads,
+    invariants: backendPayloads.InMemory.invariants,
+    criticalitySummary: backendPayloads.InMemory.criticalitySummary,
+    criticalInvariantIds: backendPayloads.InMemory.criticalInvariantIds,
+    coverageGaps: backendPayloads.InMemory.coverageGaps
   };
 
   const runtimePayload = {
@@ -318,6 +357,7 @@ async function main() {
       pnpmVersion,
       vitestVersion,
       suites: [...new Set(suiteNames)].sort(),
+      backends: BACKENDS.map((backend) => backend.label),
       runner: {
         platform: process.platform,
         arch: process.arch
@@ -327,15 +367,18 @@ async function main() {
 
   const mdPath = path.resolve(artifactsDir, "conformance-evidence.md");
   const criticalMdPath = path.resolve(artifactsDir, "conformance-evidence.critical.md");
+  const persistentMdPath = path.resolve(artifactsDir, "conformance-evidence.persistent.md");
   const jsonPath = path.resolve(artifactsDir, "conformance-evidence.json");
   const runtimeJsonPath = path.resolve(artifactsDir, "conformance-evidence.runtime.json");
+
   await fs.writeFile(mdPath, markdown, "utf8");
   await fs.writeFile(criticalMdPath, criticalMarkdown, "utf8");
+  await fs.writeFile(persistentMdPath, persistentMarkdown, "utf8");
   await fs.writeFile(jsonPath, `${JSON.stringify(jsonPayload, null, 2)}\n`, "utf8");
   await fs.writeFile(runtimeJsonPath, `${JSON.stringify(runtimePayload, null, 2)}\n`, "utf8");
   await fs.rm(runtimeMetaPath, { force: true });
 
-  console.log(`Generated evidence:\n- ${mdPath}\n- ${criticalMdPath}\n- ${jsonPath}\n- ${runtimeJsonPath}`);
+  console.log(`Generated evidence:\n- ${mdPath}\n- ${criticalMdPath}\n- ${persistentMdPath}\n- ${jsonPath}\n- ${runtimeJsonPath}`);
 }
 
 main().catch((error) => {

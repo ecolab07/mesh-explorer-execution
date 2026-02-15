@@ -291,3 +291,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     return store;
   }
 }
+
+export async function makePersistentEventStore(filePath: string): Promise<LocalEventStore> {
+  return FileBackedLocalEventStore.open(filePath);
+}

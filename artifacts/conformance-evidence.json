@@ -4,12 +4,641 @@
     "suites": [
       "CT-C-* Cursor semantics per principal",
       "CT-P-* Projection determinism"
+    ],
+    "backends": [
+      "InMemory",
+      "Persistent"
     ]
+  },
+  "backends": {
+    "InMemory": {
+      "invariants": [
+        {
+          "invariantId": "CT-C-1",
+          "surface": "Cursor",
+          "backend": "InMemory",
+          "testName": "[INV:CT-C-1][SURF:Cursor] CT-C-1: principal cursor is monotone and tx-closed",
+          "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+          "oracle": "Principal reads must return whole visible transactions in txIndex order and advance cursor by visible transaction count only.",
+          "criticality": "Structural",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c1\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-C-2",
+          "surface": "Cursor",
+          "backend": "InMemory",
+          "testName": "[INV:CT-C-2][SURF:Cursor] CT-C-2: alternating visibility across principals has no observable holes",
+          "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+          "oracle": "Per-principal pagination must skip masked transactions without holes and keep each principal cursor monotone.",
+          "criticality": "Structural",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c2\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-C-3",
+          "surface": "Cursor",
+          "backend": "InMemory",
+          "testName": "[INV:CT-C-3][SURF:Cursor] CT-C-3 contradiction: hidden tx cannot be read directly by masked principal",
+          "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+          "oracle": "Direct read of a masked transaction must be rejected with NOT_FOUND/NOT_FOUND_OR_MASKED.",
+          "criticality": "Regression",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-1",
+          "surface": "Kernel",
+          "backend": "InMemory",
+          "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.",
+          "criticality": "Structural",
+          "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-2",
+          "surface": "Kernel",
+          "backend": "InMemory",
+          "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.",
+          "criticality": "Critical",
+          "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-3",
+          "surface": "Kernel",
+          "backend": "InMemory",
+          "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
+          "criticality": "Critical",
+          "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-4",
+          "surface": "Kernel",
+          "backend": "InMemory",
+          "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH.",
+          "criticality": "Critical",
+          "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-5",
+          "surface": "Kernel",
+          "backend": "InMemory",
+          "testName": "[INV:CT-K-5][SURF:Kernel] CT-K-5 contradiction: malformed command is rejected",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Malformed command input must be rejected with VALIDATION/MALFORMED_COMMAND.",
+          "criticality": "Regression",
+          "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({ ...baseCommand, commandId: \"\", idempotencyKey: \"\", payload: undefined as never })",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-1",
+          "surface": "EventStore",
+          "backend": "InMemory",
+          "testName": "[INV:CT-L-1][SURF:EventStore] CT-L-1 Append-only immutability (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Appended transaction envelopes are immutable in canonical form across repeated reads.",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l1\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-2",
+          "surface": "EventStore",
+          "backend": "InMemory",
+          "testName": "[INV:CT-L-2][SURF:EventStore] CT-L-2 tx-closed readRange extension (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Extending read ranges preserves tx-closed boundaries and stable event ordering.",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l2\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-3",
+          "surface": "EventStore",
+          "backend": "InMemory",
+          "testName": "[INV:CT-L-3][SURF:EventStore] CT-L-3 tx_index monotonicity and two-stream ordering (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "txIndex increases monotonically and stream sequence ordering stays consistent across tx boundaries.",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-4",
+          "surface": "EventStore",
+          "backend": "InMemory",
+          "testName": "[INV:CT-L-4][SURF:EventStore] CT-L-4 Tx boundary integrity + idempotence (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "A transaction is atomically persisted once and idempotent replay returns the original committed receipt.",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l4\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-5",
+          "surface": "EventStore",
+          "backend": "InMemory",
+          "testName": "[INV:CT-L-5][SURF:EventStore] CT-L-5 Fault Injection: crash before commit keeps store atomic",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Crash before commit must leave no partial transaction state (neither events nor idempotency entry).",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l5\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-6",
+          "surface": "EventStore",
+          "backend": "InMemory",
+          "testName": "[INV:CT-L-6][SURF:EventStore] CT-L-6 contradiction: empty tx is rejected",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Empty transaction payload must be rejected with VALIDATION/EMPTY_TRANSACTION.",
+          "criticality": "Regression",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l6\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-7",
+          "surface": "EventStore",
+          "backend": "InMemory",
+          "testName": "[INV:CT-L-7][SURF:EventStore] CT-L-7 restart realism: persisted tx survives reopen + idempotence (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "After restart, committed tx remains readable and idempotent replay returns original receipt without duplication.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-l7\"; const txBundle = { txId: \"tx-restart\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-8",
+          "surface": "EventStore",
+          "backend": "InMemory",
+          "testName": "[INV:CT-L-8][SURF:EventStore] CT-L-8 restart realism: crash+restart around CT-L-5 keeps final state atomic (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Crash before commit then restart keeps store atomic: no partial tx survives and clean retry commits once.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-l8\"; const tx = { txId: \"tx-l8\", metaEvents: [{ m: \"m\" }], graphEvents: [{ g: \"g\" }] }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-1",
+          "surface": "Projection",
+          "backend": "InMemory",
+          "testName": "[INV:CT-P-1][SURF:Projection] CT-P-1: incremental apply equals rebuild",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Incremental projection from cursor must equal full rebuild snapshot for same principal.",
+          "criticality": "Structural",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p1\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-2",
+          "surface": "Projection",
+          "backend": "InMemory",
+          "testName": "[INV:CT-P-2][SURF:Projection] CT-P-2: cache is scoped by principal",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Projection cache keys are principal-scoped; different principals cannot observe cached snapshots interchangeably.",
+          "criticality": "Structural",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p2\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-3",
+          "surface": "Projection",
+          "backend": "InMemory",
+          "testName": "[INV:CT-P-3][SURF:Projection] CT-P-3: invalidation + new tx changes snapshot after incremental apply",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "After invalidation and new tx, incremental apply must produce updated snapshot and advanced cursor.",
+          "criticality": "Regression",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-S-1",
+          "surface": "Security",
+          "backend": "InMemory",
+          "testName": "[INV:CT-S-1][SURF:Security] CT-S-1: absent and masked tx are indistinguishable",
+          "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+          "oracle": "Masked and absent transaction reads must return identical normalized NOT_FOUND_OR_MASKED rejections.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-s1\"; await store.appendTx(",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-S-2",
+          "surface": "Security",
+          "backend": "InMemory",
+          "testName": "[INV:CT-S-2][SURF:Security] CT-S-2: masked event hides full transaction without observable holes",
+          "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+          "oracle": "Masked event visibility removes entire transaction from principal range without cursor holes.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-s2\"; await store.appendTx(",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-S-3",
+          "surface": "Security",
+          "backend": "InMemory",
+          "testName": "[INV:CT-S-3][SURF:Security] CT-S-3 contradiction: absent vs masked no side-channel shape",
+          "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+          "oracle": "Serialized response shape for masked and absent tx lookups must be indistinguishable.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-s3\"; await store.appendTx(",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SYNC-1",
+          "surface": "Sync",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SYNC-1][SURF:Sync] CT-SYNC-1: poll is tx-closed and filtered by principal",
+          "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+          "oracle": "poll returns only principal-visible txIds and principalCursorAfter equals visible tx count consumed.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-sync1\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SYNC-2",
+          "surface": "Sync",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SYNC-2][SURF:Sync] CT-SYNC-2: subscribeOnce returns coherent follow-up cursor",
+          "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+          "oracle": "subscribeOnce follow-up cursor must chain exactly like poll without skip/duplication.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-sync2\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SYNC-3",
+          "surface": "Sync",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SYNC-3][SURF:Sync] CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay",
+          "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+          "oracle": "submit->poll->receipt->replay remain coherent: committed tx is seen once then replay is empty.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-sync3\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SYNC-4",
+          "surface": "Sync",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SYNC-4][SURF:Sync] CT-SYNC-4 contradiction: rejected submit is never observable in poll",
+          "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+          "oracle": "Rejected submit must never appear in subsequent poll results.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-sync4\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
+          "limitations": ""
+        }
+      ],
+      "criticalitySummary": {
+        "Critical": 13,
+        "Structural": 7,
+        "Regression": 6
+      },
+      "criticalInvariantIds": [
+        "CT-K-2",
+        "CT-K-3",
+        "CT-K-4",
+        "CT-L-1",
+        "CT-L-2",
+        "CT-L-3",
+        "CT-L-4",
+        "CT-L-5",
+        "CT-L-7",
+        "CT-L-8",
+        "CT-S-1",
+        "CT-S-2",
+        "CT-SYNC-3"
+      ],
+      "coverageGaps": []
+    },
+    "Persistent": {
+      "invariants": [
+        {
+          "invariantId": "CT-C-1",
+          "surface": "Cursor",
+          "backend": "Persistent",
+          "testName": "[INV:CT-C-1][SURF:Cursor] CT-C-1: principal cursor is monotone and tx-closed",
+          "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+          "oracle": "Principal reads must return whole visible transactions in txIndex order and advance cursor by visible transaction count only.",
+          "criticality": "Structural",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c1\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-C-2",
+          "surface": "Cursor",
+          "backend": "Persistent",
+          "testName": "[INV:CT-C-2][SURF:Cursor] CT-C-2: alternating visibility across principals has no observable holes",
+          "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+          "oracle": "Per-principal pagination must skip masked transactions without holes and keep each principal cursor monotone.",
+          "criticality": "Structural",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c2\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-C-3",
+          "surface": "Cursor",
+          "backend": "Persistent",
+          "testName": "[INV:CT-C-3][SURF:Cursor] CT-C-3 contradiction: hidden tx cannot be read directly by masked principal",
+          "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
+          "oracle": "Direct read of a masked transaction must be rejected with NOT_FOUND/NOT_FOUND_OR_MASKED.",
+          "criticality": "Regression",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-c3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-1",
+          "surface": "Kernel",
+          "backend": "Persistent",
+          "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.",
+          "criticality": "Structural",
+          "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-2",
+          "surface": "Kernel",
+          "backend": "Persistent",
+          "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.",
+          "criticality": "Critical",
+          "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-3",
+          "surface": "Kernel",
+          "backend": "Persistent",
+          "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
+          "criticality": "Critical",
+          "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-4",
+          "surface": "Kernel",
+          "backend": "Persistent",
+          "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH.",
+          "criticality": "Critical",
+          "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-K-5",
+          "surface": "Kernel",
+          "backend": "Persistent",
+          "testName": "[INV:CT-K-5][SURF:Kernel] CT-K-5 contradiction: malformed command is rejected",
+          "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
+          "oracle": "Malformed command input must be rejected with VALIDATION/MALFORMED_COMMAND.",
+          "criticality": "Regression",
+          "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({ ...baseCommand, commandId: \"\", idempotencyKey: \"\", payload: undefined as never })",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-1",
+          "surface": "EventStore",
+          "backend": "Persistent",
+          "testName": "[INV:CT-L-1][SURF:EventStore] CT-L-1 Append-only immutability (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Appended transaction envelopes are immutable in canonical form across repeated reads.",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l1\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-2",
+          "surface": "EventStore",
+          "backend": "Persistent",
+          "testName": "[INV:CT-L-2][SURF:EventStore] CT-L-2 tx-closed readRange extension (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Extending read ranges preserves tx-closed boundaries and stable event ordering.",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l2\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-3",
+          "surface": "EventStore",
+          "backend": "Persistent",
+          "testName": "[INV:CT-L-3][SURF:EventStore] CT-L-3 tx_index monotonicity and two-stream ordering (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "txIndex increases monotonically and stream sequence ordering stays consistent across tx boundaries.",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-4",
+          "surface": "EventStore",
+          "backend": "Persistent",
+          "testName": "[INV:CT-L-4][SURF:EventStore] CT-L-4 Tx boundary integrity + idempotence (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "A transaction is atomically persisted once and idempotent replay returns the original committed receipt.",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l4\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-5",
+          "surface": "EventStore",
+          "backend": "Persistent",
+          "testName": "[INV:CT-L-5][SURF:EventStore] CT-L-5 Fault Injection: crash before commit keeps store atomic",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Crash before commit must leave no partial transaction state (neither events nor idempotency entry).",
+          "criticality": "Critical",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l5\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-6",
+          "surface": "EventStore",
+          "backend": "Persistent",
+          "testName": "[INV:CT-L-6][SURF:EventStore] CT-L-6 contradiction: empty tx is rejected",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Empty transaction payload must be rejected with VALIDATION/EMPTY_TRANSACTION.",
+          "criticality": "Regression",
+          "setup": "const store = scope.store; const graphSpaceId = \"space-l6\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-7",
+          "surface": "EventStore",
+          "backend": "Persistent",
+          "testName": "[INV:CT-L-7][SURF:EventStore] CT-L-7 restart realism: persisted tx survives reopen + idempotence (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "After restart, committed tx remains readable and idempotent replay returns original receipt without duplication.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-l7\"; const txBundle = { txId: \"tx-restart\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-L-8",
+          "surface": "EventStore",
+          "backend": "Persistent",
+          "testName": "[INV:CT-L-8][SURF:EventStore] CT-L-8 restart realism: crash+restart around CT-L-5 keeps final state atomic (Critical)",
+          "file": "packages/conformance-tests/src/ct_l_core.test.ts",
+          "oracle": "Crash before commit then restart keeps store atomic: no partial tx survives and clean retry commits once.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-l8\"; const tx = { txId: \"tx-l8\", metaEvents: [{ m: \"m\" }], graphEvents: [{ g: \"g\" }] }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-1",
+          "surface": "Projection",
+          "backend": "Persistent",
+          "testName": "[INV:CT-P-1][SURF:Projection] CT-P-1: incremental apply equals rebuild",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Incremental projection from cursor must equal full rebuild snapshot for same principal.",
+          "criticality": "Structural",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p1\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-2",
+          "surface": "Projection",
+          "backend": "Persistent",
+          "testName": "[INV:CT-P-2][SURF:Projection] CT-P-2: cache is scoped by principal",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Projection cache keys are principal-scoped; different principals cannot observe cached snapshots interchangeably.",
+          "criticality": "Structural",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p2\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-3",
+          "surface": "Projection",
+          "backend": "Persistent",
+          "testName": "[INV:CT-P-3][SURF:Projection] CT-P-3: invalidation + new tx changes snapshot after incremental apply",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "After invalidation and new tx, incremental apply must produce updated snapshot and advanced cursor.",
+          "criticality": "Regression",
+          "setup": "const store = new InMemoryLocalEventStore(); const graphSpaceId = \"space-p3\"",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-S-1",
+          "surface": "Security",
+          "backend": "Persistent",
+          "testName": "[INV:CT-S-1][SURF:Security] CT-S-1: absent and masked tx are indistinguishable",
+          "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+          "oracle": "Masked and absent transaction reads must return identical normalized NOT_FOUND_OR_MASKED rejections.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-s1\"; await store.appendTx(",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-S-2",
+          "surface": "Security",
+          "backend": "Persistent",
+          "testName": "[INV:CT-S-2][SURF:Security] CT-S-2: masked event hides full transaction without observable holes",
+          "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+          "oracle": "Masked event visibility removes entire transaction from principal range without cursor holes.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-s2\"; await store.appendTx(",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-S-3",
+          "surface": "Security",
+          "backend": "Persistent",
+          "testName": "[INV:CT-S-3][SURF:Security] CT-S-3 contradiction: absent vs masked no side-channel shape",
+          "file": "packages/conformance-tests/src/ct_s_security.test.ts",
+          "oracle": "Serialized response shape for masked and absent tx lookups must be indistinguishable.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-s3\"; await store.appendTx(",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SYNC-1",
+          "surface": "Sync",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SYNC-1][SURF:Sync] CT-SYNC-1: poll is tx-closed and filtered by principal",
+          "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+          "oracle": "poll returns only principal-visible txIds and principalCursorAfter equals visible tx count consumed.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-sync1\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SYNC-2",
+          "surface": "Sync",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SYNC-2][SURF:Sync] CT-SYNC-2: subscribeOnce returns coherent follow-up cursor",
+          "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+          "oracle": "subscribeOnce follow-up cursor must chain exactly like poll without skip/duplication.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-sync2\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SYNC-3",
+          "surface": "Sync",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SYNC-3][SURF:Sync] CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay",
+          "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+          "oracle": "submit->poll->receipt->replay remain coherent: committed tx is seen once then replay is empty.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-sync3\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SYNC-4",
+          "surface": "Sync",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SYNC-4][SURF:Sync] CT-SYNC-4 contradiction: rejected submit is never observable in poll",
+          "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
+          "oracle": "Rejected submit must never appear in subsequent poll results.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-sync4\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
+          "limitations": ""
+        }
+      ],
+      "criticalitySummary": {
+        "Critical": 13,
+        "Structural": 7,
+        "Regression": 6
+      },
+      "criticalInvariantIds": [
+        "CT-K-2",
+        "CT-K-3",
+        "CT-K-4",
+        "CT-L-1",
+        "CT-L-2",
+        "CT-L-3",
+        "CT-L-4",
+        "CT-L-5",
+        "CT-L-7",
+        "CT-L-8",
+        "CT-S-1",
+        "CT-S-2",
+        "CT-SYNC-3"
+      ],
+      "coverageGaps": []
+    }
   },
   "invariants": [
     {
       "invariantId": "CT-C-1",
       "surface": "Cursor",
+      "backend": "InMemory",
       "testName": "[INV:CT-C-1][SURF:Cursor] CT-C-1: principal cursor is monotone and tx-closed",
       "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
       "oracle": "Principal reads must return whole visible transactions in txIndex order and advance cursor by visible transaction count only.",
@@ -20,6 +649,7 @@
     {
       "invariantId": "CT-C-2",
       "surface": "Cursor",
+      "backend": "InMemory",
       "testName": "[INV:CT-C-2][SURF:Cursor] CT-C-2: alternating visibility across principals has no observable holes",
       "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
       "oracle": "Per-principal pagination must skip masked transactions without holes and keep each principal cursor monotone.",
@@ -30,6 +660,7 @@
     {
       "invariantId": "CT-C-3",
       "surface": "Cursor",
+      "backend": "InMemory",
       "testName": "[INV:CT-C-3][SURF:Cursor] CT-C-3 contradiction: hidden tx cannot be read directly by masked principal",
       "file": "packages/conformance-tests/src/ct_c_cursor.test.ts",
       "oracle": "Direct read of a masked transaction must be rejected with NOT_FOUND/NOT_FOUND_OR_MASKED.",
@@ -40,6 +671,7 @@
     {
       "invariantId": "CT-K-1",
       "surface": "Kernel",
+      "backend": "InMemory",
       "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.",
@@ -50,6 +682,7 @@
     {
       "invariantId": "CT-K-2",
       "surface": "Kernel",
+      "backend": "InMemory",
       "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.",
@@ -60,6 +693,7 @@
     {
       "invariantId": "CT-K-3",
       "surface": "Kernel",
+      "backend": "InMemory",
       "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
@@ -70,6 +704,7 @@
     {
       "invariantId": "CT-K-4",
       "surface": "Kernel",
+      "backend": "InMemory",
       "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH.",
@@ -80,6 +715,7 @@
     {
       "invariantId": "CT-K-5",
       "surface": "Kernel",
+      "backend": "InMemory",
       "testName": "[INV:CT-K-5][SURF:Kernel] CT-K-5 contradiction: malformed command is rejected",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
       "oracle": "Malformed command input must be rejected with VALIDATION/MALFORMED_COMMAND.",
@@ -90,6 +726,7 @@
     {
       "invariantId": "CT-L-1",
       "surface": "EventStore",
+      "backend": "InMemory",
       "testName": "[INV:CT-L-1][SURF:EventStore] CT-L-1 Append-only immutability (Critical)",
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Appended transaction envelopes are immutable in canonical form across repeated reads.",
@@ -100,6 +737,7 @@
     {
       "invariantId": "CT-L-2",
       "surface": "EventStore",
+      "backend": "InMemory",
       "testName": "[INV:CT-L-2][SURF:EventStore] CT-L-2 tx-closed readRange extension (Critical)",
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Extending read ranges preserves tx-closed boundaries and stable event ordering.",
@@ -110,6 +748,7 @@
     {
       "invariantId": "CT-L-3",
       "surface": "EventStore",
+      "backend": "InMemory",
       "testName": "[INV:CT-L-3][SURF:EventStore] CT-L-3 tx_index monotonicity and two-stream ordering (Critical)",
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "txIndex increases monotonically and stream sequence ordering stays consistent across tx boundaries.",
@@ -120,6 +759,7 @@
     {
       "invariantId": "CT-L-4",
       "surface": "EventStore",
+      "backend": "InMemory",
       "testName": "[INV:CT-L-4][SURF:EventStore] CT-L-4 Tx boundary integrity + idempotence (Critical)",
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "A transaction is atomically persisted once and idempotent replay returns the original committed receipt.",
@@ -130,6 +770,7 @@
     {
       "invariantId": "CT-L-5",
       "surface": "EventStore",
+      "backend": "InMemory",
       "testName": "[INV:CT-L-5][SURF:EventStore] CT-L-5 Fault Injection: crash before commit keeps store atomic",
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Crash before commit must leave no partial transaction state (neither events nor idempotency entry).",
@@ -140,6 +781,7 @@
     {
       "invariantId": "CT-L-6",
       "surface": "EventStore",
+      "backend": "InMemory",
       "testName": "[INV:CT-L-6][SURF:EventStore] CT-L-6 contradiction: empty tx is rejected",
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Empty transaction payload must be rejected with VALIDATION/EMPTY_TRANSACTION.",
@@ -150,6 +792,7 @@
     {
       "invariantId": "CT-L-7",
       "surface": "EventStore",
+      "backend": "InMemory",
       "testName": "[INV:CT-L-7][SURF:EventStore] CT-L-7 restart realism: persisted tx survives reopen + idempotence (Critical)",
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "After restart, committed tx remains readable and idempotent replay returns original receipt without duplication.",
@@ -160,6 +803,7 @@
     {
       "invariantId": "CT-L-8",
       "surface": "EventStore",
+      "backend": "InMemory",
       "testName": "[INV:CT-L-8][SURF:EventStore] CT-L-8 restart realism: crash+restart around CT-L-5 keeps final state atomic (Critical)",
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Crash before commit then restart keeps store atomic: no partial tx survives and clean retry commits once.",
@@ -170,6 +814,7 @@
     {
       "invariantId": "CT-P-1",
       "surface": "Projection",
+      "backend": "InMemory",
       "testName": "[INV:CT-P-1][SURF:Projection] CT-P-1: incremental apply equals rebuild",
       "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
       "oracle": "Incremental projection from cursor must equal full rebuild snapshot for same principal.",
@@ -180,6 +825,7 @@
     {
       "invariantId": "CT-P-2",
       "surface": "Projection",
+      "backend": "InMemory",
       "testName": "[INV:CT-P-2][SURF:Projection] CT-P-2: cache is scoped by principal",
       "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
       "oracle": "Projection cache keys are principal-scoped; different principals cannot observe cached snapshots interchangeably.",
@@ -190,6 +836,7 @@
     {
       "invariantId": "CT-P-3",
       "surface": "Projection",
+      "backend": "InMemory",
       "testName": "[INV:CT-P-3][SURF:Projection] CT-P-3: invalidation + new tx changes snapshot after incremental apply",
       "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
       "oracle": "After invalidation and new tx, incremental apply must produce updated snapshot and advanced cursor.",
@@ -200,6 +847,7 @@
     {
       "invariantId": "CT-S-1",
       "surface": "Security",
+      "backend": "InMemory",
       "testName": "[INV:CT-S-1][SURF:Security] CT-S-1: absent and masked tx are indistinguishable",
       "file": "packages/conformance-tests/src/ct_s_security.test.ts",
       "oracle": "Masked and absent transaction reads must return identical normalized NOT_FOUND_OR_MASKED rejections.",
@@ -210,6 +858,7 @@
     {
       "invariantId": "CT-S-2",
       "surface": "Security",
+      "backend": "InMemory",
       "testName": "[INV:CT-S-2][SURF:Security] CT-S-2: masked event hides full transaction without observable holes",
       "file": "packages/conformance-tests/src/ct_s_security.test.ts",
       "oracle": "Masked event visibility removes entire transaction from principal range without cursor holes.",
@@ -220,6 +869,7 @@
     {
       "invariantId": "CT-S-3",
       "surface": "Security",
+      "backend": "InMemory",
       "testName": "[INV:CT-S-3][SURF:Security] CT-S-3 contradiction: absent vs masked no side-channel shape",
       "file": "packages/conformance-tests/src/ct_s_security.test.ts",
       "oracle": "Serialized response shape for masked and absent tx lookups must be indistinguishable.",
@@ -230,6 +880,7 @@
     {
       "invariantId": "CT-SYNC-1",
       "surface": "Sync",
+      "backend": "InMemory",
       "testName": "[INV:CT-SYNC-1][SURF:Sync] CT-SYNC-1: poll is tx-closed and filtered by principal",
       "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
       "oracle": "poll returns only principal-visible txIds and principalCursorAfter equals visible tx count consumed.",
@@ -240,6 +891,7 @@
     {
       "invariantId": "CT-SYNC-2",
       "surface": "Sync",
+      "backend": "InMemory",
       "testName": "[INV:CT-SYNC-2][SURF:Sync] CT-SYNC-2: subscribeOnce returns coherent follow-up cursor",
       "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
       "oracle": "subscribeOnce follow-up cursor must chain exactly like poll without skip/duplication.",
@@ -250,6 +902,7 @@
     {
       "invariantId": "CT-SYNC-3",
       "surface": "Sync",
+      "backend": "InMemory",
       "testName": "[INV:CT-SYNC-3][SURF:Sync] CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay",
       "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
       "oracle": "submit->poll->receipt->replay remain coherent: committed tx is seen once then replay is empty.",
@@ -260,6 +913,7 @@
     {
       "invariantId": "CT-SYNC-4",
       "surface": "Sync",
+      "backend": "InMemory",
       "testName": "[INV:CT-SYNC-4][SURF:Sync] CT-SYNC-4 contradiction: rejected submit is never observable in poll",
       "file": "packages/conformance-tests/src/ct_sync_harness.test.ts",
       "oracle": "Rejected submit must never appear in subsequent poll results.",
