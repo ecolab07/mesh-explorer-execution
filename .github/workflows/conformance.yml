@@ -44,6 +44,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm -r build
+      - name: Check API contract v1
+        run: pnpm check:api-contract
       - name: Enforce conformance test hygiene
         if: matrix.mesh_backend == 'inmemory'
         run: node tools/ci/check-patterns.mjs --root packages/conformance-tests/src --no-default-patterns --pattern "TODO" --pattern "skip\("

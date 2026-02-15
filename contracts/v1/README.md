@@ -1,0 +1,26 @@
+# API Contract v1
+
+Cette arborescence fige la surface **Public API v1** consommable par une application.
+
+## Packages Public API v1
+
+La liste canonique est définie dans `contracts/v1/manifest.json` :
+
+- `@mesh/shared` (types, reasonCodes, cursor/receipt primitives)
+- `@mesh/eventstore-local` (signature API event store)
+- `@mesh/sync-local` (sync receipts côté app)
+- `@mesh/snapshot-minimal` (snapshot envelope/store)
+- `@mesh/projection-minimal` (projection + cursor app-facing)
+
+## Règles SemVer
+
+- **Pas de diff** entre `generated` et `golden` : pas de changement d'API publique.
+- **Diff additive compatible** (nouveaux exports/types non cassants) : bump **minor**.
+- **Diff cassante** (suppression/changement incompatible de signatures/types) : bump **major**.
+
+## Commandes
+
+- Mettre à jour les golden files (après décision de versioning):
+  - `pnpm api:contract:update`
+- Vérifier la compatibilité (bloquant CI):
+  - `pnpm check:api-contract`

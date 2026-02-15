@@ -7,7 +7,9 @@
     "test": "pnpm -r build && pnpm --filter @mesh/conformance-tests test",
     "test:all": "pnpm -r test",
     "smoke:node": "node ./scripts/smoke-node.mjs",
-    "ci:validate-workflows": "node scripts/ci/validate-conformance-workflow.mjs"
+    "ci:validate-workflows": "node scripts/ci/validate-conformance-workflow.mjs",
+    "api:contract:update": "node tools/ci/dump-api.mjs --mode=golden",
+    "check:api-contract": "node tools/ci/check-api-contract.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
