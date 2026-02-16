@@ -12,7 +12,9 @@
     "api:contract:update": "node tools/ci/update-api-contract.mjs",
     "check:api-contract": "node tools/ci/check-api-contract.mjs",
     "check:reasoncodes-policy": "node tools/ci/check-reasoncodes-policy.mjs",
-    "check:public-exports-exist": "node tools/ci/check-public-exports-exist.mjs"
+    "check:public-exports-exist": "node tools/ci/check-public-exports-exist.mjs",
+    "bench:cold-start": "node ./scripts/bench/cold-start.mjs",
+    "bench": "pnpm bench:cold-start"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
