@@ -1,8 +1,29 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "./src",
-    "outDir": "./dist"
+    "outDir": "./dist",
+    "types": [
+      "node"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "baseUrl": "../..",
+    "paths": {
+      "@mesh/shared": [
+        "packages/shared/src/index.ts"
+      ],
+      "@mesh/eventstore-local": [
+        "packages/eventstore-local/src/index.ts"
+      ],
+      "@mesh/kernel-minimal": [
+        "packages/kernel-minimal/src/index.ts"
+      ],
+      "@mesh/sync-http": [
+        "packages/sync-http/src/index.ts"
+      ]
+    }
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ]
 }

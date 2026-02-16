@@ -11,6 +11,10 @@
   "dependencies": {
     "@mesh/eventstore-local": "workspace:*",
     "@mesh/kernel-minimal": "workspace:*",
+    "@mesh/shared": "workspace:*",
     "@mesh/sync-http": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10"
   }
 }

@@ -4,10 +4,10 @@ import { promises as fs } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { FileBackedLocalEventStore } from "../../../packages/eventstore-local/src/FileBackedLocalEventStore.ts";
-import { KernelMinimalImpl } from "../../../packages/kernel-minimal/src/KernelMinimalImpl.ts";
-import { SyncHttpReferenceServer } from "../../../packages/sync-http/src/index.ts";
-import type { Command, CommandOutcome, PrincipalContext } from "../../../packages/shared/src/types.ts";
+import { FileBackedLocalEventStore } from "@mesh/eventstore-local";
+import { KernelMinimalImpl } from "@mesh/kernel-minimal";
+import { SyncHttpReferenceServer } from "@mesh/sync-http";
+import type { Command, CommandOutcome, Cursor, PrincipalContext } from "@mesh/shared";
 
 const GRAPH_SPACE_ID = "mesh-explorer-graph-v1";
 const PRINCIPAL_HEADER = "x-mesh-principal";
@@ -35,6 +35,30 @@ type LocalSyncGatewayLike = {
     fromCursorVisible: number,
     options?: { limitTx?: number; limitBytes?: number }
   ): Promise<{ txBundlesVisible: Array<{ txBundle: { graphEvents: unknown[] } }>; cursorAfterVisible: number }>;
+  syncSubscribe(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    fromCursorVisible: number,
+    options?: { limitTx?: number; limitBytes?: number; heartbeatEveryMs?: number; pollIntervalMs?: number }
+  ): AsyncIterable<unknown>;
+  eventsRead(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    stream: "meta" | "graph",
+    fromSeqExclusive: number,
+    options?: { limitEvents?: number; limitBytes?: number }
+  ): Promise<unknown[]>;
+  syncPoll(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    cursor: Cursor,
+    options?: {
+      metaLimitEvents?: number;
+      metaLimitBytes?: number;
+      graphLimitEvents?: number;
+      graphLimitBytes?: number;
+    }
+  ): Promise<{ meta: unknown[]; graph: unknown[]; cursorAfter: Cursor }>;
 };
 
 type LocalSyncGatewayCtor = new (
