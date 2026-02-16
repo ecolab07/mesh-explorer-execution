@@ -17,7 +17,16 @@
     "bench": "pnpm bench:cold-start",
     "bench:compare": "pnpm --filter @mesh/eventstore-local build && node ./scripts/bench/compare-backends.mjs",
     "bench:perf-1": "node scripts/bench/perf-1.mjs",
-    "bench:perf-1:small": "MESH_BENCH_N=200 node scripts/bench/perf-1.mjs"
+    "bench:perf-1:small": "MESH_BENCH_N=200 node scripts/bench/perf-1.mjs",
+    "release:bump": "node scripts/release/bump-version.mjs",
+    "release:changelog": "node scripts/release/update-changelog.mjs",
+    "release:tag": "node scripts/release/create-tag.mjs",
+    "release:artifacts": "node scripts/release/build-artifacts.mjs",
+    "release:prepare": "pnpm release:artifacts",
+    "migrate:check": "node scripts/migrations/check-storage-version.mjs",
+    "bench:replica-catchup": "node scripts/bench/replica-catchup.mjs",
+    "bench:snapshot-maintenance": "node scripts/bench/snapshot-maintenance.mjs",
+    "bench:nightly": "node scripts/bench/nightly-perf.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

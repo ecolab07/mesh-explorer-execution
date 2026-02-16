@@ -2,18 +2,27 @@
 
 ## 1) Version scheme
 
-- Mesh Explorer versions track internal delivery phases.
-- Phase-aligned releases use the `0.<phase>.<patch>` pattern (example: `0.16.x` for Phase 16 updates).
+- Mesh Explorer uses semver with phase-aligned minor versions: `0.<phase>.<patch>`.
+- Example: `0.18.0` for the initial Phase 18 release.
 
-## 2) 0.x discipline
+## 2) Release discipline in `0.x`
 
-For every release in `0.x`, the following gates are mandatory:
+Mandatory blocking gates before tagging:
 
-- API contract check is required (`pnpm check:api-contract`).
-- Conformance critical gate is required.
-- Packaging check is required (`pnpm check:packaging`).
+- `pnpm -r build`
+- `pnpm check:api-contract`
+- `pnpm test`
+- `pnpm --filter @mesh/conformance-tests check:critical`
+- `pnpm check:packaging`
 
 ## 3) Breaking behavior policy
 
-- Activation/enforcement of security (`allow|deny|mask`, principal filtering, tx-wide masking) changes observable behavior and is treated as a breaking change.
-- In `0.x`, breaking behavior may still ship under minor/phase progression, but MUST be explicitly labeled as breaking behavior in release notes/changelog.
+- Any behavior change affecting security/visibility semantics (`allow|deny|mask`, principal filtering, tx-wide masking) is treated as breaking behavior.
+- In `0.x`, such changes must be explicitly labeled in changelog/release notes even if shipped under minor progression.
+
+## 4) Release automation commands
+
+- `pnpm release:bump <version>`
+- `pnpm release:changelog <version> --date YYYY-MM-DD`
+- `pnpm release:artifacts <version>`
+- `pnpm release:tag <version>`
