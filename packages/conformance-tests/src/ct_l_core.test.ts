@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LocalEventStore } from "@mesh/eventstore-local";
 import { REASON_CODES, canonicalString, stripNondeterminism } from "@mesh/shared";
+import { buildCanonicalStateDump } from "@mesh/conformance-harness";
 import { getConformanceBackends, makeStore, type ConformanceBackend } from "./backends.js";
 
 type StoreScope = {
@@ -10,14 +11,14 @@ type StoreScope = {
 };
 
 describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: ConformanceBackend) => {
-  let scope: StoreScope;
+  let scope: StoreScope | undefined;
 
   beforeEach(async () => {
     scope = await makeStore(backend);
   });
 
   afterEach(async () => {
-    await scope.cleanup();
+    await scope?.cleanup();
   });
 
   it("[INV:CT-L-1][SURF:EventStore] CT-L-1 Append-only immutability (Critical)", async ({ task }) => {
@@ -25,7 +26,7 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
     task.meta.surface = "EventStore";
     task.meta.oracle = "Appended transaction envelopes are immutable in canonical form across repeated reads.";
     task.meta.criticality = "Critical";
-    const store = scope.store;
+    const store = scope!.store;
     const graphSpaceId = "space-l1";
 
     await store.appendTx(graphSpaceId, { txId: "tx-1", metaEvents: [{ step: 1 }], graphEvents: [{ node: "a" }] }, { actorId: "actor", idempotencyKey: "k-1", payloadHash: "h-1" });
@@ -33,12 +34,15 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
 
     const firstRead = await store.readRange(graphSpaceId, "meta", 0, 100, "TX_CLOSED");
     const secondRead = await store.readRange(graphSpaceId, "meta", 0, 100, "TX_CLOSED");
+    const firstDump = await buildCanonicalStateDump(store, graphSpaceId);
+    const secondDump = await buildCanonicalStateDump(store, graphSpaceId);
 
     expect(firstRead.map((e) => ({ seq: e.seq, txId: e.txId, eventId: e.eventId }))).toEqual([
       { seq: 1, txId: "tx-1", eventId: "tx-1-m-1" },
       { seq: 2, txId: "tx-2", eventId: "tx-2-m-1" }
     ]);
     expect(canonicalString(firstRead)).toEqual(canonicalString(secondRead));
+    expect(canonicalString(firstDump)).toEqual(canonicalString(secondDump));
   });
 
   it("[INV:CT-L-2][SURF:EventStore] CT-L-2 tx-closed readRange extension (Critical)", async ({ task }) => {
@@ -46,7 +50,7 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
     task.meta.surface = "EventStore";
     task.meta.oracle = "Extending read ranges preserves tx-closed boundaries and stable event ordering.";
     task.meta.criticality = "Critical";
-    const store = scope.store;
+    const store = scope!.store;
     const graphSpaceId = "space-l2";
 
     await store.appendTx(graphSpaceId, { txId: "tx-1", metaEvents: [{ m: 1 }, { m: 2 }], graphEvents: [{ g: 1 }] }, { actorId: "actor", idempotencyKey: "k-1", payloadHash: "h-1" });
@@ -65,7 +69,7 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
     task.meta.surface = "EventStore";
     task.meta.oracle = "txIndex increases monotonically and stream sequence ordering stays consistent across tx boundaries.";
     task.meta.criticality = "Critical";
-    const store = scope.store;
+    const store = scope!.store;
     const graphSpaceId = "space-l3";
 
     await store.appendTx(graphSpaceId, { txId: "tx-1", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }, { g: 2 }] }, { actorId: "actor", idempotencyKey: "k-1", payloadHash: "h-1" });
@@ -88,7 +92,7 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
     task.meta.surface = "EventStore";
     task.meta.oracle = "A transaction is atomically persisted once and idempotent replay returns the original committed receipt.";
     task.meta.criticality = "Critical";
-    const store = scope.store;
+    const store = scope!.store;
     const graphSpaceId = "space-l4";
     const txBundle = { txId: "tx-1", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }, { g: 2 }] };
     const idem = { actorId: "actor", idempotencyKey: "k-1", payloadHash: "h-1" };
@@ -121,7 +125,7 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
     task.meta.surface = "EventStore";
     task.meta.oracle = "Crash before commit must leave no partial transaction state (neither events nor idempotency entry).";
     task.meta.criticality = "Critical";
-    const store = scope.store;
+    const store = scope!.store;
     const graphSpaceId = "space-l5";
     const txId = "tx-l5";
     const idempotencyCtx = { actorId: "actor-1", idempotencyKey: "idem-l5", payloadHash: "hash-l5" };
@@ -130,10 +134,14 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
 
     const metaEvents = await store.readRange(graphSpaceId, "meta", 0, 100, "TX_CLOSED");
     const graphEvents = await store.readRange(graphSpaceId, "graph", 0, 100, "TX_CLOSED");
+    const txIndexBeforeRetry = await store.readTxIndex(graphSpaceId);
+    const headBeforeRetry = await store.getCursorHead(graphSpaceId);
     const retry = await store.appendTx(graphSpaceId, { txId, metaEvents: [{ kind: "meta", phase: 9 }], graphEvents: [{ kind: "graph", phase: 9 }] }, idempotencyCtx);
 
     expect(metaEvents).toEqual([]);
     expect(graphEvents).toEqual([]);
+    expect(txIndexBeforeRetry).toEqual([]);
+    expect(headBeforeRetry).toEqual({ metaSeq: 0, graphSeq: 0 });
     expect(retry).toMatchObject({ status: "committed", txId, txIndex: 1, cursorAfter: { metaSeq: 1, graphSeq: 1 } });
   });
 
@@ -142,7 +150,7 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
     task.meta.surface = "EventStore";
     task.meta.oracle = "Empty transaction payload must be rejected with VALIDATION/EMPTY_TRANSACTION.";
     task.meta.criticality = "Regression";
-    const store = scope.store;
+    const store = scope!.store;
     const graphSpaceId = "space-l6";
 
     const result = await store.appendTx(graphSpaceId, { txId: "tx-empty", metaEvents: [], graphEvents: [] }, { actorId: "actor", idempotencyKey: "k-empty", payloadHash: "h-empty" });
@@ -162,8 +170,8 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
     const txBundle = { txId: "tx-restart", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] };
     const idem = { actorId: "actor", idempotencyKey: "idem-restart", payloadHash: "hash-restart" };
 
-    const first = await scope.store.appendTx(graphSpaceId, txBundle, idem);
-    const reopened = await scope.reopen();
+    const first = await scope!.store.appendTx(graphSpaceId, txBundle, idem);
+    const reopened = await scope!.reopen();
     const afterRestart = await reopened.readTx(graphSpaceId, "tx-restart");
     const replay = await reopened.appendTx(graphSpaceId, txBundle, idem);
     const index = await reopened.readTxIndex(graphSpaceId);
@@ -186,14 +194,14 @@ describe.each(getConformanceBackends())("CT-L-* Core Local (%s)", (backend: Conf
     const tx = { txId: "tx-l8", metaEvents: [{ m: "m" }], graphEvents: [{ g: "g" }] };
     const idem = { actorId: "actor", idempotencyKey: "idem-l8", payloadHash: "hash-l8" };
 
-    await expect(scope.store.appendTx(graphSpaceId, tx, idem, { failAt: "BEFORE_IDB_COMMIT" })).rejects.toThrowError();
+    await expect(scope!.store.appendTx(graphSpaceId, tx, idem, { failAt: "BEFORE_IDB_COMMIT" })).rejects.toThrowError();
 
-    const reopened = await scope.reopen();
+    const reopened = await scope!.reopen();
     expect(await reopened.readRange(graphSpaceId, "meta", 0, 100, "TX_CLOSED")).toEqual([]);
     expect(await reopened.readRange(graphSpaceId, "graph", 0, 100, "TX_CLOSED")).toEqual([]);
 
     const committed = await reopened.appendTx(graphSpaceId, tx, idem);
-    const reopenedAgain = await scope.reopen();
+    const reopenedAgain = await scope!.reopen();
     const index = await reopenedAgain.readTxIndex(graphSpaceId);
 
     expect(committed).toMatchObject({ status: "committed", txId: "tx-l8", txIndex: 1 });

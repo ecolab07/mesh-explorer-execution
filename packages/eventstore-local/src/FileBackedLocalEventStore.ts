@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { IndexedDbLocalEventStore } from "./IndexedDbLocalEventStore.js";
 import path from "node:path";
 import type {
   CommandError,
@@ -317,5 +318,8 @@ export class FileBackedLocalEventStore implements LocalEventStore {
 }
 
 export async function makePersistentEventStore(filePath: string): Promise<LocalEventStore> {
+  if (filePath.startsWith("indexeddb://")) {
+    return IndexedDbLocalEventStore.createFromUri(filePath);
+  }
   return FileBackedLocalEventStore.open(filePath);
 }
