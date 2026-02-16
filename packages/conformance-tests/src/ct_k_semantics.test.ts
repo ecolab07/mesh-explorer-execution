@@ -122,6 +122,24 @@ describe.each(getConformanceBackends())("CT-K-* Kernel command semantics (%s)", 
     const retry = await retryKernel.execute({ ...baseCommand, graphSpaceId: "space-k4", commandId: "cmd-k4", idempotencyKey: "idem-k4" });
     expect(retry).toMatchObject({ status: "committed", txId: "cmd-k4", txIndex: 1 });
   });
+
+  it("[INV:CT-K-5][SURF:Kernel] CT-K-5 contradiction: malformed command is rejected", async ({ task }) => {
+    task.meta.invariantId = "CT-K-5";
+    task.meta.surface = "Kernel";
+    task.meta.oracle = "Malformed command input must be rejected with VALIDATION/MALFORMED_COMMAND.";
+    task.meta.criticality = "Regression";
+    const kernel = new KernelMinimalImpl(store);
+
+    const result = await kernel.execute({ ...baseCommand, commandId: "", idempotencyKey: "", payload: undefined as never });
+
+    expect(result).toEqual({
+      status: "rejected",
+      commandId: "",
+      category: "VALIDATION",
+      reasonCode: REASON_CODES.MALFORMED_COMMAND
+    });
+  });
+
 });
 
 class RevisionMismatchStore implements LocalEventStore {
