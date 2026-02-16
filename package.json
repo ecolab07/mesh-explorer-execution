@@ -29,7 +29,8 @@
     "bench:nightly": "node scripts/bench/nightly-perf.mjs",
     "smoke:serve-and-submit": "node ./scripts/smoke-serve-and-submit.mjs",
     "webapp": "pnpm --dir apps/mesh-explorer-webapp dev",
-    "desktop": "pnpm --dir apps/mesh-explorer-desktop start"
+    "desktop": "pnpm --dir apps/mesh-explorer-desktop start",
+    "check:lockfile-clean": "node scripts/ci/check-lockfile-clean.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

@@ -1,4 +1,4 @@
-import { mountMeshExplorerUi } from "../../../packages/mesh-explorer-ui/src/index";
+import { mountMeshExplorerUi } from "@mesh/mesh-explorer-ui";
 
 const root = document.querySelector("#app");
 if (!root) throw new Error("Missing #app");

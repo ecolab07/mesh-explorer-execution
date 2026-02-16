@@ -1,5 +1,5 @@
 {
-  "name": "3d-force-graph",
+  "name": "react-force-graph-3d",
   "version": "0.0.0",
   "type": "module",
   "main": "./dist/index.js",

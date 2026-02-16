@@ -22,7 +22,67 @@ importers:
         specifier: 4.57.1
         version: 4.57.1
 
-  packages/3d-force-graph: {}
+  apps/mesh-app: {}
+
+  apps/mesh-explorer-desktop:
+    devDependencies:
+      electron:
+        specifier: ^31.7.7
+        version: 31.7.7
+
+  apps/mesh-explorer-webapp:
+    dependencies:
+      '@mesh/mesh-explorer-ui':
+        specifier: workspace:*
+        version: link:../../packages/mesh-explorer-ui
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^5.4.11
+        version: 5.4.21
+
+  apps/mesh-graph-server:
+    dependencies:
+      '@mesh/eventstore-local':
+        specifier: workspace:*
+        version: link:../../packages/eventstore-local
+      '@mesh/kernel-minimal':
+        specifier: workspace:*
+        version: link:../../packages/kernel-minimal
+      '@mesh/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@mesh/sync-http':
+        specifier: workspace:*
+        version: link:../../packages/sync-http
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.18.1
+
+  apps/mesh-notes-replica: {}
+
+  apps/mesh-notes-server:
+    dependencies:
+      '@mesh/eventstore-local':
+        specifier: workspace:*
+        version: link:../../packages/eventstore-local
+      '@mesh/kernel-minimal':
+        specifier: workspace:*
+        version: link:../../packages/kernel-minimal
+      '@mesh/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@mesh/sync-http':
+        specifier: workspace:*
+        version: link:../../packages/sync-http
+      '@mesh/sync-local':
+        specifier: workspace:*
+        version: link:../../packages/sync-local
+
+  packages/mesh-3d-force-graph-adapter: {}
 
   packages/cli:
     dependencies:
@@ -88,9 +148,9 @@ importers:
 
   packages/mesh-explorer-ui:
     dependencies:
-      3d-force-graph:
+      react-force-graph-3d:
         specifier: workspace:*
-        version: link:../3d-force-graph
+        version: link:../mesh-3d-force-graph-adapter
       force-graph:
         specifier: workspace:*
         version: link:../force-graph
@@ -149,6 +209,12 @@ importers:
         version: link:../shared
 
 packages:
+
+  '@types/node@22.18.1':
+    resolution: {}
+
+  electron@31.7.7:
+    resolution: {}
 
   '@esbuild/linux-x64@0.21.5':
     resolution: {}
@@ -376,6 +442,12 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@types/node@22.18.1': {}
+
+  electron@31.7.7:
+    dependencies:
+      "@types/node": 22.18.1
 
   '@esbuild/linux-x64@0.21.5':
     optional: true

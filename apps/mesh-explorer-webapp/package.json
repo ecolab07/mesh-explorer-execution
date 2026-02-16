@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@mesh/mesh-explorer-ui": "link:../../packages/mesh-explorer-ui"
+    "@mesh/mesh-explorer-ui": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

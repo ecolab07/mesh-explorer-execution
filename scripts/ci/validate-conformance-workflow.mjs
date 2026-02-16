@@ -92,6 +92,12 @@ checkRequiredPattern(
   'Missing step: pnpm install --frozen-lockfile',
 );
 
+checkRequiredPattern(
+  workflowContent,
+  /pnpm\s+check:lockfile-clean\b/m,
+  'Missing step: pnpm check:lockfile-clean',
+);
+
 const hasBuildStep = /pnpm\s+-r\s+build/m.test(workflowContent);
 const hasBuildInTest = /pnpm\s+test/m.test(workflowContent) && /"?test"?\s*:\s*"[^"]*pnpm\s+-r\s+build/m.test(readFileSync('package.json', 'utf8'));
 if (!hasBuildStep && !hasBuildInTest) {
@@ -163,6 +169,12 @@ if (workflowFiles.includes(NIGHTLY_FILE)) {
     nightlyContent,
     /pnpm\s+install\s+--frozen-lockfile/m,
     'Missing step in conformance-nightly.yml: pnpm install --frozen-lockfile',
+  );
+
+  checkRequiredPattern(
+    nightlyContent,
+    /pnpm\s+check:lockfile-clean\b/m,
+    'Missing step in conformance-nightly.yml: pnpm check:lockfile-clean',
   );
 
   checkRequiredPattern(
