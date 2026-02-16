@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LocalEventStore } from "@mesh/eventstore-local";
-import { REASON_CODES } from "@mesh/shared";
+import { REASON_CODES, canonicalString } from "@mesh/shared";
 import { PrincipalProjectionEngine, type ProjectionSnapshot } from "@mesh/projection-minimal";
 import {
   FileBackedSnapshotStore,
@@ -76,8 +76,9 @@ describe.each(getConformanceBackends())("CT-SNAP/COMP-* (%s)", (backend: Conform
     const first = await engine.rebuildWithSnapshot({ principal, snapshotStore });
     const loaded = await snapshotStore.loadLatestSnapshot({ graphSpaceId, principalId: principal.principalId });
 
-    expect(first.snapshot).toEqual(loaded?.payload);
     expect(loaded?.snapshotVersion).toBe(SNAPSHOT_VERSION_V1);
+    expect(loaded?.payload.nodeCount).toEqual(first.snapshot.nodeCount);
+    expect(loaded?.payload.txIds).toEqual([]);
 
     await expect(
       snapshotStore.saveSnapshot({
@@ -181,4 +182,152 @@ describe.each(getConformanceBackends())("CT-SNAP/COMP-* (%s)", (backend: Conform
 
     expect(replay).toEqual(first);
   });
+
+  it("[INV:CT-SNAP-4][SURF:Snapshot] CT-SNAP-4 snapshot payload growth is controlled by compaction", async ({ task }) => {
+    task.meta.invariantId = "CT-SNAP-4";
+    task.meta.surface = "Snapshot";
+    task.meta.oracle = "Snapshot payload uses compact coverage metadata so serialized payload growth is sublinear and remains bounded after compaction.";
+    task.meta.criticality = "Regression";
+
+    const graphSpaceId = "space-snap-4";
+    const principal = { principalId: "alice" };
+    const engine = new PrincipalProjectionEngine(scope.store, graphSpaceId);
+
+    const seedLegacySnapshot = async (count: number): Promise<void> => {
+      for (let idx = 1; idx <= count; idx += 1) {
+        await scope.store.appendTx(
+          graphSpaceId,
+          { txId: `tx-s4-${count}-${idx}`, metaEvents: [], graphEvents: [{ n: idx }] },
+          { actorId: "actor", idempotencyKey: `snap-4-k${count}-${idx}`, payloadHash: `snap-4-h${count}-${idx}` }
+        );
+      }
+      const legacy = await engine.rebuild(principal);
+      await snapshotStore.saveSnapshot({
+        snapshotId: `${graphSpaceId}:${principal.principalId}:${legacy.cursor}:policy:${process.env.MESH_TX_VISIBILITY_POLICY ?? "off"}`,
+        snapshotVersion: SNAPSHOT_VERSION_V1,
+        graphSpaceId,
+        principalId: principal.principalId,
+        cursorAt: legacy.cursor,
+        payload: legacy
+      });
+    };
+
+    const baseTxCount = backend === "persistent" ? 200 : 1000;
+    await seedLegacySnapshot(baseTxCount);
+    const preCompact = await snapshotStore.loadLatestSnapshot({ graphSpaceId, principalId: principal.principalId });
+    const beforeSize = JSON.stringify(preCompact?.payload ?? {}).length;
+
+    const compacted5000 = await engine.compactSnapshots({ principal, snapshotStore });
+    expect(compacted5000).toBe(true);
+
+    const postCompact = await snapshotStore.loadLatestSnapshot({ graphSpaceId, principalId: principal.principalId });
+    const afterSize = JSON.stringify(postCompact?.payload ?? {}).length;
+
+    expect(beforeSize).toBeGreaterThan(10 * afterSize);
+
+    await seedLegacySnapshot(baseTxCount * 2);
+    await engine.compactSnapshots({ principal, snapshotStore });
+    const compact10k = await snapshotStore.loadLatestSnapshot({ graphSpaceId, principalId: principal.principalId });
+    const afterSize10k = JSON.stringify(compact10k?.payload ?? {}).length;
+
+    expect(afterSize10k).toBeLessThan(afterSize + 100);
+  }, 20000);
+
+  it("[INV:CT-SNAP-5][SURF:Snapshot] CT-SNAP-5 rebuild oracle equality with compact snapshot", async ({ task }) => {
+    task.meta.invariantId = "CT-SNAP-5";
+    task.meta.surface = "Snapshot";
+    task.meta.oracle = "Full rebuild canonical state equals rebuild with compact snapshot + replay.";
+    task.meta.criticality = "Critical";
+
+    const graphSpaceId = "space-snap-5";
+    const principal = { principalId: "alice" };
+    const engine = new PrincipalProjectionEngine(scope.store, graphSpaceId);
+
+    for (let idx = 1; idx <= 40; idx += 1) {
+      await scope.store.appendTx(
+        graphSpaceId,
+        { txId: `tx-s5-${idx}`, metaEvents: [], graphEvents: [{ n: idx }] },
+        { actorId: "actor", idempotencyKey: `snap-5-k${idx}`, payloadHash: `snap-5-h${idx}` }
+      );
+    }
+
+    const full = await engine.rebuild(principal);
+    const firstWithSnapshot = await engine.rebuildWithSnapshot({ principal, snapshotStore });
+
+    for (let idx = 41; idx <= 60; idx += 1) {
+      await scope.store.appendTx(
+        graphSpaceId,
+        { txId: `tx-s5-${idx}`, metaEvents: [], graphEvents: [{ n: idx }] },
+        { actorId: "actor", idempotencyKey: `snap-5-k${idx}`, payloadHash: `snap-5-h${idx}` }
+      );
+    }
+
+    const fullAfter = await engine.rebuild(principal);
+    const withCompactReplay = await engine.rebuildWithSnapshot({ principal, snapshotStore });
+
+    expect(canonicalString(firstWithSnapshot.snapshot)).toEqual(canonicalString(full));
+    expect(canonicalString(withCompactReplay.snapshot)).toEqual(canonicalString(fullAfter));
+  });
+
+  it("[INV:CT-SNAP-6][SURF:Snapshot] CT-SNAP-6 compact coverage remains principal/policy scoped", async ({ task }) => {
+    task.meta.invariantId = "CT-SNAP-6";
+    task.meta.surface = "Snapshot";
+    task.meta.oracle = "Compact coverage metadata and snapshot scope stay isolated per principal under ACL visibility policy.";
+    task.meta.criticality = "Critical";
+
+    const graphSpaceId = "space-snap-6";
+    const user = { principalId: "user" };
+    const admin = { principalId: "admin" };
+    const previousPolicy = process.env.MESH_TX_VISIBILITY_POLICY;
+    process.env.MESH_TX_VISIBILITY_POLICY = "acl";
+
+    try {
+      const engine = new PrincipalProjectionEngine(scope.store, graphSpaceId);
+      await scope.store.appendTx(
+        graphSpaceId,
+        {
+          txId: "tx-s6-public",
+          metaEvents: [],
+          graphEvents: [{ kind: "public" }]
+        },
+        { actorId: "actor", idempotencyKey: "snap-6-public", payloadHash: "snap-6-public" }
+      );
+      await scope.store.appendTx(
+        graphSpaceId,
+        {
+          txId: "tx-s6-admin",
+          metaEvents: [],
+          graphEvents: [{ kind: "admin", _acl: { user: "deny" } }]
+        },
+        { actorId: "actor", idempotencyKey: "snap-6-admin", payloadHash: "snap-6-admin" }
+      );
+
+      await engine.rebuildWithSnapshot({ principal: user, snapshotStore });
+      await engine.rebuildWithSnapshot({ principal: admin, snapshotStore });
+
+      const userSnapshot = await snapshotStore.loadLatestSnapshot({ graphSpaceId, principalId: user.principalId });
+      const adminSnapshot = await snapshotStore.loadLatestSnapshot({ graphSpaceId, principalId: admin.principalId });
+
+      expect(userSnapshot?.snapshotId).toContain(":policy:acl");
+      expect(adminSnapshot?.snapshotId).toContain(":policy:acl");
+      expect(userSnapshot?.snapshotId).not.toEqual(adminSnapshot?.snapshotId);
+
+      const userCoverage = (userSnapshot?.payload as ProjectionSnapshot & { coverage?: { principalId?: string } })?.coverage;
+      const adminCoverage = (adminSnapshot?.payload as ProjectionSnapshot & { coverage?: { principalId?: string } })?.coverage;
+      expect(userCoverage?.principalId).toBe("user");
+      expect(adminCoverage?.principalId).toBe("admin");
+
+      const userReplay = await engine.rebuildWithSnapshot({ principal: user, snapshotStore });
+      const adminReplay = await engine.rebuildWithSnapshot({ principal: admin, snapshotStore });
+      expect(userReplay.snapshot.nodeCount).toBe(1);
+      expect(adminReplay.snapshot.nodeCount).toBe(2);
+    } finally {
+      if (previousPolicy === undefined) {
+        delete process.env.MESH_TX_VISIBILITY_POLICY;
+      } else {
+        process.env.MESH_TX_VISIBILITY_POLICY = previousPolicy;
+      }
+    }
+  });
+
 });

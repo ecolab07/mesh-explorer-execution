@@ -29,7 +29,7 @@ If teams choose internal targets, record them in release notes with machine cont
 Current known risks (already documented elsewhere) include:
 
 - Some local EventStore paths rely on repeated filtering/scans and can drift toward O(N²)-like behavior on large histories.
-- Projection snapshots currently retain `txIds`, so snapshot payload growth is roughly linear with transaction count.
+- Snapshot maintenance in `start()` now compacts snapshot coverage metadata so stored snapshot payload size remains bounded even as transaction count grows.
 - IndexedDB backend remains experimental/beta and may vary significantly across environments.
 
 See `KNOWN_LIMITATIONS.md` for the source-of-truth wording.
@@ -53,3 +53,8 @@ The script prints one JSON document to stdout for manual archival in release not
 
 Perf-2 adds a deterministic read-cost regression test that tracks internal counters (`eventsScanned`, `txIndexLookups`, `rangeReads`) and asserts linear growth when dataset size doubles. This guard is machine-independent because it uses operation counts rather than wall-clock timings.
 
+
+
+## 7) Perf-3 snapshot compaction maintenance
+
+Perf-3 adds explicit snapshot compaction during startup maintenance (`start()`) via the projection engine's internal compaction pass. This keeps snapshot serialization growth under control without changing read/commit/cursor semantics and without introducing snapshot writes on the read path.

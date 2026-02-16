@@ -60,6 +60,15 @@ class RuntimeLocalImpl implements RuntimeLocal {
         principalId: this.principal.principalId
       });
 
+      await this.projectionEngine.compactSnapshots({
+        principal: this.principal,
+        snapshotStore: this.snapshotStore
+      });
+      this.lastSnapshot = await this.snapshotStore.loadLatestSnapshot({
+        graphSpaceId: this.config.graphSpaceId,
+        principalId: this.principal.principalId
+      });
+
       // Snapshot policy controls startup maintenance only; read() output must stay deterministic.
       const shouldCreateSnapshot = await this.shouldSnapshot();
       if (shouldCreateSnapshot) {

@@ -3,7 +3,7 @@
 ## 1) Implementation limitations (current)
 
 - Local EventStore implementations are conformance-oriented and not performance-optimized; some read paths perform repeated filtering/scans and can degrade toward costly O(N²)-like behavior on large histories.
-- Projection snapshot payload currently stores `txIds`; snapshot size therefore grows roughly linearly with applied transaction count.
+- Projection snapshots now compact payload coverage during startup maintenance (`start()`) and store bounded coverage metadata instead of unbounded `txIds`; growth risk is mitigated but snapshots remain non-canonical/reconstructible cache artifacts.
 - Remote backend is not implemented.
 - No real distributed sync mechanism is active; current sync scope is local harness behavior only (no networked runtime sync guarantees).
 - Single-writer assumption applies; multi-writer operation is not supported.
