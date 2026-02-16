@@ -28,6 +28,7 @@
     "bench:snapshot-maintenance": "node scripts/bench/snapshot-maintenance.mjs",
     "bench:nightly": "node scripts/bench/nightly-perf.mjs",
     "smoke:serve-and-submit": "node ./scripts/smoke-serve-and-submit.mjs",
+    "graph-server": "pnpm --dir apps/mesh-graph-server start",
     "webapp": "pnpm --dir apps/mesh-explorer-webapp dev",
     "desktop": "pnpm --dir apps/mesh-explorer-desktop start",
     "check:lockfile-clean": "node scripts/ci/check-lockfile-clean.mjs"
