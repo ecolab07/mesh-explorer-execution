@@ -10,6 +10,9 @@ pnpm -r build
 pnpm test
 ```
 
+> Windows note: Rollup 4 loads a platform-native optional package (`@rollup/rollup-win32-x64-msvc`).
+> This repo pins it in root `optionalDependencies` so `pnpm install` materializes it on Windows for webapp dev.
+
 ## Chaos profiles (smoke vs soak)
 
 Chaos/passive-replication suites read these env vars:
