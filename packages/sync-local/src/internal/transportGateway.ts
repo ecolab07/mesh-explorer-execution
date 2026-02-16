@@ -1,0 +1,196 @@
+import type { LocalEventStore } from "@mesh/eventstore-local";
+import { canonicalString, type Command, type CommandOutcome, type PrincipalContext, type TxBundle } from "@mesh/shared";
+
+export interface TransportAck {
+  accepted: true;
+  acceptedAt: string;
+  idempotencyKey: string;
+}
+
+export interface SubmitResult {
+  ackTransport: TransportAck;
+  final: Promise<CommandOutcome>;
+}
+
+export interface SyncPullOptions {
+  limitTx?: number;
+  limitBytes?: number;
+}
+
+export interface VisibleTxBundle {
+  principalCursor: number;
+  txBundle: TxBundle;
+}
+
+export interface SyncPullResult {
+  txBundlesVisible: VisibleTxBundle[];
+  cursorAfterVisible: number;
+}
+
+export interface SyncFrameTxBundles {
+  kind: "txBundles";
+  txBundlesVisible: VisibleTxBundle[];
+}
+
+export interface SyncFrameHeartbeat {
+  kind: "heartbeat";
+  cursorVisible: number;
+}
+
+export interface SyncFrameCursor {
+  kind: "cursor";
+  cursorVisible: number;
+}
+
+export type SyncFrame = SyncFrameTxBundles | SyncFrameHeartbeat | SyncFrameCursor;
+
+export interface SyncSubscribeOptions extends SyncPullOptions {
+  pollIntervalMs?: number;
+  heartbeatEveryMs?: number;
+}
+
+export interface LocalSyncGatewayConfig {
+  graphSpaceId: string;
+  executeCommand?: (command: Command) => Promise<CommandOutcome>;
+}
+
+const DEFAULT_LIMIT_TX = 64;
+const DEFAULT_LIMIT_BYTES = 128 * 1024;
+const DEFAULT_POLL_INTERVAL_MS = 15;
+const DEFAULT_HEARTBEAT_EVERY_MS = 200;
+const utf8Encoder = new TextEncoder();
+
+export class LocalSyncGateway {
+  constructor(
+    private readonly eventStore: LocalEventStore,
+    private readonly config: LocalSyncGatewayConfig
+  ) {}
+
+  submit(graphSpaceId: string, principal: PrincipalContext, command: Command, idempotencyKey?: string): SubmitResult {
+    this.assertGraphSpaceScope(graphSpaceId);
+    void principal;
+
+    const stableKey = idempotencyKey ?? command.idempotencyKey;
+    const commandWithStableKey: Command = {
+      ...command,
+      graphSpaceId,
+      idempotencyKey: stableKey
+    };
+
+    const final = this.config.executeCommand
+      ? this.config.executeCommand(commandWithStableKey)
+      : Promise.resolve<CommandOutcome>({
+          status: "error",
+          category: "INTERNAL",
+          reasonCode: "TRANSPORT.SUBMIT.NOT_CONFIGURED",
+          commandId: command.commandId
+        });
+
+    return {
+      ackTransport: {
+        accepted: true,
+        acceptedAt: new Date().toISOString(),
+        idempotencyKey: stableKey
+      },
+      final
+    };
+  }
+
+  async syncPull(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    fromCursorVisible: number,
+    options: SyncPullOptions = {}
+  ): Promise<SyncPullResult> {
+    this.assertGraphSpaceScope(graphSpaceId);
+
+    const limitTx = Math.max(1, options.limitTx ?? DEFAULT_LIMIT_TX);
+    const limitBytes = Math.max(1, options.limitBytes ?? DEFAULT_LIMIT_BYTES);
+
+    const { txs } = await this.eventStore.readPrincipalTxRange(graphSpaceId, fromCursorVisible, limitTx, principal);
+
+    const txBundlesVisible: VisibleTxBundle[] = [];
+    let consumedBytes = 0;
+    let cursor = fromCursorVisible;
+
+    for (let idx = 0; idx < txs.length; idx += 1) {
+      const tx = txs[idx]!;
+      const nextBundle: VisibleTxBundle = {
+        principalCursor: fromCursorVisible + idx + 1,
+        txBundle: {
+          txId: tx.txId,
+          metaEvents: tx.meta.map((event) => event.payload),
+          graphEvents: tx.graph.map((event) => event.payload)
+        }
+      };
+
+      const size = utf8Encoder.encode(canonicalString(nextBundle.txBundle)).length;
+      if (txBundlesVisible.length > 0 && consumedBytes + size > limitBytes) {
+        break;
+      }
+
+      txBundlesVisible.push(nextBundle);
+      consumedBytes += size;
+      cursor = nextBundle.principalCursor;
+
+      await Promise.resolve();
+    }
+
+    return {
+      txBundlesVisible,
+      cursorAfterVisible: cursor
+    };
+  }
+
+  async *syncSubscribe(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    fromCursorVisible: number,
+    options: SyncSubscribeOptions = {}
+  ): AsyncIterable<SyncFrame> {
+    this.assertGraphSpaceScope(graphSpaceId);
+
+    const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+    const heartbeatEveryMs = Math.max(pollIntervalMs, options.heartbeatEveryMs ?? DEFAULT_HEARTBEAT_EVERY_MS);
+
+    let cursor = fromCursorVisible;
+    let lastHeartbeatAt = Date.now();
+
+    while (true) {
+      const pulled = await this.syncPull(graphSpaceId, principal, cursor, options);
+      if (pulled.txBundlesVisible.length > 0) {
+        yield {
+          kind: "txBundles",
+          txBundlesVisible: pulled.txBundlesVisible
+        };
+        cursor = pulled.cursorAfterVisible;
+        yield {
+          kind: "cursor",
+          cursorVisible: cursor
+        };
+        continue;
+      }
+
+      const now = Date.now();
+      if (now - lastHeartbeatAt >= heartbeatEveryMs) {
+        yield {
+          kind: "heartbeat",
+          cursorVisible: cursor
+        };
+        lastHeartbeatAt = now;
+      }
+
+      await sleep(pollIntervalMs);
+    }
+  }
+
+  private assertGraphSpaceScope(graphSpaceId: string): void {
+    if (graphSpaceId !== this.config.graphSpaceId) {
+      throw new Error("Transport graphSpace mismatch");
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
