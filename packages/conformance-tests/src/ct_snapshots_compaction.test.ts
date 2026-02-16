@@ -22,7 +22,7 @@ type StoreScope = {
 
 function requireString(value: string | null | undefined, label: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Expected ${label} to be a non-empty string`);
+    throw new Error(`${label} must be a non-empty string`);
   }
   return value;
 }
@@ -36,7 +36,7 @@ describe.each(getConformanceBackends())("CT-SNAP/COMP-* (%s)", (backend: Conform
     scope = await makeStore(backend);
     if (backend === "persistent") {
       snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), "mesh-snapshot-store-"));
-      snapshotStore = new FileBackedSnapshotStore(path.join(snapshotDir, "snapshots.json"));
+      snapshotStore = new FileBackedSnapshotStore(path.join(requireString(snapshotDir, "snapshotDir"), "snapshots.json"));
       return;
     }
     snapshotStore = new InMemorySnapshotStore();
