@@ -12,4 +12,4 @@
 5. Click **Add link** and create a typed link between node IDs.
 6. Restart server using same storage dir (`MESH_GRAPH_STORAGE_DIR=...`) and reload webapp; graph recovers to same `{nodes, links}`.
 
-Windows note: if Vite fails with `Cannot find module '@rollup/rollup-win32-x64-msvc'`, run `pnpm repair:win-rollup` from the repo root.
+Windows note: if Vite fails with `Cannot find module '@rollup/rollup-win32-x64-msvc'` or `The package '@esbuild/win32-x64' could not be found`, run `pnpm repair:win-rollup` from the repo root (Vite needs both native optional binaries: Rollup + esbuild).
