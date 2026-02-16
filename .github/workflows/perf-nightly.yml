@@ -18,6 +18,8 @@ jobs:
           version: 10
       - name: Install
         run: pnpm install --frozen-lockfile
+      - name: Verify lockfile is clean after install
+        run: pnpm check:lockfile-clean
       - name: Build
         run: pnpm -r build
       - name: Run nightly perf budgets
