@@ -510,6 +510,39 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-SNAP-4",
+          "surface": "Snapshot",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SNAP-4][SURF:Snapshot] CT-SNAP-4 snapshot payload growth is controlled by compaction",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Snapshot payload uses compact coverage metadata so serialized payload growth is sublinear and remains bounded after compaction.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-snap-4\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SNAP-5",
+          "surface": "Snapshot",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SNAP-5][SURF:Snapshot] CT-SNAP-5 rebuild oracle equality with compact snapshot",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Full rebuild canonical state equals rebuild with compact snapshot + replay.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-snap-5\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SNAP-6",
+          "surface": "Snapshot",
+          "backend": "InMemory",
+          "testName": "[INV:CT-SNAP-6][SURF:Snapshot] CT-SNAP-6 compact coverage remains principal/policy scoped",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Compact coverage metadata and snapshot scope stay isolated per principal under ACL visibility policy.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-snap-6\"; const user = { principalId: \"user\" }",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-SYNC-1",
           "surface": "Sync",
           "backend": "InMemory",
@@ -555,9 +588,9 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 22,
+        "Critical": 24,
         "Structural": 17,
-        "Regression": 9
+        "Regression": 10
       },
       "criticalInvariantIds": [
         "CT-COMP-1",
@@ -581,6 +614,8 @@
         "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
+        "CT-SNAP-5",
+        "CT-SNAP-6",
         "CT-SYNC-3"
       ],
       "coverageGaps": []
@@ -1072,6 +1107,39 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-SNAP-4",
+          "surface": "Snapshot",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SNAP-4][SURF:Snapshot] CT-SNAP-4 snapshot payload growth is controlled by compaction",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Snapshot payload uses compact coverage metadata so serialized payload growth is sublinear and remains bounded after compaction.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-snap-4\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SNAP-5",
+          "surface": "Snapshot",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SNAP-5][SURF:Snapshot] CT-SNAP-5 rebuild oracle equality with compact snapshot",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Full rebuild canonical state equals rebuild with compact snapshot + replay.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-snap-5\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-SNAP-6",
+          "surface": "Snapshot",
+          "backend": "Persistent",
+          "testName": "[INV:CT-SNAP-6][SURF:Snapshot] CT-SNAP-6 compact coverage remains principal/policy scoped",
+          "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+          "oracle": "Compact coverage metadata and snapshot scope stay isolated per principal under ACL visibility policy.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-snap-6\"; const user = { principalId: \"user\" }",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-SYNC-1",
           "surface": "Sync",
           "backend": "Persistent",
@@ -1117,9 +1185,9 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 22,
+        "Critical": 24,
         "Structural": 17,
-        "Regression": 9
+        "Regression": 10
       },
       "criticalInvariantIds": [
         "CT-COMP-1",
@@ -1143,6 +1211,8 @@
         "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
+        "CT-SNAP-5",
+        "CT-SNAP-6",
         "CT-SYNC-3"
       ],
       "coverageGaps": []
@@ -1634,6 +1704,39 @@
       "limitations": ""
     },
     {
+      "invariantId": "CT-SNAP-4",
+      "surface": "Snapshot",
+      "backend": "InMemory",
+      "testName": "[INV:CT-SNAP-4][SURF:Snapshot] CT-SNAP-4 snapshot payload growth is controlled by compaction",
+      "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+      "oracle": "Snapshot payload uses compact coverage metadata so serialized payload growth is sublinear and remains bounded after compaction.",
+      "criticality": "Regression",
+      "setup": "const graphSpaceId = \"space-snap-4\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-SNAP-5",
+      "surface": "Snapshot",
+      "backend": "InMemory",
+      "testName": "[INV:CT-SNAP-5][SURF:Snapshot] CT-SNAP-5 rebuild oracle equality with compact snapshot",
+      "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+      "oracle": "Full rebuild canonical state equals rebuild with compact snapshot + replay.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-snap-5\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-SNAP-6",
+      "surface": "Snapshot",
+      "backend": "InMemory",
+      "testName": "[INV:CT-SNAP-6][SURF:Snapshot] CT-SNAP-6 compact coverage remains principal/policy scoped",
+      "file": "packages/conformance-tests/src/ct_snapshots_compaction.test.ts",
+      "oracle": "Compact coverage metadata and snapshot scope stay isolated per principal under ACL visibility policy.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-snap-6\"; const user = { principalId: \"user\" }",
+      "limitations": ""
+    },
+    {
       "invariantId": "CT-SYNC-1",
       "surface": "Sync",
       "backend": "InMemory",
@@ -1679,9 +1782,9 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 22,
+    "Critical": 24,
     "Structural": 17,
-    "Regression": 9
+    "Regression": 10
   },
   "criticalInvariantIds": [
     "CT-COMP-1",
@@ -1705,6 +1808,8 @@
     "CT-RS-2",
     "CT-S-1",
     "CT-S-2",
+    "CT-SNAP-5",
+    "CT-SNAP-6",
     "CT-SYNC-3"
   ],
   "coverageGaps": []
