@@ -96,7 +96,7 @@ describe.each(getConformanceBackends())("CT-S-* Security masking and indistingui
         },
         {
           txId: "tx-visible-2",
-          txIndex: 3,
+          txIndex: 2,
           meta: [expect.objectContaining({ txId: "tx-visible-2", stream: "meta", seq: 3 })],
           graph: [expect.objectContaining({ txId: "tx-visible-2", stream: "graph", seq: 4 })]
         }

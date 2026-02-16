@@ -82,12 +82,12 @@ describe("CT-C-* Cursor semantics per principal", () => {
       txs: [expect.objectContaining({ txId: "tx-1-both", txIndex: 1 }), expect.objectContaining({ txId: "tx-2-alice-only", txIndex: 2 })],
       cursor: 2
     });
-    expect(alicePage2).toEqual({ txs: [expect.objectContaining({ txId: "tx-4-both", txIndex: 4 })], cursor: 3 });
+    expect(alicePage2).toEqual({ txs: [expect.objectContaining({ txId: "tx-4-both", txIndex: 3 })], cursor: 3 });
     expect(bobPage1).toEqual({
-      txs: [expect.objectContaining({ txId: "tx-1-both", txIndex: 1 }), expect.objectContaining({ txId: "tx-3-bob-only", txIndex: 3 })],
+      txs: [expect.objectContaining({ txId: "tx-1-both", txIndex: 1 }), expect.objectContaining({ txId: "tx-3-bob-only", txIndex: 2 })],
       cursor: 2
     });
-    expect(bobPage2).toEqual({ txs: [expect.objectContaining({ txId: "tx-4-both", txIndex: 4 })], cursor: 3 });
+    expect(bobPage2).toEqual({ txs: [expect.objectContaining({ txId: "tx-4-both", txIndex: 3 })], cursor: 3 });
   });
 
   it("[INV:CT-C-3][SURF:Cursor] CT-C-3 contradiction: hidden tx cannot be read directly by masked principal", async ({ task }) => {

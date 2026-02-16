@@ -65,7 +65,7 @@ function runCommand(cmd, env = {}) {
 function collectRuntimeMeta(backendEnv) {
   runCommand(
     `pnpm exec vitest run packages/conformance-tests/src --reporter ${evidenceReporterPath}`,
-    { MESH_EVIDENCE_META_PATH: runtimeMetaPath, MESH_BACKEND: backendEnv }
+    { MESH_EVIDENCE_META_PATH: runtimeMetaPath, MESH_BACKEND: backendEnv, MESH_TX_VISIBILITY_POLICY: "acl" }
   );
 
   return readJson(runtimeMetaPath);
