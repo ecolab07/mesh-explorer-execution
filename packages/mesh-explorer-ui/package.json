@@ -7,6 +7,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
       "default": "./dist/index.js"
     }
   },
@@ -16,5 +17,9 @@
   "dependencies": {
     "react-force-graph-3d": "workspace:*",
     "force-graph": "workspace:*"
-  }
+  },
+  "module": "./dist/index.js",
+  "files": [
+    "dist"
+  ]
 }
