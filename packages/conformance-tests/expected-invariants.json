@@ -120,6 +120,26 @@
     "criticality": "Regression"
   },
   {
+    "invariantId": "CT-P-SEC-1",
+    "surface": "Projection",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-P-SEC-2",
+    "surface": "Projection",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-P-SEC-3",
+    "surface": "Projection",
+    "criticality": "Structural"
+  },
+  {
+    "invariantId": "CT-P-SEC-4",
+    "surface": "Projection",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-PR-1",
     "surface": "V2-PassiveReplication",
     "criticality": "Critical"
