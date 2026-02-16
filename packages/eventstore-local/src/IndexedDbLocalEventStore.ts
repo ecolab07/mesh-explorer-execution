@@ -25,6 +25,7 @@ import {
   toVisibilityContext,
   type TxVisibilityDecider
 } from "./internal/txVisibility.js";
+import { recordEventsScanned, recordRangeRead, recordTxIndexLookup } from "./internal/readCost.js";
 
 type RevisionRow = { graphSpaceId: string; revisionToken: string; cursor: Cursor };
 type IdempotencyRow = { payloadHash: string; receipt: TransactionReceipt };
@@ -158,13 +159,13 @@ export class IndexedDbLocalEventStore implements LocalEventStore {
   async readTx(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null> {
     const space = this.getDb().spaces.get(graphSpaceId);
     if (!space) return null;
+    recordTxIndexLookup();
     const txIndex = space.txIndexByTxId.get(txId);
     if (!txIndex) return null;
-    return {
-      txId,
-      meta: this.sliceByRange(space.metaEvents, txIndex.meta.start, txIndex.meta.end),
-      graph: this.sliceByRange(space.graphEvents, txIndex.graph.start, txIndex.graph.end)
-    };
+    const meta = this.sliceBySeqRange(space.metaEvents, txIndex.meta.start, txIndex.meta.end);
+    const graph = this.sliceBySeqRange(space.graphEvents, txIndex.graph.start, txIndex.graph.end);
+    recordEventsScanned(meta.length + graph.length);
+    return { txId, meta, graph };
   }
 
   async readTxForPrincipal(
@@ -190,20 +191,30 @@ export class IndexedDbLocalEventStore implements LocalEventStore {
   ): Promise<EventEnvelope[]> {
     const space = this.getDb().spaces.get(graphSpaceId);
     if (!space) return [];
+    recordRangeRead();
     const source = stream === "meta" ? space.metaEvents : space.graphEvents;
     const snapshotCap = options?.snapshotCursor?.[stream === "meta" ? "metaSeq" : "graphSeq"];
-    const visible = source.filter((event) => event.seq > fromSeqExclusive && (snapshotCap === undefined || event.seq <= snapshotCap));
-    if (visible.length <= limit) return visible;
+    const bounded = this.sliceBySeqBounds(source, fromSeqExclusive + 1, snapshotCap);
+    if (bounded.length <= limit) {
+      recordEventsScanned(bounded.length);
+      return bounded;
+    }
 
-    const initial = visible.slice(0, limit);
+    const initial = bounded.slice(0, limit);
     const last = initial[initial.length - 1];
     if (!last) return initial;
 
+    recordTxIndexLookup();
     const txIndex = space.txIndexByTxId.get(last.txId);
     if (!txIndex) return initial;
     const txEndSeq = txIndex[stream].end;
-    if (last.seq >= txEndSeq) return initial;
-    return visible.filter((event) => event.seq <= txEndSeq);
+    if (last.seq >= txEndSeq) {
+      recordEventsScanned(initial.length);
+      return initial;
+    }
+    const extended = this.sliceBySeqBounds(source, fromSeqExclusive + 1, Math.min(snapshotCap ?? Number.MAX_SAFE_INTEGER, txEndSeq));
+    recordEventsScanned(extended.length);
+    return extended;
   }
 
   async readTxIndex(graphSpaceId: string): Promise<TxIndexEntry[]> {
@@ -304,8 +315,23 @@ export class IndexedDbLocalEventStore implements LocalEventStore {
     return `${graphSpaceId}::${actorId}::${idempotencyKey}`;
   }
 
-  private sliceByRange(events: EventEnvelope[], start: number, end: number): EventEnvelope[] {
-    return events.filter((event) => event.seq >= start && event.seq <= end);
+  private sliceBySeqRange(events: EventEnvelope[], start: number, end: number): EventEnvelope[] {
+    if (start > end || events.length === 0) {
+      return [];
+    }
+    return events.slice(Math.max(0, start - 1), Math.min(events.length, end));
+  }
+
+  private sliceBySeqBounds(events: EventEnvelope[], startInclusive: number, endInclusive?: number): EventEnvelope[] {
+    if (events.length === 0) {
+      return [];
+    }
+    const startIndex = Math.max(0, startInclusive - 1);
+    const lastSeq = endInclusive ?? events.length;
+    if (lastSeq < startInclusive) {
+      return [];
+    }
+    return events.slice(startIndex, Math.min(events.length, lastSeq));
   }
 
   private notFoundOrMasked(): CommandError {
