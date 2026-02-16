@@ -10,6 +10,7 @@
       "CT-PR-* V2 passive replication (%s)",
       "CT-PR-FUZZ V2 passive replication fuzz (%s)",
       "CT-PRC-* V2 passive replication chaos (%s)",
+      "CT-REPLICA-* passive replica conformance",
       "CT-RS-* V2-lite remote sync (%s)",
       "CT-S-* Security masking and indistinguishability (%s)",
       "CT-SNAP/COMP-* (%s)",
@@ -411,6 +412,50 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-REPLICA-1",
+          "surface": "Replica",
+          "backend": "InMemory",
+          "testName": "[INV:CT-REPLICA-1][SURF:Replica] equivalence replica vs source at visible cursor K",
+          "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+          "oracle": "At principal-visible cursor K, passive replicated sink rebuild equals source rebuild for the same principal.",
+          "criticality": "Critical",
+          "setup": "await withVisibilityPolicy(\"acl\", async () => {; const sourceStore = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-REPLICA-2",
+          "surface": "Replica",
+          "backend": "InMemory",
+          "testName": "[INV:CT-REPLICA-2][SURF:Replica] crash between apply and checkpoint remains deterministic after restart",
+          "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+          "oracle": "Crash after apply but before checkpoint save only causes redelivery; replay converges without duplicates.",
+          "criticality": "Critical",
+          "setup": "const sourceStore = new InMemoryLocalEventStore(); const sinkStore = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-REPLICA-3",
+          "surface": "Replica",
+          "backend": "InMemory",
+          "testName": "[INV:CT-REPLICA-3][SURF:Replica] idempotency cross-node single-writer retry keeps stable receipt",
+          "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+          "oracle": "Redelivered transaction envelope returns committed receipt and does not duplicate replicated tx.",
+          "criticality": "Critical",
+          "setup": "const sourceStore = new InMemoryLocalEventStore(); const sinkStore = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-REPLICA-4",
+          "surface": "Replica",
+          "backend": "InMemory",
+          "testName": "[INV:CT-REPLICA-4][SURF:Replica] absent vs masked indistinguishable in cursor/sync output",
+          "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+          "oracle": "Principal pull receipts do not allow distinguishing absent transaction history from masked history.",
+          "criticality": "Structural",
+          "setup": "await withVisibilityPolicy(\"acl\", async () => {; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-RS-1",
           "surface": "V2-RemoteSync",
           "backend": "InMemory",
@@ -588,8 +633,8 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 24,
-        "Structural": 17,
+        "Critical": 27,
+        "Structural": 18,
         "Regression": 10
       },
       "criticalInvariantIds": [
@@ -611,6 +656,9 @@
         "CT-PR-1",
         "CT-PR-4",
         "CT-PRC-2",
+        "CT-REPLICA-1",
+        "CT-REPLICA-2",
+        "CT-REPLICA-3",
         "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
@@ -1008,6 +1056,50 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-REPLICA-1",
+          "surface": "Replica",
+          "backend": "Persistent",
+          "testName": "[INV:CT-REPLICA-1][SURF:Replica] equivalence replica vs source at visible cursor K",
+          "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+          "oracle": "At principal-visible cursor K, passive replicated sink rebuild equals source rebuild for the same principal.",
+          "criticality": "Critical",
+          "setup": "await withVisibilityPolicy(\"acl\", async () => {; const sourceStore = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-REPLICA-2",
+          "surface": "Replica",
+          "backend": "Persistent",
+          "testName": "[INV:CT-REPLICA-2][SURF:Replica] crash between apply and checkpoint remains deterministic after restart",
+          "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+          "oracle": "Crash after apply but before checkpoint save only causes redelivery; replay converges without duplicates.",
+          "criticality": "Critical",
+          "setup": "const sourceStore = new InMemoryLocalEventStore(); const sinkStore = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-REPLICA-3",
+          "surface": "Replica",
+          "backend": "Persistent",
+          "testName": "[INV:CT-REPLICA-3][SURF:Replica] idempotency cross-node single-writer retry keeps stable receipt",
+          "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+          "oracle": "Redelivered transaction envelope returns committed receipt and does not duplicate replicated tx.",
+          "criticality": "Critical",
+          "setup": "const sourceStore = new InMemoryLocalEventStore(); const sinkStore = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-REPLICA-4",
+          "surface": "Replica",
+          "backend": "Persistent",
+          "testName": "[INV:CT-REPLICA-4][SURF:Replica] absent vs masked indistinguishable in cursor/sync output",
+          "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+          "oracle": "Principal pull receipts do not allow distinguishing absent transaction history from masked history.",
+          "criticality": "Structural",
+          "setup": "await withVisibilityPolicy(\"acl\", async () => {; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-RS-1",
           "surface": "V2-RemoteSync",
           "backend": "Persistent",
@@ -1185,8 +1277,8 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 24,
-        "Structural": 17,
+        "Critical": 27,
+        "Structural": 18,
         "Regression": 10
       },
       "criticalInvariantIds": [
@@ -1208,6 +1300,9 @@
         "CT-PR-1",
         "CT-PR-4",
         "CT-PRC-2",
+        "CT-REPLICA-1",
+        "CT-REPLICA-2",
+        "CT-REPLICA-3",
         "CT-RS-2",
         "CT-S-1",
         "CT-S-2",
@@ -1605,6 +1700,50 @@
       "limitations": ""
     },
     {
+      "invariantId": "CT-REPLICA-1",
+      "surface": "Replica",
+      "backend": "InMemory",
+      "testName": "[INV:CT-REPLICA-1][SURF:Replica] equivalence replica vs source at visible cursor K",
+      "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+      "oracle": "At principal-visible cursor K, passive replicated sink rebuild equals source rebuild for the same principal.",
+      "criticality": "Critical",
+      "setup": "await withVisibilityPolicy(\"acl\", async () => {; const sourceStore = new InMemoryLocalEventStore()",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-REPLICA-2",
+      "surface": "Replica",
+      "backend": "InMemory",
+      "testName": "[INV:CT-REPLICA-2][SURF:Replica] crash between apply and checkpoint remains deterministic after restart",
+      "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+      "oracle": "Crash after apply but before checkpoint save only causes redelivery; replay converges without duplicates.",
+      "criticality": "Critical",
+      "setup": "const sourceStore = new InMemoryLocalEventStore(); const sinkStore = new InMemoryLocalEventStore()",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-REPLICA-3",
+      "surface": "Replica",
+      "backend": "InMemory",
+      "testName": "[INV:CT-REPLICA-3][SURF:Replica] idempotency cross-node single-writer retry keeps stable receipt",
+      "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+      "oracle": "Redelivered transaction envelope returns committed receipt and does not duplicate replicated tx.",
+      "criticality": "Critical",
+      "setup": "const sourceStore = new InMemoryLocalEventStore(); const sinkStore = new InMemoryLocalEventStore()",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-REPLICA-4",
+      "surface": "Replica",
+      "backend": "InMemory",
+      "testName": "[INV:CT-REPLICA-4][SURF:Replica] absent vs masked indistinguishable in cursor/sync output",
+      "file": "packages/conformance-tests/src/ct_replica_sync.test.ts",
+      "oracle": "Principal pull receipts do not allow distinguishing absent transaction history from masked history.",
+      "criticality": "Structural",
+      "setup": "await withVisibilityPolicy(\"acl\", async () => {; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
       "invariantId": "CT-RS-1",
       "surface": "V2-RemoteSync",
       "backend": "InMemory",
@@ -1782,8 +1921,8 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 24,
-    "Structural": 17,
+    "Critical": 27,
+    "Structural": 18,
     "Regression": 10
   },
   "criticalInvariantIds": [
@@ -1805,6 +1944,9 @@
     "CT-PR-1",
     "CT-PR-4",
     "CT-PRC-2",
+    "CT-REPLICA-1",
+    "CT-REPLICA-2",
+    "CT-REPLICA-3",
     "CT-RS-2",
     "CT-S-1",
     "CT-S-2",
