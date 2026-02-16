@@ -21,6 +21,9 @@ importers:
       '@rollup/rollup-linux-x64-gnu':
         specifier: 4.57.1
         version: 4.57.1
+      '@rollup/rollup-win32-x64-msvc':
+        specifier: 4.57.1
+        version: 4.57.1
 
   apps/mesh-app: {}
 
@@ -232,6 +235,11 @@ packages:
     cpu: [x64]
     os: [linux]
     libc: [glibc]
+
+  '@rollup/rollup-win32-x64-msvc@4.57.1':
+    resolution: {}
+    cpu: [x64]
+    os: [win32]
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
@@ -458,6 +466,9 @@ snapshots:
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@rollup/rollup-linux-x64-gnu@4.57.1':
+    optional: true
+
+  '@rollup/rollup-win32-x64-msvc@4.57.1':
     optional: true
 
   '@types/estree@1.0.8': {}
