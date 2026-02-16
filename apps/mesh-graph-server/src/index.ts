@@ -139,6 +139,11 @@ async function handleRequest(
     return;
   }
 
+  if (req.method === "GET" && requestUrl.pathname === "/") {
+    writePlainText(res, 200, buildRootHelpMessage(deps.graphSpaceId));
+    return;
+  }
+
   const principal = parsePrincipal(req);
   if (!principal) {
     debugAuthLog(req, requestUrl);
@@ -196,6 +201,24 @@ async function handleRequest(
   }
 
   writeJson(res, 404, { status: "error", category: "NOT_FOUND", reasonCode: "NOT_FOUND.GENERIC" });
+}
+
+function buildRootHelpMessage(graphSpaceId: string): string {
+  return [
+    "mesh-graph-server API endpoint",
+    "",
+    "This server expects authenticated API requests using header x-mesh-principal.",
+    "Example:",
+    '  curl -H "x-mesh-principal: local-dev" http://127.0.0.1:8090/v1/sync/pull?fromCursorVisible=0',
+    "",
+    "Useful routes:",
+    "  /v1/...        Sync HTTP API",
+    "  /graph/view    Current graph view (requires x-mesh-principal)",
+    "",
+    "To open the UI, run: pnpm webapp",
+    "Default UI URL: http://127.0.0.1:5173",
+    `graphSpaceId: ${graphSpaceId}`
+  ].join("\n");
 }
 
 async function submitGraphCommand(
@@ -358,6 +381,13 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(payload));
+}
+
+function writePlainText(res: ServerResponse, status: number, payload: string): void {
+  if (res.writableEnded) return;
+  res.statusCode = status;
+  res.setHeader("content-type", "text/plain; charset=utf-8");
+  res.end(payload);
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
