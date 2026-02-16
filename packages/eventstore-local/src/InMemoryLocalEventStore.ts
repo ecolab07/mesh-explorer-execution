@@ -1,8 +1,6 @@
 import type {
-  AccessEffect,
   CommandError,
   Cursor,
-  EventAccessPolicy,
   EventEnvelope,
   FaultInjectionHooks,
   IdempotencyCtx,
@@ -17,11 +15,23 @@ import type {
 } from "@mesh/shared";
 import { REASON_CODES } from "@mesh/shared";
 import type { LocalEventStore } from "./LocalEventStore.js";
+import {
+  buildTxBundles,
+  countVisibleTxs,
+  createAclTxVisibilityDecider,
+  createDefaultTxVisibilityDecider,
+  createEntitySecretMaskDecider,
+  filterVisibleTxs,
+  toVisibilityContext,
+  type TxVisibilityDecider
+} from "./internal/txVisibility.js";
 
 /**
  * In-memory conformance implementation for LocalEventStore.
  */
 export class InMemoryLocalEventStore implements LocalEventStore {
+  private readonly txVisibilityDecider: TxVisibilityDecider;
+
   private readonly bySpace = new Map<
     string,
     {
@@ -32,6 +42,10 @@ export class InMemoryLocalEventStore implements LocalEventStore {
       idempotency: Map<string, { payloadHash: string; receipt: TransactionReceipt }>;
     }
   >();
+
+  constructor() {
+    this.txVisibilityDecider = this.resolveTxVisibilityDecider();
+  }
 
   private getSpaceState(graphSpaceId: string): {
     meta: EventEnvelope[];
@@ -169,7 +183,10 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     if (!tx) {
       return this.notFoundOrMasked();
     }
-    return this.getTxVisibility(principal, tx.meta, tx.graph) === "allow" ? tx : this.notFoundOrMasked();
+    return this.txVisibilityDecider.decideTxVisibility(toVisibilityContext(principal), { txId, txIndex: 0, meta: tx.meta, graph: tx.graph }) ===
+      "allow"
+      ? tx
+      : this.notFoundOrMasked();
   }
 
   async readRange(
@@ -229,33 +246,21 @@ export class InMemoryLocalEventStore implements LocalEventStore {
       return { txs: [], cursor: fromPrincipalCursorExclusive };
     }
 
-    const visibleTxs = current.txIndex
-      .map((txEntry) => {
-        const meta = current.meta.filter((e) => e.txId === txEntry.txId);
-        const graph = current.graph.filter((e) => e.txId === txEntry.txId);
-        return { txId: txEntry.txId, txIndex: txEntry.txIndex, meta, graph };
-      })
-      .filter((tx) => this.getTxVisibility(principal, tx.meta, tx.graph) === "allow");
-
-    const safeCursor = Math.max(0, fromPrincipalCursorExclusive);
-    const txs = visibleTxs.slice(safeCursor, safeCursor + limit);
-    return {
+    const txs = buildTxBundles(current.txIndex, current.meta, current.graph);
+    return filterVisibleTxs({
       txs,
-      cursor: safeCursor + txs.length
-    };
+      fromPrincipalCursorExclusive,
+      limit,
+      visibility: toVisibilityContext(principal),
+      decider: this.txVisibilityDecider
+    });
   }
 
   async getPrincipalCursorHead(graphSpaceId: string, principal?: PrincipalContext): Promise<number> {
     const current = this.bySpace.get(graphSpaceId);
     if (!current) return 0;
-    const visible = current.txIndex
-      .map((txEntry) => {
-        const meta = current.meta.filter((e) => e.txId === txEntry.txId);
-        const graph = current.graph.filter((e) => e.txId === txEntry.txId);
-        return { meta, graph };
-      })
-      .filter((tx) => this.getTxVisibility(principal, tx.meta, tx.graph) === "allow");
-    return visible.length;
+    const txs = buildTxBundles(current.txIndex, current.meta, current.graph);
+    return countVisibleTxs(txs, toVisibilityContext(principal), this.txVisibilityDecider);
   }
 
   async resolveRevision(_graphSpaceId: string, _revisionToken: string): Promise<Cursor | null> {
@@ -285,27 +290,15 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     };
   }
 
-  private getTxVisibility(principal: PrincipalContext | undefined, meta: EventEnvelope[], graph: EventEnvelope[]): AccessEffect {
-    if (!principal) {
-      return "allow";
+  private resolveTxVisibilityDecider(): TxVisibilityDecider {
+    const mode = process.env.MESH_TX_VISIBILITY_POLICY;
+    if (mode === "acl") {
+      return createAclTxVisibilityDecider();
     }
-
-    const effects = [...meta, ...graph].map((event) => this.resolveEventAccess(event, principal.principalId));
-    if (effects.some((effect) => effect === "deny")) {
-      return "deny";
+    if (mode === "entity-secret") {
+      return createEntitySecretMaskDecider();
     }
-    if (effects.some((effect) => effect === "mask")) {
-      return "mask";
-    }
-    return "allow";
-  }
-
-  private resolveEventAccess(event: EventEnvelope, principalId: string): AccessEffect {
-    const acl = (event.payload as { _acl?: EventAccessPolicy })._acl;
-    if (!acl) {
-      return "allow";
-    }
-    return acl[principalId] ?? acl["*"] ?? "allow";
+    return createDefaultTxVisibilityDecider();
   }
 
   private hitHook(hooks: FaultInjectionHooks | undefined, point: Parameters<NonNullable<FaultInjectionHooks["onPoint"]>>[0]): void {

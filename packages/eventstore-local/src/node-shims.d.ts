@@ -6,3 +6,7 @@ declare module "node:path" {
   const path: any;
   export default path;
 }
+
+declare const process: {
+  env: Record<string, string | undefined>;
+};

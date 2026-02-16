@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FileBackedLocalEventStore, InMemoryLocalEventStore, type LocalEventStore } from "../src/index.js";
 
 type StoreFactory = () => Promise<{ store: LocalEventStore; cleanup: () => Promise<void> }>;
@@ -28,7 +28,20 @@ const createFileBacked: StoreFactory = async () => {
   };
 };
 
+
+const previousVisibilityPolicy = process.env.MESH_TX_VISIBILITY_POLICY;
+
+beforeEach(() => {
+  process.env.MESH_TX_VISIBILITY_POLICY = "acl";
+});
+
 afterEach(async () => {
+  if (previousVisibilityPolicy === undefined) {
+    delete process.env.MESH_TX_VISIBILITY_POLICY;
+  } else {
+    process.env.MESH_TX_VISIBILITY_POLICY = previousVisibilityPolicy;
+  }
+
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
