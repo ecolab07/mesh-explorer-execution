@@ -54,6 +54,9 @@ importers:
       '@mesh/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@mesh/sync-local':
+        specifier: workspace:*
+        version: link:../../packages/sync-local
       '@mesh/sync-http':
         specifier: workspace:*
         version: link:../../packages/sync-http
