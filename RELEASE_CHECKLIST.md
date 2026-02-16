@@ -1,0 +1,9 @@
+- Run `pnpm -r build`.
+- Run `pnpm check:api-contract`.
+- Run `pnpm test`.
+- Run conformance tests (`pnpm --filter @mesh/conformance-tests test`).
+- Run critical gate (`pnpm --filter @mesh/conformance-tests check:critical`).
+- Run `pnpm check:packaging`.
+- Run bench scripts (`pnpm bench` and/or `pnpm bench:*`) and record JSON output (informational, non-blocking).
+- Validate documentation sanity: `SUPPORT_MATRIX.md`, `KNOWN_LIMITATIONS.md`, and current security status are still accurate.
+- Apply version bump, create tag, and update changelog/release notes.
