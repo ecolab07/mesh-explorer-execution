@@ -1,5 +1,5 @@
 import path from "node:path";
-import { FileBackedLocalEventStore } from "@mesh/eventstore-local";
+import { makePersistentEventStore, type LocalEventStore } from "@mesh/eventstore-local";
 import { KernelMinimalImpl } from "@mesh/kernel-minimal";
 import { PrincipalProjectionEngine, type ProjectionSnapshot } from "@mesh/projection-minimal";
 import { FileBackedSnapshotStore, type SnapshotEnvelope } from "@mesh/snapshot-minimal";
@@ -43,7 +43,7 @@ class RuntimeLocalImpl implements RuntimeLocal {
 
   constructor(
     private readonly config: RuntimeLocalConfig,
-    private readonly eventStore: FileBackedLocalEventStore,
+    private readonly eventStore: LocalEventStoreClosable,
     private readonly kernel: KernelMinimalImpl,
     private readonly projectionEngine: PrincipalProjectionEngine,
     private readonly snapshotStore: FileBackedSnapshotStore<ProjectionSnapshot>
@@ -147,11 +147,29 @@ class RuntimeLocalImpl implements RuntimeLocal {
   }
 }
 
+type LocalEventStoreClosable = LocalEventStore & {
+  close: () => Promise<void>;
+};
+
+function resolveBackend(): "persistent" | "indexeddb" {
+  const requested = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.MESH_BACKEND
+    ?.trim()
+    .toLowerCase();
+  return requested === "indexeddb" ? "indexeddb" : "persistent";
+}
+
+function resolveEventStoreTarget(config: RuntimeLocalConfig): string {
+  if (resolveBackend() === "indexeddb") {
+    return `indexeddb://${["mesh_local_v1", config.graphSpaceId].join("-")}`;
+  }
+  return path.join(config.rootDir, "eventstore", "events.json");
+}
+
 export async function createRuntimeLocal(config: RuntimeLocalConfig): Promise<RuntimeLocal> {
-  const eventStorePath = path.join(config.rootDir, "eventstore", "events.json");
+  const eventStorePath = resolveEventStoreTarget(config);
   const snapshotPath = path.join(config.rootDir, "snapshots", "snapshots.json");
 
-  const eventStore = await FileBackedLocalEventStore.open(eventStorePath);
+  const eventStore = (await makePersistentEventStore(eventStorePath)) as LocalEventStoreClosable;
   const kernel = new KernelMinimalImpl(eventStore);
   const projectionEngine = new PrincipalProjectionEngine(eventStore, config.graphSpaceId);
   const snapshotStore = new FileBackedSnapshotStore<ProjectionSnapshot>(snapshotPath);
