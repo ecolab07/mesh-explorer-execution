@@ -72,9 +72,15 @@ importers:
       '@mesh/kernel-minimal':
         specifier: workspace:*
         version: link:../../packages/kernel-minimal
+      '@mesh/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@mesh/sync-http':
         specifier: workspace:*
         version: link:../../packages/sync-http
+      '@mesh/sync-local':
+        specifier: workspace:*
+        version: link:../../packages/sync-local
 
   packages/mesh-3d-force-graph-adapter: {}
 

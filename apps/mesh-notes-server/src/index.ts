@@ -3,11 +3,11 @@ import { once } from "node:events";
 import { promises as fs } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { FileBackedLocalEventStore } from "../../../packages/eventstore-local/src/FileBackedLocalEventStore.ts";
-import { KernelMinimalImpl } from "../../../packages/kernel-minimal/src/KernelMinimalImpl.ts";
-import { SyncHttpReferenceServer } from "../../../packages/sync-http/src/index.ts";
-import type { Command, CommandOutcome, PrincipalContext } from "../../../packages/shared/src/types.ts";
+import { FileBackedLocalEventStore } from "@mesh/eventstore-local";
+import { KernelMinimalImpl } from "@mesh/kernel-minimal";
+import { SyncHttpReferenceServer } from "@mesh/sync-http";
+import { LocalSyncGateway } from "@mesh/sync-local/internal";
+import type { Command, CommandOutcome, PrincipalContext } from "@mesh/shared";
 
 const GRAPH_SPACE_ID = "notes-app-shared-space-v1";
 const PRINCIPAL_HEADER = "x-mesh-principal";
@@ -27,32 +27,6 @@ type NoteEvent = {
   body?: string;
   _acl?: Record<string, "mask">;
 };
-
-type LocalSyncGatewayLike = {
-  submit(graphSpaceId: string, principal: PrincipalContext, command: Command, idempotencyKey?: string): {
-    ackTransport: { accepted: true; idempotencyKey: string };
-    final: Promise<CommandOutcome>;
-  };
-  syncPull(
-    graphSpaceId: string,
-    principal: PrincipalContext,
-    fromCursorVisible: number,
-    options?: { limitTx?: number; limitBytes?: number }
-  ): Promise<{ txBundlesVisible: Array<{ txBundle: { graphEvents: unknown[] } }>; cursorAfterVisible: number }>;
-};
-
-type LocalSyncGatewayCtor = new (
-  store: FileBackedLocalEventStore,
-  config: { graphSpaceId: string; executeCommand: (command: Command) => Promise<CommandOutcome> }
-) => LocalSyncGatewayLike;
-
-async function loadLocalSyncGatewayCtor(): Promise<LocalSyncGatewayCtor> {
-  const gatewayModuleHref = pathToFileURL(join(process.cwd(), "packages/sync-local/src/internal/transportGateway.ts")).href;
-  const loaded = (await import(gatewayModuleHref)) as {
-    LocalSyncGateway: LocalSyncGatewayCtor;
-  };
-  return loaded.LocalSyncGateway;
-}
 
 export interface MeshNotesServerOptions {
   storageDir: string;
@@ -76,8 +50,7 @@ export async function startMeshNotesServer(options: MeshNotesServerOptions): Pro
   const store = STORE_CACHE.get(storePath) ?? new FileBackedLocalEventStore(storePath);
   STORE_CACHE.set(storePath, store);
   const kernel = new KernelMinimalImpl(store);
-  const Gateway = await loadLocalSyncGatewayCtor();
-  const gateway = new Gateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
+  const gateway = new LocalSyncGateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
   const syncServer = new SyncHttpReferenceServer({ graphSpaceId, gateway });
   const syncListen = await syncServer.listen(0, "127.0.0.1");
 
@@ -118,7 +91,7 @@ export async function startMeshNotesServer(options: MeshNotesServerOptions): Pro
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  deps: { gateway: LocalSyncGatewayLike; graphSpaceId: string; syncBaseUrl: string }
+  deps: { gateway: LocalSyncGateway; graphSpaceId: string; syncBaseUrl: string }
 ): Promise<void> {
   const requestUrl = new URL(req.url ?? "/", "http://notes.local");
   const principal = parsePrincipal(req);
@@ -185,7 +158,7 @@ async function handleRequest(
   writeJson(res, 404, { status: "error", category: "NOT_FOUND", reasonCode: "NOT_FOUND.GENERIC" });
 }
 
-async function readVisibleNotes(gateway: LocalSyncGatewayLike, graphSpaceId: string, principal: PrincipalContext): Promise<Map<string, NoteRecord>> {
+async function readVisibleNotes(gateway: LocalSyncGateway, graphSpaceId: string, principal: PrincipalContext): Promise<Map<string, NoteRecord>> {
   const notes = new Map<string, NoteRecord>();
   let cursor = 0;
   while (true) {
@@ -229,7 +202,7 @@ function applyEvent(state: Map<string, NoteRecord>, event: NoteEvent): void {
 }
 
 async function submitNoteCommand(
-  gateway: LocalSyncGatewayLike,
+  gateway: LocalSyncGateway,
   graphSpaceId: string,
   principal: PrincipalContext,
   payload: NoteEvent
