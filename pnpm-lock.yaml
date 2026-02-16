@@ -22,6 +22,8 @@ importers:
         specifier: 4.57.1
         version: 4.57.1
 
+  packages/3d-force-graph: {}
+
   packages/cli:
     dependencies:
       '@mesh/runtime-local':
@@ -73,6 +75,8 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/force-graph: {}
+
   packages/kernel-minimal:
     dependencies:
       '@mesh/eventstore-local':
@@ -81,6 +85,15 @@ importers:
       '@mesh/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/mesh-explorer-ui:
+    dependencies:
+      3d-force-graph:
+        specifier: workspace:*
+        version: link:../3d-force-graph
+      force-graph:
+        specifier: workspace:*
+        version: link:../force-graph
 
   packages/projection-minimal:
     dependencies:

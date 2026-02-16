@@ -1,0 +1,16 @@
+{
+  "name": "@mesh/graph-server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node ./dist/index.js"
+  },
+  "dependencies": {
+    "@mesh/eventstore-local": "workspace:*",
+    "@mesh/kernel-minimal": "workspace:*",
+    "@mesh/sync-http": "workspace:*"
+  }
+}
