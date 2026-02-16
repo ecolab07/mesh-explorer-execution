@@ -11,6 +11,7 @@ import type { Command, CommandOutcome, Cursor, PrincipalContext } from "@mesh/sh
 
 const GRAPH_SPACE_ID = "mesh-explorer-graph-v1";
 const PRINCIPAL_HEADER = "x-mesh-principal";
+const DEBUG_AUTH_ENABLED = process.env.MESH_DEBUG_AUTH === "1";
 const STORE_CACHE = new Map<string, FileBackedLocalEventStore>();
 
 type GraphNode = { id: string; label: string; level?: number; metadata?: Record<string, unknown> };
@@ -131,8 +132,16 @@ async function handleRequest(
   deps: { gateway: LocalSyncGatewayLike; graphSpaceId: string; syncBaseUrl: string }
 ): Promise<void> {
   const requestUrl = new URL(req.url ?? "/", "http://graph.local");
+  applyCorsHeaders(res);
+  if (req.method === "OPTIONS") {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+
   const principal = parsePrincipal(req);
   if (!principal) {
+    debugAuthLog(req, requestUrl);
     writeJson(res, 401, { status: "rejected", category: "PERMISSION", reasonCode: "AUTH.PRINCIPAL_REQUIRED" });
     return;
   }
@@ -266,6 +275,23 @@ function parsePrincipal(req: IncomingMessage): PrincipalContext | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   return { principalId: trimmed };
+}
+
+function debugAuthLog(req: IncomingMessage, requestUrl: URL): void {
+  if (!DEBUG_AUTH_ENABLED) return;
+  const raw = req.headers[PRINCIPAL_HEADER];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const normalized = typeof value === "string" ? value.trim() : "";
+  process.stdout.write(
+    `[mesh-auth-debug] reject ${req.method ?? "UNKNOWN"} ${requestUrl.pathname}${requestUrl.search} ` +
+      `${PRINCIPAL_HEADER}=${JSON.stringify(value ?? null)} missing=${typeof value !== "string"} blank=${normalized.length === 0}\n`
+  );
+}
+
+function applyCorsHeaders(res: ServerResponse): void {
+  res.setHeader("access-control-allow-origin", "*");
+  res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+  res.setHeader("access-control-allow-headers", "content-type,x-mesh-principal");
 }
 
 function maskForOtherPrincipal(principal: string): Record<string, "mask"> {
