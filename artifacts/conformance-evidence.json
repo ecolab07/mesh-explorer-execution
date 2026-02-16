@@ -82,44 +82,44 @@
           "invariantId": "CT-K-1",
           "surface": "Kernel",
           "backend": "InMemory",
-          "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error",
+          "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: receipt determinism (idempotent retry)",
           "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-          "oracle": "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.",
+          "oracle": "Replaying the same actorId+idempotencyKey+payload returns the original committed receipt exactly.",
           "criticality": "Structural",
-          "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({",
+          "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({ ...baseCommand, commandId: \"cmd-k1\" })",
           "limitations": ""
         },
         {
           "invariantId": "CT-K-2",
           "surface": "Kernel",
           "backend": "InMemory",
-          "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt",
+          "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotency mismatch reject",
           "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-          "oracle": "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.",
+          "oracle": "Reusing the same idempotency key with different payload rejects with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
           "criticality": "Critical",
-          "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({",
+          "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({ ...baseCommand, commandId: \"cmd-k2-ok\" })",
           "limitations": ""
         },
         {
           "invariantId": "CT-K-3",
           "surface": "Kernel",
           "backend": "InMemory",
-          "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected",
+          "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: precondition mismatch is propagated",
           "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-          "oracle": "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
+          "oracle": "Append-layer PRECONDITION/REVISION_MISMATCH is propagated by kernel without remapping.",
           "criticality": "Critical",
-          "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({",
+          "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
           "limitations": ""
         },
         {
           "invariantId": "CT-K-4",
           "surface": "Kernel",
           "backend": "InMemory",
-          "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions",
+          "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: fault injection abort safety via kernel",
           "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-          "oracle": "Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH.",
+          "oracle": "A BEFORE_IDB_COMMIT fault during kernel execute must abort atomically, leaving no partial writes.",
           "criticality": "Critical",
-          "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
+          "setup": "const faultedStore = new FailBeforeCommitStore(store); const kernel = new KernelMinimalImpl(faultedStore)",
           "limitations": ""
         },
         {
@@ -141,7 +141,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "Appended transaction envelopes are immutable in canonical form across repeated reads.",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l1\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l1\"",
           "limitations": ""
         },
         {
@@ -152,7 +152,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "Extending read ranges preserves tx-closed boundaries and stable event ordering.",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l2\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l2\"",
           "limitations": ""
         },
         {
@@ -163,7 +163,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "txIndex increases monotonically and stream sequence ordering stays consistent across tx boundaries.",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l3\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l3\"",
           "limitations": ""
         },
         {
@@ -174,7 +174,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "A transaction is atomically persisted once and idempotent replay returns the original committed receipt.",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l4\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l4\"",
           "limitations": ""
         },
         {
@@ -185,7 +185,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "Crash before commit must leave no partial transaction state (neither events nor idempotency entry).",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l5\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l5\"",
           "limitations": ""
         },
         {
@@ -196,7 +196,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "Empty transaction payload must be rejected with VALIDATION/EMPTY_TRANSACTION.",
           "criticality": "Regression",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l6\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l6\"",
           "limitations": ""
         },
         {
@@ -644,44 +644,44 @@
           "invariantId": "CT-K-1",
           "surface": "Kernel",
           "backend": "Persistent",
-          "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error",
+          "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: receipt determinism (idempotent retry)",
           "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-          "oracle": "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.",
+          "oracle": "Replaying the same actorId+idempotencyKey+payload returns the original committed receipt exactly.",
           "criticality": "Structural",
-          "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({",
+          "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({ ...baseCommand, commandId: \"cmd-k1\" })",
           "limitations": ""
         },
         {
           "invariantId": "CT-K-2",
           "surface": "Kernel",
           "backend": "Persistent",
-          "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt",
+          "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotency mismatch reject",
           "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-          "oracle": "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.",
+          "oracle": "Reusing the same idempotency key with different payload rejects with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
           "criticality": "Critical",
-          "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({",
+          "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({ ...baseCommand, commandId: \"cmd-k2-ok\" })",
           "limitations": ""
         },
         {
           "invariantId": "CT-K-3",
           "surface": "Kernel",
           "backend": "Persistent",
-          "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected",
+          "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: precondition mismatch is propagated",
           "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-          "oracle": "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
+          "oracle": "Append-layer PRECONDITION/REVISION_MISMATCH is propagated by kernel without remapping.",
           "criticality": "Critical",
-          "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({",
+          "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
           "limitations": ""
         },
         {
           "invariantId": "CT-K-4",
           "surface": "Kernel",
           "backend": "Persistent",
-          "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions",
+          "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: fault injection abort safety via kernel",
           "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-          "oracle": "Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH.",
+          "oracle": "A BEFORE_IDB_COMMIT fault during kernel execute must abort atomically, leaving no partial writes.",
           "criticality": "Critical",
-          "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
+          "setup": "const faultedStore = new FailBeforeCommitStore(store); const kernel = new KernelMinimalImpl(faultedStore)",
           "limitations": ""
         },
         {
@@ -703,7 +703,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "Appended transaction envelopes are immutable in canonical form across repeated reads.",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l1\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l1\"",
           "limitations": ""
         },
         {
@@ -714,7 +714,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "Extending read ranges preserves tx-closed boundaries and stable event ordering.",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l2\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l2\"",
           "limitations": ""
         },
         {
@@ -725,7 +725,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "txIndex increases monotonically and stream sequence ordering stays consistent across tx boundaries.",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l3\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l3\"",
           "limitations": ""
         },
         {
@@ -736,7 +736,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "A transaction is atomically persisted once and idempotent replay returns the original committed receipt.",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l4\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l4\"",
           "limitations": ""
         },
         {
@@ -747,7 +747,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "Crash before commit must leave no partial transaction state (neither events nor idempotency entry).",
           "criticality": "Critical",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l5\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l5\"",
           "limitations": ""
         },
         {
@@ -758,7 +758,7 @@
           "file": "packages/conformance-tests/src/ct_l_core.test.ts",
           "oracle": "Empty transaction payload must be rejected with VALIDATION/EMPTY_TRANSACTION.",
           "criticality": "Regression",
-          "setup": "const store = scope.store; const graphSpaceId = \"space-l6\"",
+          "setup": "const store = scope!.store; const graphSpaceId = \"space-l6\"",
           "limitations": ""
         },
         {
@@ -1206,44 +1206,44 @@
       "invariantId": "CT-K-1",
       "surface": "Kernel",
       "backend": "InMemory",
-      "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error",
+      "testName": "[INV:CT-K-1][SURF:Kernel] CT-K-1: receipt determinism (idempotent retry)",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-      "oracle": "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.",
+      "oracle": "Replaying the same actorId+idempotencyKey+payload returns the original committed receipt exactly.",
       "criticality": "Structural",
-      "setup": "const kernel = new KernelMinimalImpl(store); const result = await kernel.execute({",
+      "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({ ...baseCommand, commandId: \"cmd-k1\" })",
       "limitations": ""
     },
     {
       "invariantId": "CT-K-2",
       "surface": "Kernel",
       "backend": "InMemory",
-      "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt",
+      "testName": "[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotency mismatch reject",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-      "oracle": "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.",
+      "oracle": "Reusing the same idempotency key with different payload rejects with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
       "criticality": "Critical",
-      "setup": "const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({",
+      "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({ ...baseCommand, commandId: \"cmd-k2-ok\" })",
       "limitations": ""
     },
     {
       "invariantId": "CT-K-3",
       "surface": "Kernel",
       "backend": "InMemory",
-      "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected",
+      "testName": "[INV:CT-K-3][SURF:Kernel] CT-K-3: precondition mismatch is propagated",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-      "oracle": "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.",
+      "oracle": "Append-layer PRECONDITION/REVISION_MISMATCH is propagated by kernel without remapping.",
       "criticality": "Critical",
-      "setup": "const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({",
+      "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
       "limitations": ""
     },
     {
       "invariantId": "CT-K-4",
       "surface": "Kernel",
       "backend": "InMemory",
-      "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions",
+      "testName": "[INV:CT-K-4][SURF:Kernel] CT-K-4: fault injection abort safety via kernel",
       "file": "packages/conformance-tests/src/ct_k_semantics.test.ts",
-      "oracle": "Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH.",
+      "oracle": "A BEFORE_IDB_COMMIT fault during kernel execute must abort atomically, leaving no partial writes.",
       "criticality": "Critical",
-      "setup": "const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore)",
+      "setup": "const faultedStore = new FailBeforeCommitStore(store); const kernel = new KernelMinimalImpl(faultedStore)",
       "limitations": ""
     },
     {
@@ -1265,7 +1265,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Appended transaction envelopes are immutable in canonical form across repeated reads.",
       "criticality": "Critical",
-      "setup": "const store = scope.store; const graphSpaceId = \"space-l1\"",
+      "setup": "const store = scope!.store; const graphSpaceId = \"space-l1\"",
       "limitations": ""
     },
     {
@@ -1276,7 +1276,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Extending read ranges preserves tx-closed boundaries and stable event ordering.",
       "criticality": "Critical",
-      "setup": "const store = scope.store; const graphSpaceId = \"space-l2\"",
+      "setup": "const store = scope!.store; const graphSpaceId = \"space-l2\"",
       "limitations": ""
     },
     {
@@ -1287,7 +1287,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "txIndex increases monotonically and stream sequence ordering stays consistent across tx boundaries.",
       "criticality": "Critical",
-      "setup": "const store = scope.store; const graphSpaceId = \"space-l3\"",
+      "setup": "const store = scope!.store; const graphSpaceId = \"space-l3\"",
       "limitations": ""
     },
     {
@@ -1298,7 +1298,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "A transaction is atomically persisted once and idempotent replay returns the original committed receipt.",
       "criticality": "Critical",
-      "setup": "const store = scope.store; const graphSpaceId = \"space-l4\"",
+      "setup": "const store = scope!.store; const graphSpaceId = \"space-l4\"",
       "limitations": ""
     },
     {
@@ -1309,7 +1309,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Crash before commit must leave no partial transaction state (neither events nor idempotency entry).",
       "criticality": "Critical",
-      "setup": "const store = scope.store; const graphSpaceId = \"space-l5\"",
+      "setup": "const store = scope!.store; const graphSpaceId = \"space-l5\"",
       "limitations": ""
     },
     {
@@ -1320,7 +1320,7 @@
       "file": "packages/conformance-tests/src/ct_l_core.test.ts",
       "oracle": "Empty transaction payload must be rejected with VALIDATION/EMPTY_TRANSACTION.",
       "criticality": "Regression",
-      "setup": "const store = scope.store; const graphSpaceId = \"space-l6\"",
+      "setup": "const store = scope!.store; const graphSpaceId = \"space-l6\"",
       "limitations": ""
     },
     {
