@@ -15,13 +15,14 @@ type GraphEvent =
   | { type: "graph.link.deleted"; linkId: string };
 
 export function mountMeshExplorerUi(container: HTMLElement): void {
+  const initialPrincipal = readInitialPrincipal();
   container.innerHTML = `
     <section style="display:grid;grid-template-columns:320px 1fr;gap:12px;height:100vh;font-family:sans-serif;">
       <aside style="padding:12px;border-right:1px solid #ddd;overflow:auto;">
         <h3>Mesh Explorer</h3>
         <label>baseUrl <input id="baseUrl" style="width:100%" value="http://127.0.0.1:8090"/></label><br/>
         <label>graphSpaceId <input id="graphSpaceId" style="width:100%" value="mesh-explorer-graph-v1"/></label><br/>
-        <label>principal <input id="principal" style="width:100%" value="alice"/></label><br/>
+        <label>principal <input id="principal" style="width:100%" value="${escapeHtml(initialPrincipal)}"/></label><br/>
         <button id="connect">Connect</button>
         <hr/>
         <div id="status">disconnected</div>
@@ -39,6 +40,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   `;
 
   const el = byId(container);
+  persistPrincipal(el.principal.value);
+  el.principal.onchange = () => {
+    const normalized = normalizePrincipal(el.principal.value);
+    el.principal.value = normalized;
+    persistPrincipal(normalized);
+  };
   const state = {
     nodes: new Map<string, GraphNode>(),
     links: new Map<string, GraphLink>(),
@@ -88,7 +95,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   void connectAndSync();
 
   async function connectAndSync(): Promise<void> {
-    const storageKey = cursorStorageKey(el.baseUrl.value, el.graphSpaceId.value, el.principal.value);
+    const storageKey = cursorStorageKey(el.baseUrl.value, el.graphSpaceId.value, normalizePrincipal(el.principal.value));
     const savedCursor = readCursor(storageKey);
     state.cursor = savedCursor ?? { metaSeq: 0, graphSeq: 0 };
     el.status.textContent = "connected";
@@ -99,7 +106,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       while (!state.stop) {
         try {
           const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${state.cursor.graphSeq}`;
-          const response = await fetch(url, { headers: { "x-mesh-principal": el.principal.value } });
+          const response = await fetch(url, { headers: headers(el.principal.value) });
           if (!response.body) {
             await wait(300);
             continue;
@@ -127,7 +134,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       const cursor = encodeURIComponent(JSON.stringify(state.cursor));
       const response = await fetch(
         `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${cursor}&limits=${limits}`,
-        { headers: { "x-mesh-principal": el.principal.value } }
+        { headers: headers(el.principal.value) }
       );
       if (!response.ok) return;
       const payload = (await response.json()) as { graph?: GraphEvent[]; cursorAfter?: Cursor };
@@ -166,6 +173,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   function renderStatus(): void {
     el.lastCursor.textContent = `cursor: ${JSON.stringify(state.cursor)}`;
     el.lastSync.textContent = `last sync: ${new Date().toISOString()}`;
+    if (!el.principal.value.trim()) {
+      el.status.textContent = `principal required: sending default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
+      return;
+    }
   }
 }
 
@@ -202,8 +213,45 @@ function byId(container: HTMLElement): UiElements {
 function headers(principal: string): HeadersInit {
   return {
     "content-type": "application/json",
-    "x-mesh-principal": principal
+    "x-mesh-principal": normalizePrincipal(principal)
   };
+}
+
+const DEFAULT_PRINCIPAL = "local-dev";
+const PRINCIPAL_STORAGE_KEY = "mesh-explorer-principal";
+
+function readInitialPrincipal(): string {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get("principal");
+    if (fromQuery && fromQuery.trim()) return fromQuery.trim();
+    const fromStorage = localStorage.getItem(PRINCIPAL_STORAGE_KEY);
+    if (fromStorage && fromStorage.trim()) return fromStorage.trim();
+  } catch {
+    // ignore and use default
+  }
+  return DEFAULT_PRINCIPAL;
+}
+
+function persistPrincipal(principal: string): void {
+  try {
+    localStorage.setItem(PRINCIPAL_STORAGE_KEY, normalizePrincipal(principal));
+  } catch {
+    // ignore
+  }
+}
+
+function normalizePrincipal(principal: string): string {
+  const trimmed = principal.trim();
+  return trimmed || DEFAULT_PRINCIPAL;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function colorForType(type: string): string {

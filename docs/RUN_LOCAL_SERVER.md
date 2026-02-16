@@ -14,6 +14,14 @@ Defaults:
 - port: `8090` (`PORT` env overrides)
 - graphSpaceId: `mesh-explorer-graph-v1`
 
+All graph-server requests require `x-mesh-principal`. If the header is missing (or blank), the server returns:
+
+```json
+{"status":"rejected","category":"PERMISSION","reasonCode":"AUTH.PRINCIPAL_REQUIRED"}
+```
+
+`@mesh/mesh-explorer-ui` now auto-populates a local default principal (`local-dev`) and sends it on every request; you can override it in the principal field (persisted in localStorage) or with `?principal=<id>` in the URL.
+
 ## Submit + pull (curl)
 
 ```bash
