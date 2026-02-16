@@ -28,6 +28,7 @@ import {
   toVisibilityContext,
   type TxVisibilityDecider
 } from "./internal/txVisibility.js";
+import { recordEventsScanned, recordRangeRead, recordTxIndexLookup } from "./internal/readCost.js";
 
 type SpaceState = {
   meta: EventEnvelope[];
@@ -49,6 +50,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   private readonly filePath: string;
   private readonly txVisibilityDecider: TxVisibilityDecider;
   private state: PersistedState | null = null;
+  private readonly txIndexBySpace = new Map<string, Map<TxId, TxIndexEntry>>();
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -138,6 +140,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     space.meta.push(...meta);
     space.graph.push(...graph);
     space.txIndex.push(txIndexEntry);
+    this.txIndexBySpace.delete(graphSpaceId);
     space.idempotency[idempotencySlot] = { payloadHash: idempotencyCtx.payloadHash, receipt };
 
     await this.persistState();
@@ -147,9 +150,12 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   async readTx(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null> {
     const space = this.getSpace(graphSpaceId);
     if (!space) return null;
-    const meta = space.meta.filter((e) => e.txId === txId);
-    const graph = space.graph.filter((e) => e.txId === txId);
-    if (meta.length === 0 && graph.length === 0) return null;
+    recordTxIndexLookup();
+    const txIndex = this.getTxIndexById(graphSpaceId, space).get(txId);
+    if (!txIndex) return null;
+    const meta = this.sliceBySeqRange(space.meta, txIndex.meta.start, txIndex.meta.end);
+    const graph = this.sliceBySeqRange(space.graph, txIndex.graph.start, txIndex.graph.end);
+    recordEventsScanned(meta.length + graph.length);
     return { txId, meta, graph };
   }
 
@@ -176,21 +182,31 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   ): Promise<EventEnvelope[]> {
     const space = this.getSpace(graphSpaceId);
     if (!space) return [];
+    recordRangeRead();
 
+    const source = stream === "meta" ? space.meta : space.graph;
     const snapshotCap = options?.snapshotCursor?.[stream === "meta" ? "metaSeq" : "graphSeq"];
-    const events = (stream === "meta" ? space.meta : space.graph).filter(
-      (e) => e.seq > fromSeqExclusive && (snapshotCap === undefined || e.seq <= snapshotCap)
-    );
-    if (events.length <= limit) return events;
+    const bounded = this.sliceBySeqBounds(source, fromSeqExclusive + 1, snapshotCap);
+    if (bounded.length <= limit) {
+      recordEventsScanned(bounded.length);
+      return bounded;
+    }
 
-    const initial = events.slice(0, limit);
+    const initial = bounded.slice(0, limit);
     const last = initial[initial.length - 1];
     if (!last) return initial;
-    const boundary = space.txIndex.find((entry) => entry.txId === last.txId);
+
+    recordTxIndexLookup();
+    const boundary = this.getTxIndexById(graphSpaceId, space).get(last.txId);
     if (!boundary) return initial;
     const txEndSeq = boundary[stream].end;
-    if (last.seq >= txEndSeq) return initial;
-    return events.filter((e) => e.seq <= txEndSeq);
+    if (last.seq >= txEndSeq) {
+      recordEventsScanned(initial.length);
+      return initial;
+    }
+    const extended = this.sliceBySeqBounds(source, fromSeqExclusive + 1, Math.min(snapshotCap ?? Number.MAX_SAFE_INTEGER, txEndSeq));
+    recordEventsScanned(extended.length);
+    return extended;
   }
 
   async readTxIndex(graphSpaceId: string): Promise<TxIndexEntry[]> {
@@ -245,6 +261,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     space.txIndex = space.txIndex.filter((entry) => !prunedTxIds.has(entry.txId));
     space.meta = space.meta.filter((event) => !prunedTxIds.has(event.txId));
     space.graph = space.graph.filter((event) => !prunedTxIds.has(event.txId));
+    this.txIndexBySpace.delete(params.graphSpaceId);
     await this.persistState();
   }
 
@@ -257,10 +274,12 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
       this.state = JSON.parse(raw) as PersistedState;
+      this.txIndexBySpace.clear();
     } catch (error) {
       const nodeError = error as { code?: string };
       if (nodeError.code === "ENOENT") {
         this.state = { spaces: {} };
+        this.txIndexBySpace.clear();
       } else {
         throw error;
       }
@@ -308,6 +327,35 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   private hitHook(hooks: FaultInjectionHooks | undefined, point: Parameters<NonNullable<FaultInjectionHooks["onPoint"]>>[0]): void {
     hooks?.onPoint?.(point);
     if (hooks?.failAt === point) throw new Error(`FAULT_INJECTION:${point}`);
+  }
+
+  private getTxIndexById(graphSpaceId: string, space: SpaceState): Map<TxId, TxIndexEntry> {
+    const existing = this.txIndexBySpace.get(graphSpaceId);
+    if (existing && existing.size === space.txIndex.length) {
+      return existing;
+    }
+    const rebuilt = new Map(space.txIndex.map((entry) => [entry.txId, entry]));
+    this.txIndexBySpace.set(graphSpaceId, rebuilt);
+    return rebuilt;
+  }
+
+  private sliceBySeqRange(events: EventEnvelope[], start: number, end: number): EventEnvelope[] {
+    if (start > end || events.length === 0) {
+      return [];
+    }
+    return events.slice(Math.max(0, start - 1), Math.min(events.length, end));
+  }
+
+  private sliceBySeqBounds(events: EventEnvelope[], startInclusive: number, endInclusive?: number): EventEnvelope[] {
+    if (events.length === 0) {
+      return [];
+    }
+    const startIndex = Math.max(0, startInclusive - 1);
+    const lastSeq = endInclusive ?? events.length;
+    if (lastSeq < startInclusive) {
+      return [];
+    }
+    return events.slice(startIndex, Math.min(events.length, lastSeq));
   }
 
   static async open(filePath: string): Promise<FileBackedLocalEventStore> {

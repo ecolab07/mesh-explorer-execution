@@ -48,3 +48,8 @@ MESH_BENCH_BACKENDS=inmemory,persistent pnpm bench:perf-1
 ```
 
 The script prints one JSON document to stdout for manual archival in release notes.
+
+## 6) Perf-2 regression guard
+
+Perf-2 adds a deterministic read-cost regression test that tracks internal counters (`eventsScanned`, `txIndexLookups`, `rangeReads`) and asserts linear growth when dataset size doubles. This guard is machine-independent because it uses operation counts rather than wall-clock timings.
+

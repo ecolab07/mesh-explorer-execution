@@ -25,6 +25,7 @@ import {
   toVisibilityContext,
   type TxVisibilityDecider
 } from "./internal/txVisibility.js";
+import { recordEventsScanned, recordRangeRead, recordTxIndexLookup } from "./internal/readCost.js";
 
 /**
  * In-memory conformance implementation for LocalEventStore.
@@ -168,9 +169,12 @@ export class InMemoryLocalEventStore implements LocalEventStore {
   async readTx(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null> {
     const current = this.bySpace.get(graphSpaceId);
     if (!current) return null;
-    const meta = current.meta.filter((e) => e.txId === txId);
-    const graph = current.graph.filter((e) => e.txId === txId);
-    if (meta.length === 0 && graph.length === 0) return null;
+    recordTxIndexLookup();
+    const txIndex = current.txById.get(txId);
+    if (!txIndex) return null;
+    const meta = this.sliceBySeqRange(current.meta, txIndex.meta.start, txIndex.meta.end);
+    const graph = this.sliceBySeqRange(current.graph, txIndex.graph.start, txIndex.graph.end);
+    recordEventsScanned(meta.length + graph.length);
     return { txId, meta, graph };
   }
 
@@ -199,25 +203,31 @@ export class InMemoryLocalEventStore implements LocalEventStore {
   ): Promise<EventEnvelope[]> {
     const current = this.bySpace.get(graphSpaceId);
     if (!current) return [];
+    recordRangeRead();
 
+    const source = current[stream];
     const snapshotCap = options?.snapshotCursor?.[stream === "meta" ? "metaSeq" : "graphSeq"];
-    const visible = current[stream].filter((e) => e.seq > fromSeqExclusive && (snapshotCap === undefined || e.seq <= snapshotCap));
-    if (visible.length <= limit) {
-      return visible;
+    const bounded = this.sliceBySeqBounds(source, fromSeqExclusive + 1, snapshotCap);
+    if (bounded.length <= limit) {
+      recordEventsScanned(bounded.length);
+      return bounded;
     }
 
-    const initial = visible.slice(0, limit);
+    const initial = bounded.slice(0, limit);
     const last = initial[initial.length - 1];
     if (!last) return initial;
 
+    recordTxIndexLookup();
     const boundary = current.txById.get(last.txId);
     if (!boundary) return initial;
     const txEndSeq = boundary[stream].end;
     if (last.seq >= txEndSeq) {
+      recordEventsScanned(initial.length);
       return initial;
     }
 
-    const extended = visible.filter((e) => e.seq <= txEndSeq);
+    const extended = this.sliceBySeqBounds(source, fromSeqExclusive + 1, Math.min(snapshotCap ?? Number.MAX_SAFE_INTEGER, txEndSeq));
+    recordEventsScanned(extended.length);
     return extended;
   }
 
@@ -306,5 +316,24 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     if (hooks?.failAt === point) {
       throw new Error(`FAULT_INJECTION:${point}`);
     }
+  }
+
+  private sliceBySeqRange(events: EventEnvelope[], start: number, end: number): EventEnvelope[] {
+    if (start > end || events.length === 0) {
+      return [];
+    }
+    return events.slice(Math.max(0, start - 1), Math.min(events.length, end));
+  }
+
+  private sliceBySeqBounds(events: EventEnvelope[], startInclusive: number, endInclusive?: number): EventEnvelope[] {
+    if (events.length === 0) {
+      return [];
+    }
+    const startIndex = Math.max(0, startInclusive - 1);
+    const lastSeq = endInclusive ?? events.length;
+    if (lastSeq < startInclusive) {
+      return [];
+    }
+    return events.slice(startIndex, Math.min(events.length, lastSeq));
   }
 }
