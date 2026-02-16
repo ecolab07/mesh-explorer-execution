@@ -30,6 +30,19 @@ interface LocalSyncGatewayLike {
     fromCursorVisible: number,
     options?: { limitBytes?: number; limitTx?: number; pollIntervalMs?: number; heartbeatEveryMs?: number }
   ): AsyncIterable<SyncFrame>;
+  eventsRead(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    stream: "meta" | "graph",
+    fromSeqExclusive: number,
+    options?: { limitEvents?: number; limitBytes?: number }
+  ): Promise<unknown[]>;
+  syncPoll(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    cursor: { metaSeq: number; graphSeq: number },
+    options?: { metaLimitEvents?: number; graphLimitEvents?: number; metaLimitBytes?: number; graphLimitBytes?: number }
+  ): Promise<{ meta: unknown[]; graph: unknown[]; cursorAfter: { metaSeq: number; graphSeq: number } }>;
 }
 
 type GatewayCtor = new (

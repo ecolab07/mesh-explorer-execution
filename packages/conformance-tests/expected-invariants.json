@@ -25,6 +25,26 @@
     "criticality": "Critical"
   },
   {
+    "invariantId": "CT-HTTP-RECOVERY-1",
+    "surface": "Transport",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-HTTP-RECOVERY-2",
+    "surface": "Transport",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-HTTP-RECOVERY-3",
+    "surface": "Transport",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-HTTP-RECOVERY-4",
+    "surface": "Transport",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-HTTP-TRANSPORT-1",
     "surface": "Transport",
     "criticality": "Critical"

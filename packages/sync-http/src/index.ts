@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { Command, CommandOutcome, PrincipalContext } from "@mesh/shared";
+import type { Command, CommandOutcome, Cursor, PrincipalContext } from "@mesh/shared";
 
 interface SubmitResult {
   ackTransport: { accepted: true; idempotencyKey: string };
@@ -21,6 +21,24 @@ interface SyncGatewayLike {
     fromCursorVisible: number,
     options?: { limitTx?: number; limitBytes?: number; heartbeatEveryMs?: number; pollIntervalMs?: number }
   ): AsyncIterable<unknown>;
+  eventsRead(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    stream: "meta" | "graph",
+    fromSeqExclusive: number,
+    options?: { limitEvents?: number; limitBytes?: number }
+  ): Promise<unknown[]>;
+  syncPoll(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    cursor: Cursor,
+    options?: {
+      metaLimitEvents?: number;
+      metaLimitBytes?: number;
+      graphLimitEvents?: number;
+      graphLimitBytes?: number;
+    }
+  ): Promise<{ meta: unknown[]; graph: unknown[]; cursorAfter: Cursor }>;
 }
 
 export interface SyncHttpReferenceServerOptions {
@@ -93,6 +111,18 @@ export class SyncHttpReferenceServer {
       const subscribeMatch = this.matchPath(parsedUrl.pathname, "sync:subscribe");
       if (req.method === "GET" && subscribeMatch) {
         await this.handleSyncSubscribe(req, res, principal, subscribeMatch.graphSpaceId, parsedUrl);
+        return;
+      }
+
+      const eventsReadMatch = this.matchPath(parsedUrl.pathname, "events:read");
+      if (req.method === "GET" && eventsReadMatch) {
+        await this.handleEventsRead(res, principal, eventsReadMatch.graphSpaceId, parsedUrl);
+        return;
+      }
+
+      const syncPollMatch = this.matchPath(parsedUrl.pathname, "sync:poll");
+      if (req.method === "GET" && syncPollMatch) {
+        await this.handleSyncPoll(res, principal, syncPollMatch.graphSpaceId, parsedUrl);
         return;
       }
 
@@ -184,6 +214,55 @@ export class SyncHttpReferenceServer {
     await stop();
   }
 
+  private async handleEventsRead(
+    res: ServerResponse,
+    principal: PrincipalContext,
+    graphSpaceId: string,
+    parsedUrl: URL
+  ): Promise<void> {
+    const stream = parsedUrl.searchParams.get("stream");
+    if (stream !== "meta" && stream !== "graph") {
+      this.writeJson(res, 400, this.maskSafeInvalidRequest());
+      return;
+    }
+
+    const fromSeqExclusive = parsePositiveInt(parsedUrl.searchParams.get("fromSeqExclusive"), 0) ?? 0;
+    const limitEvents = parsePositiveInt(parsedUrl.searchParams.get("limit"));
+    const limitBytes = parsePositiveInt(parsedUrl.searchParams.get("limitBytes"));
+
+    const events = await this.gateway.eventsRead(
+      graphSpaceId,
+      principal,
+      stream,
+      fromSeqExclusive,
+      compactOptions({ limitEvents, limitBytes })
+    );
+
+    this.writeJson(res, 200, events);
+  }
+
+  private async handleSyncPoll(
+    res: ServerResponse,
+    principal: PrincipalContext,
+    graphSpaceId: string,
+    parsedUrl: URL
+  ): Promise<void> {
+    const cursor = parseCursor(parsedUrl.searchParams.get("cursor"));
+    if (!cursor) {
+      this.writeJson(res, 400, this.maskSafeInvalidRequest());
+      return;
+    }
+
+    const limits = parseLimits(parsedUrl.searchParams.get("limits"));
+    const polled = await this.gateway.syncPoll(graphSpaceId, principal, cursor, {
+      metaLimitEvents: limits?.meta,
+      graphLimitEvents: limits?.graph,
+      metaLimitBytes: limits?.metaBytes,
+      graphLimitBytes: limits?.graphBytes
+    });
+    this.writeJson(res, 200, polled);
+  }
+
   private writeJson(res: ServerResponse, statusCode: number, payload: unknown): void {
     if (res.writableEnded) return;
     res.statusCode = statusCode;
@@ -200,14 +279,25 @@ export class SyncHttpReferenceServer {
     return { principalId: trimmed };
   }
 
-  private matchPath(pathname: string, action: "commands:submit" | "sync:pull" | "sync:subscribe"): { graphSpaceId: string } | null {
-    const match = /^\/v1\/([^/]+)\/(commands:submit|sync:pull|sync:subscribe)$/.exec(pathname);
+  private matchPath(
+    pathname: string,
+    action: "commands:submit" | "sync:pull" | "sync:subscribe" | "events:read" | "sync:poll"
+  ): { graphSpaceId: string } | null {
+    const match = /^\/v1\/([^/]+)\/(commands:submit|sync:pull|sync:subscribe|events:read|sync:poll)$/.exec(pathname);
     if (!match) return null;
     const graphSpaceId = decodeURIComponent(match[1]!);
     const matchedAction = match[2]!;
     if (matchedAction !== action) return null;
     if (graphSpaceId !== this.graphSpaceId) return null;
     return { graphSpaceId };
+  }
+
+  private maskSafeInvalidRequest(): { status: string; category: string; reasonCode: string } {
+    return {
+      status: "rejected",
+      category: "VALIDATION",
+      reasonCode: "TRANSPORT.INVALID_REQUEST"
+    };
   }
 }
 
@@ -245,4 +335,51 @@ function compactOptions<T extends Record<string, unknown>>(input: T): Partial<T>
     }
   }
   return out;
+}
+
+function parseCursor(value: string | null): Cursor | null {
+  if (!value) return { metaSeq: 0, graphSeq: 0 };
+  try {
+    const parsed = JSON.parse(value) as { metaSeq?: unknown; graphSeq?: unknown };
+    const metaSeq = toNonNegativeInteger(parsed.metaSeq);
+    const graphSeq = toNonNegativeInteger(parsed.graphSeq);
+    if (metaSeq == null || graphSeq == null) {
+      return null;
+    }
+    return { metaSeq, graphSeq };
+  } catch {
+    return null;
+  }
+}
+
+function parseLimits(value: string | null):
+  | { meta?: number; graph?: number; metaBytes?: number; graphBytes?: number }
+  | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as {
+      meta?: unknown;
+      graph?: unknown;
+      metaBytes?: unknown;
+      graphBytes?: unknown;
+    };
+    return compactOptions({
+      meta: toNonNegativeInteger(parsed.meta),
+      graph: toNonNegativeInteger(parsed.graph),
+      metaBytes: toNonNegativeInteger(parsed.metaBytes),
+      graphBytes: toNonNegativeInteger(parsed.graphBytes)
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function toNonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || value < 0) {
+    return undefined;
+  }
+  return value;
 }
