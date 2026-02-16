@@ -6,7 +6,8 @@
   "types": "./dist/apps/mesh-graph-server/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node ./dist/apps/mesh-graph-server/src/index.js"
+    "start": "node ./dist/apps/mesh-graph-server/src/index.js",
+    "prestart": "pnpm -r --filter @mesh/graph-server... build"
   },
   "dependencies": {
     "@mesh/eventstore-local": "workspace:*",
