@@ -3,8 +3,36 @@ import { REASON_CODES, type Command, type CommandOutcome, type IdempotencyCtx } 
 import { canonicalStringify, sha256Hex } from "./canonicalHash.js";
 import type { KernelMinimal } from "./KernelMinimal.js";
 
+type AuthorizationDecision = "allow" | "deny" | "mask";
+
+interface AuthorizationResult {
+  decision: AuthorizationDecision;
+  reasonCode?: string;
+  masked?: boolean;
+}
+
+interface Authorizer {
+  authorize(command: Command): AuthorizationResult | Promise<AuthorizationResult>;
+}
+
+const PERMISSIVE_AUTHORIZER: Authorizer = {
+  authorize(): AuthorizationResult {
+    return { decision: "allow" };
+  }
+};
+
+const PERMISSION_DENIED_REASON_CODE = "CMD.PERMISSION.DENIED";
+
+type EventStoreWithInternalAuthorizer = LocalEventStore & {
+  __meshInternalAuthorizer?: Authorizer;
+};
+
 export class KernelMinimalImpl implements KernelMinimal {
-  constructor(private readonly eventStore: LocalEventStore) {}
+  private readonly authorizer: Authorizer;
+
+  constructor(private readonly eventStore: LocalEventStore) {
+    this.authorizer = (this.eventStore as EventStoreWithInternalAuthorizer).__meshInternalAuthorizer ?? PERMISSIVE_AUTHORIZER;
+  }
 
   async execute(command: Command): Promise<CommandOutcome> {
     if (!command.graphSpaceId || !command.commandId || !command.actorId || !command.idempotencyKey || !command.payload) {
@@ -15,12 +43,6 @@ export class KernelMinimalImpl implements KernelMinimal {
         reasonCode: REASON_CODES.MALFORMED_COMMAND
       };
     }
-
-    const idempotencyCtx: IdempotencyCtx = {
-      actorId: command.actorId,
-      idempotencyKey: command.idempotencyKey,
-      payloadHash: sha256Hex(canonicalStringify({ payload: command.payload, requireBaseRevision: command.requireBaseRevision }))
-    };
 
     if (command.requireBaseRevision) {
       const resolvedBaseRevision = await this.eventStore.resolveRevision(command.graphSpaceId, command.requireBaseRevision);
@@ -34,6 +56,17 @@ export class KernelMinimalImpl implements KernelMinimal {
       }
     }
 
+    const authorization = await this.authorizer.authorize(command);
+    if (authorization.decision !== "allow") {
+      return this.toAuthorizationError(command, authorization);
+    }
+
+    const idempotencyCtx: IdempotencyCtx = {
+      actorId: command.actorId,
+      idempotencyKey: command.idempotencyKey,
+      payloadHash: sha256Hex(canonicalStringify({ payload: command.payload, requireBaseRevision: command.requireBaseRevision }))
+    };
+
     return this.eventStore.appendTx(
       command.graphSpaceId,
       {
@@ -43,5 +76,23 @@ export class KernelMinimalImpl implements KernelMinimal {
       },
       idempotencyCtx
     );
+  }
+
+  private toAuthorizationError(command: Command, authorization: AuthorizationResult): CommandOutcome {
+    if (authorization.decision === "mask") {
+      return {
+        status: "rejected",
+        commandId: command.commandId,
+        category: "NOT_FOUND",
+        reasonCode: REASON_CODES.NOT_FOUND_GENERIC
+      };
+    }
+
+    return {
+      status: "rejected",
+      commandId: command.commandId,
+      category: "PERMISSION",
+      reasonCode: PERMISSION_DENIED_REASON_CODE
+    };
   }
 }
