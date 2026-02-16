@@ -1,7 +1,7 @@
 # Conformance Evidence (Critical)
 
 - Vitest: ^2.1.8
-- Suites: CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-S-* Security masking and indistinguishability (%s), CT-SNAP/COMP-* (%s), CT-SYNC-* Local sync harness (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-PR-FUZZ V2 passive replication fuzz (%s), CT-RS-* V2-lite remote sync (%s)
+- Suites: cross-backend equivalence, CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-S-* Security masking and indistinguishability (%s), security validation explicitly on indexeddb backend, CT-SNAP/COMP-* (%s), CT-SYNC-* Local sync harness (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-PR-FUZZ V2 passive replication fuzz (%s), CT-RS-* V2-lite remote sync (%s)
 
 ## Invariant Coverage
 | InvariantID | Surface | Backend | Test(s) | Oracle | Criticality | Preconditions / Setup | Limitations connues |

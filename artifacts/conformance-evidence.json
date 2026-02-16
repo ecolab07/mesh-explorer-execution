@@ -13,7 +13,9 @@
       "CT-RS-* V2-lite remote sync (%s)",
       "CT-S-* Security masking and indistinguishability (%s)",
       "CT-SNAP/COMP-* (%s)",
-      "CT-SYNC-* Local sync harness (%s)"
+      "CT-SYNC-* Local sync harness (%s)",
+      "cross-backend equivalence",
+      "security validation explicitly on indexeddb backend"
     ],
     "backends": [
       "InMemory",
