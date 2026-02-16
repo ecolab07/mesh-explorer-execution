@@ -175,6 +175,26 @@
     "criticality": "Regression"
   },
   {
+    "invariantId": "CT-REPLICA-1",
+    "surface": "Replica",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-REPLICA-2",
+    "surface": "Replica",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-REPLICA-3",
+    "surface": "Replica",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-REPLICA-4",
+    "surface": "Replica",
+    "criticality": "Structural"
+  },
+  {
     "invariantId": "CT-RS-1",
     "surface": "V2-RemoteSync",
     "criticality": "Structural"
