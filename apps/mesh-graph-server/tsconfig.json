@@ -20,6 +20,12 @@
       ],
       "@mesh/sync-http": [
         "packages/sync-http/src/index.ts"
+      ],
+      "@mesh/sync-local": [
+        "packages/sync-local/src/index.ts"
+      ],
+      "@mesh/sync-local/internal": [
+        "packages/sync-local/src/internal/index.ts"
       ]
     }
   },

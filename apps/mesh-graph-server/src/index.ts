@@ -3,9 +3,9 @@ import { once } from "node:events";
 import { promises as fs } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { FileBackedLocalEventStore } from "@mesh/eventstore-local";
 import { KernelMinimalImpl } from "@mesh/kernel-minimal";
+import { LocalSyncGateway } from "@mesh/sync-local/internal";
 import { SyncHttpReferenceServer } from "@mesh/sync-http";
 import type { Command, CommandOutcome, Cursor, PrincipalContext } from "@mesh/shared";
 
@@ -66,12 +66,6 @@ type LocalSyncGatewayCtor = new (
   config: { graphSpaceId: string; executeCommand: (command: Command) => Promise<CommandOutcome> }
 ) => LocalSyncGatewayLike;
 
-async function loadLocalSyncGatewayCtor(): Promise<LocalSyncGatewayCtor> {
-  const gatewayModuleHref = pathToFileURL(join(process.cwd(), "packages/sync-local/src/internal/transportGateway.ts")).href;
-  const loaded = (await import(gatewayModuleHref)) as { LocalSyncGateway: LocalSyncGatewayCtor };
-  return loaded.LocalSyncGateway;
-}
-
 export interface MeshGraphServerOptions {
   storageDir: string;
   graphSpaceId?: string;
@@ -96,8 +90,10 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
   const store = STORE_CACHE.get(storePath) ?? new FileBackedLocalEventStore(storePath);
   STORE_CACHE.set(storePath, store);
   const kernel = new KernelMinimalImpl(store);
-  const Gateway = await loadLocalSyncGatewayCtor();
-  const gateway = new Gateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
+  const gateway = new (LocalSyncGateway as LocalSyncGatewayCtor)(store, {
+    graphSpaceId,
+    executeCommand: (command) => kernel.execute(command)
+  });
   const syncServer = new SyncHttpReferenceServer({ graphSpaceId, gateway });
   const syncListen = await syncServer.listen(0, "127.0.0.1");
 

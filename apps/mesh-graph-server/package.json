@@ -13,6 +13,7 @@
     "@mesh/eventstore-local": "workspace:*",
     "@mesh/kernel-minimal": "workspace:*",
     "@mesh/shared": "workspace:*",
+    "@mesh/sync-local": "workspace:*",
     "@mesh/sync-http": "workspace:*"
   },
   "devDependencies": {
