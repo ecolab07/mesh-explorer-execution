@@ -18,6 +18,9 @@ importers:
       '@esbuild/linux-x64':
         specifier: 0.21.5
         version: 0.21.5
+      '@esbuild/win32-x64':
+        specifier: 0.21.5
+        version: 0.21.5
       '@rollup/rollup-linux-x64-gnu':
         specifier: 4.57.1
         version: 4.57.1
@@ -226,6 +229,11 @@ packages:
     resolution: {}
     cpu: [x64]
     os: [linux]
+
+  '@esbuild/win32-x64@0.21.5':
+    resolution: {}
+    cpu: [x64]
+    os: [win32]
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -461,6 +469,9 @@ snapshots:
       "@types/node": 22.18.1
 
   '@esbuild/linux-x64@0.21.5':
+    optional: true
+
+  '@esbuild/win32-x64@0.21.5':
     optional: true
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
