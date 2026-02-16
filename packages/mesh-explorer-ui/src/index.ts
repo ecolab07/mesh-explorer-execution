@@ -1,4 +1,4 @@
-import ForceGraph3D from "3d-force-graph";
+import ForceGraph3D from "react-force-graph-3d";
 import ForceGraph2D from "force-graph";
 
 type Cursor = { metaSeq: number; graphSeq: number };

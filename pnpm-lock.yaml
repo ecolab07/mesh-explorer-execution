@@ -33,7 +33,7 @@ importers:
   apps/mesh-explorer-webapp:
     dependencies:
       '@mesh/mesh-explorer-ui':
-        specifier: link:../../packages/mesh-explorer-ui
+        specifier: workspace:*
         version: link:../../packages/mesh-explorer-ui
     devDependencies:
       typescript:
@@ -76,7 +76,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sync-http
 
-  packages/3d-force-graph: {}
+  packages/mesh-3d-force-graph-adapter: {}
 
   packages/cli:
     dependencies:
@@ -142,9 +142,9 @@ importers:
 
   packages/mesh-explorer-ui:
     dependencies:
-      3d-force-graph:
+      react-force-graph-3d:
         specifier: workspace:*
-        version: link:../3d-force-graph
+        version: link:../mesh-3d-force-graph-adapter
       force-graph:
         specifier: workspace:*
         version: link:../force-graph

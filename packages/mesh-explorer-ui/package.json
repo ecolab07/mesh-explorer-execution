@@ -14,7 +14,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "3d-force-graph": "workspace:*",
+    "react-force-graph-3d": "workspace:*",
     "force-graph": "workspace:*"
   }
 }

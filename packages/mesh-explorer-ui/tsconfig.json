@@ -1,9 +1,22 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "./src",
     "outDir": "./dist",
-    "lib": ["ES2022", "DOM"]
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "baseUrl": "../..",
+    "paths": {
+      "react-force-graph-3d": [
+        "packages/mesh-3d-force-graph-adapter/src/index.ts"
+      ],
+      "force-graph": [
+        "packages/force-graph/src/index.ts"
+      ]
+    }
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ]
 }
