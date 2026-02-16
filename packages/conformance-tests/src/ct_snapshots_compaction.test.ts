@@ -20,6 +20,13 @@ type StoreScope = {
   cleanup: () => Promise<void>;
 };
 
+function requireString(value: string | null | undefined, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`Expected ${label} to be a non-empty string`);
+  }
+  return value;
+}
+
 describe.each(getConformanceBackends())("CT-SNAP/COMP-* (%s)", (backend: ConformanceBackend) => {
   let scope: StoreScope;
   let snapshotStore: SnapshotStore<ProjectionSnapshot>;
@@ -308,8 +315,8 @@ describe.each(getConformanceBackends())("CT-SNAP/COMP-* (%s)", (backend: Conform
       const userSnapshot = await snapshotStore.loadLatestSnapshot({ graphSpaceId, principalId: user.principalId });
       const adminSnapshot = await snapshotStore.loadLatestSnapshot({ graphSpaceId, principalId: admin.principalId });
 
-      expect(userSnapshot?.snapshotId).toContain(":policy:acl");
-      expect(adminSnapshot?.snapshotId).toContain(":policy:acl");
+      expect(requireString(userSnapshot?.snapshotId, "user snapshotId")).toContain(":policy:acl");
+      expect(requireString(adminSnapshot?.snapshotId, "admin snapshotId")).toContain(":policy:acl");
       expect(userSnapshot?.snapshotId).not.toEqual(adminSnapshot?.snapshotId);
 
       const userCoverage = (userSnapshot?.payload as ProjectionSnapshot & { coverage?: { principalId?: string } })?.coverage;
