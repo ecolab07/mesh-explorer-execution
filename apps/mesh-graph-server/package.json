@@ -2,11 +2,11 @@
   "name": "@mesh/graph-server",
   "version": "0.1.0",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/apps/mesh-graph-server/src/index.js",
+  "types": "./dist/apps/mesh-graph-server/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node ./dist/index.js"
+    "start": "node ./dist/apps/mesh-graph-server/src/index.js"
   },
   "dependencies": {
     "@mesh/eventstore-local": "workspace:*",
