@@ -1,60 +1,35 @@
 # PERFORMANCE_BUDGETS
 
-## 1) Scope
+## Scope
 
-Perf-1 introduces informative-only benchmarks for local Mesh backends. The benchmark output is intended for trend tracking and release-note comparison, not for CI enforcement. No thresholds are asserted and no release gate is blocked by these measurements.
+Phase 18 introduces a **nightly perf guardrail** workflow. These checks are intentionally non-blocking for PR CI to avoid flakiness.
 
-## 2) Measured scenarios
+## Nightly metrics
 
-`scripts/bench/perf-1.mjs` measures three deterministic scenarios on each backend (`inmemory`, `persistent`, `indexeddb`):
+`pnpm bench:nightly` records:
 
-1. **append**: append `N` deterministic transactions.
-2. **replay**: cold restart against the same store and replay to current head.
-3. **projection rebuild**: rebuild principal projection from cursor `0`.
+1. `txPerSecPersistent` from single-writer submit baseline (`scripts/bench/perf-1.mjs`, persistent backend).
+2. `replicaCatchupMs` for notes replica catch-up after N writes (`scripts/bench/replica-catchup.mjs`).
+3. `snapshotMaintenanceMs` for startup snapshot maintenance (`scripts/bench/snapshot-maintenance.mjs`).
 
-The dataset size is controlled by `MESH_BENCH_N` (default: `1000`).
+## Thresholds (conservative)
 
-## 3) Indicative budgets
+- `txPerSecPersistent >= 180`
+- `replicaCatchupMs <= 2500`
+- `snapshotMaintenanceMs <= 2200`
 
-Budgets for Perf-1 are intentionally **non-blocking**:
+These thresholds are enforced only when `--fail-on-regression` is passed (used by nightly workflow).
 
-- Use results as a baseline and watch for significant regressions over time.
-- Compare runs on similar hardware/Node versions before drawing conclusions.
-- Prefer relative changes (e.g. `% delta`) rather than absolute times.
+## CI policy
 
-If teams choose internal targets, record them in release notes with machine context and keep them advisory.
+- PR/main CI: no blocking perf budget assertions.
+- Nightly scheduled CI: run with regression failure enabled and store artifacts:
+  - `artifacts/perf-nightly/nightly-perf-results.json`
+  - `artifacts/perf-nightly/nightly-perf-summary.md`
 
-## 4) Known performance risks
-
-Current known risks (already documented elsewhere) include:
-
-- Some local EventStore paths rely on repeated filtering/scans and can drift toward O(N²)-like behavior on large histories.
-- Snapshot maintenance in `start()` now compacts snapshot coverage metadata so stored snapshot payload size remains bounded even as transaction count grows.
-- IndexedDB backend remains experimental/beta and may vary significantly across environments.
-
-See `KNOWN_LIMITATIONS.md` for the source-of-truth wording.
-
-## 5) How to run
+## Local run
 
 ```bash
-pnpm bench:perf-1
+pnpm bench:nightly
+pnpm bench:nightly --fail-on-regression
 ```
-
-Optional parameters:
-
-```bash
-MESH_BENCH_N=200 pnpm bench:perf-1
-MESH_BENCH_BACKENDS=inmemory,persistent pnpm bench:perf-1
-```
-
-The script prints one JSON document to stdout for manual archival in release notes.
-
-## 6) Perf-2 regression guard
-
-Perf-2 adds a deterministic read-cost regression test that tracks internal counters (`eventsScanned`, `txIndexLookups`, `rangeReads`) and asserts linear growth when dataset size doubles. This guard is machine-independent because it uses operation counts rather than wall-clock timings.
-
-
-
-## 7) Perf-3 snapshot compaction maintenance
-
-Perf-3 adds explicit snapshot compaction during startup maintenance (`start()`) via the projection engine's internal compaction pass. This keeps snapshot serialization growth under control without changing read/commit/cursor semantics and without introducing snapshot writes on the read path.
