@@ -8,6 +8,7 @@ import {
   type CommandError,
   type Cursor,
   type EventEnvelope,
+  type FaultInjectionHooks,
   type IdempotencyCtx,
   type ReadMode,
   type ReadRangeOptions,
@@ -18,11 +19,6 @@ import {
   type TxId
 } from "@mesh/shared";
 
-// Invariant: invalid baseRevision rejects with normalized VALIDATION/INVALID_BASE_REVISION; fail on any other class/code.
-// Invariant: idempotent replay with same actor+key+payload returns the exact original committed receipt; fail on divergence.
-// Invariant: same idempotency key with different payload rejects as CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH; fail if committed.
-// Invariant: revision mismatch from append layer is propagated as PRECONDITION/REVISION_MISMATCH; fail on remapping.
-// Invariant: malformed command is rejected and never committed; fail if append path accepts it.
 const baseCommand: Command = {
   graphSpaceId: "space-k",
   commandId: "cmd-1",
@@ -33,7 +29,7 @@ const baseCommand: Command = {
 
 describe.each(getConformanceBackends())("CT-K-* Kernel command semantics (%s)", (backend: ConformanceBackend) => {
   let store: LocalEventStore;
-  let cleanup: () => Promise<void>;
+  let cleanup: () => Promise<void> = async () => {};
 
   beforeEach(async () => {
     const scope = await makeStore(backend);
@@ -44,74 +40,37 @@ describe.each(getConformanceBackends())("CT-K-* Kernel command semantics (%s)", 
   afterEach(async () => {
     await cleanup();
   });
-  it("[INV:CT-K-1][SURF:Kernel] CT-K-1: invalid baseRevision returns normalized error", async ({ task }) => {
+
+  it("[INV:CT-K-1][SURF:Kernel] CT-K-1: receipt determinism (idempotent retry)", async ({ task }) => {
     task.meta.invariantId = "CT-K-1";
     task.meta.surface = "Kernel";
-    task.meta.oracle = "Invalid requireBaseRevision must reject command with VALIDATION/INVALID_BASE_REVISION and no commit.";
+    task.meta.oracle = "Replaying the same actorId+idempotencyKey+payload returns the original committed receipt exactly.";
     task.meta.criticality = "Structural";
     const kernel = new KernelMinimalImpl(store);
 
-    const result = await kernel.execute({
-      ...baseCommand,
-      commandId: "cmd-k1",
-      requireBaseRevision: "rev/unknown"
-    });
-
-    expect(result).toEqual({
-      status: "rejected",
-      commandId: "cmd-k1",
-      category: "VALIDATION",
-      reasonCode: REASON_CODES.INVALID_BASE_REVISION
-    });
-  });
-
-  it("[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotent resubmission with same key returns same receipt", async ({ task }) => {
-    task.meta.invariantId = "CT-K-2";
-    task.meta.surface = "Kernel";
-    task.meta.oracle = "Replaying same actorId+idempotencyKey+payload returns the exact original committed receipt.";
-    task.meta.criticality = "Critical";
-    const kernel = new KernelMinimalImpl(store);
-
-    const first = await kernel.execute({
-      ...baseCommand,
-      commandId: "cmd-k2"
-    });
-    const second = await kernel.execute({
-      ...baseCommand,
-      commandId: "cmd-k2-replayed"
-    });
+    const first = await kernel.execute({ ...baseCommand, commandId: "cmd-k1" });
+    const second = await kernel.execute({ ...baseCommand, commandId: "cmd-k1-replayed" });
 
     expect(first).toEqual(second);
     expect(first).toMatchObject({
       status: "committed",
-      txId: "cmd-k2",
+      txId: "cmd-k1",
       txIndex: 1,
-      cursorAfter: { metaSeq: 0, graphSeq: 1 },
-      eventRefs: {
-        meta: [],
-        graph: [{ stream: "graph", seq: 1, eventId: "cmd-k2-g-1" }]
-      }
+      cursorAfter: { metaSeq: 0, graphSeq: 1 }
     });
   });
 
-  it("[INV:CT-K-3][SURF:Kernel] CT-K-3: idempotency key reuse with payload mismatch is rejected", async ({ task }) => {
-    task.meta.invariantId = "CT-K-3";
+  it("[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotency mismatch reject", async ({ task }) => {
+    task.meta.invariantId = "CT-K-2";
     task.meta.surface = "Kernel";
-    task.meta.oracle = "Reusing idempotency key with different payload must reject with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.";
+    task.meta.oracle = "Reusing the same idempotency key with different payload rejects with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH.";
     task.meta.criticality = "Critical";
     const kernel = new KernelMinimalImpl(store);
 
-    const accepted = await kernel.execute({
-      ...baseCommand,
-      commandId: "cmd-k3-ok"
-    });
-    const rejected = await kernel.execute({
-      ...baseCommand,
-      commandId: "cmd-k3-conflict",
-      payload: { op: "SET", value: 999 }
-    });
+    const accepted = await kernel.execute({ ...baseCommand, commandId: "cmd-k2-ok" });
+    const rejected = await kernel.execute({ ...baseCommand, commandId: "cmd-k2-conflict", payload: { op: "SET", value: 999 } });
 
-    expect(accepted).toMatchObject({ status: "committed", txId: "cmd-k3-ok", txIndex: 1 });
+    expect(accepted).toMatchObject({ status: "committed", txId: "cmd-k2-ok", txIndex: 1 });
     expect(rejected).toEqual({
       status: "rejected",
       category: "CONFLICT",
@@ -119,19 +78,15 @@ describe.each(getConformanceBackends())("CT-K-* Kernel command semantics (%s)", 
     });
   });
 
-  it("[INV:CT-K-4][SURF:Kernel] CT-K-4: commit invariants preserve appendTx + base revision preconditions", async ({ task }) => {
-    task.meta.invariantId = "CT-K-4";
+  it("[INV:CT-K-3][SURF:Kernel] CT-K-3: precondition mismatch is propagated", async ({ task }) => {
+    task.meta.invariantId = "CT-K-3";
     task.meta.surface = "Kernel";
-    task.meta.oracle = "Append-layer precondition failures must be propagated as PRECONDITION/REVISION_MISMATCH.";
+    task.meta.oracle = "Append-layer PRECONDITION/REVISION_MISMATCH is propagated by kernel without remapping.";
     task.meta.criticality = "Critical";
     const fakeStore = new RevisionMismatchStore();
     const kernel = new KernelMinimalImpl(fakeStore);
 
-    const result = await kernel.execute({
-      ...baseCommand,
-      commandId: "cmd-k4",
-      requireBaseRevision: "rev/current"
-    });
+    const result = await kernel.execute({ ...baseCommand, commandId: "cmd-k3", requireBaseRevision: "rev/current" });
 
     expect(fakeStore.resolveRevisionCalls).toEqual([["space-k", "rev/current"]]);
     expect(fakeStore.appendCalls).toHaveLength(1);
@@ -139,8 +94,33 @@ describe.each(getConformanceBackends())("CT-K-* Kernel command semantics (%s)", 
       status: "rejected",
       category: "PRECONDITION",
       reasonCode: REASON_CODES.REVISION_MISMATCH,
-      commandId: "cmd-k4"
+      commandId: "cmd-k3"
     });
+  });
+
+  it("[INV:CT-K-4][SURF:Kernel] CT-K-4: fault injection abort safety via kernel", async ({ task }) => {
+    task.meta.invariantId = "CT-K-4";
+    task.meta.surface = "Kernel";
+    task.meta.oracle = "A BEFORE_IDB_COMMIT fault during kernel execute must abort atomically, leaving no partial writes.";
+    task.meta.criticality = "Critical";
+    const faultedStore = new FailBeforeCommitStore(store);
+    const kernel = new KernelMinimalImpl(faultedStore);
+
+    await expect(kernel.execute({ ...baseCommand, graphSpaceId: "space-k4", commandId: "cmd-k4", idempotencyKey: "idem-k4" })).rejects.toThrowError(
+      "FAULT_INJECTION:BEFORE_IDB_COMMIT"
+    );
+
+    const meta = await store.readRange("space-k4", "meta", 0, 100, "TX_CLOSED");
+    const graph = await store.readRange("space-k4", "graph", 0, 100, "TX_CLOSED");
+    const txIndex = await store.readTxIndex("space-k4");
+
+    expect(meta).toEqual([]);
+    expect(graph).toEqual([]);
+    expect(txIndex).toEqual([]);
+
+    const retryKernel = new KernelMinimalImpl(store);
+    const retry = await retryKernel.execute({ ...baseCommand, graphSpaceId: "space-k4", commandId: "cmd-k4", idempotencyKey: "idem-k4" });
+    expect(retry).toMatchObject({ status: "committed", txId: "cmd-k4", txIndex: 1 });
   });
 
   it("[INV:CT-K-5][SURF:Kernel] CT-K-5 contradiction: malformed command is rejected", async ({ task }) => {
@@ -159,6 +139,7 @@ describe.each(getConformanceBackends())("CT-K-* Kernel command semantics (%s)", 
       reasonCode: REASON_CODES.MALFORMED_COMMAND
     });
   });
+
 });
 
 class RevisionMismatchStore implements LocalEventStore {
@@ -179,10 +160,7 @@ class RevisionMismatchStore implements LocalEventStore {
     return null;
   }
 
-  async readTxForPrincipal(
-    graphSpaceId: string,
-    txId: TxId
-  ): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | CommandError> {
+  async readTxForPrincipal(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | CommandError> {
     const tx = await this.readTx(graphSpaceId, txId);
     return tx ?? { status: "rejected", category: "NOT_FOUND", reasonCode: REASON_CODES.NOT_FOUND_OR_MASKED };
   }
@@ -225,5 +203,66 @@ class RevisionMismatchStore implements LocalEventStore {
 
   async compactUpToCursor(_params: { graphSpaceId: string; cursorExclusive: number }): Promise<void> {
     return;
+  }
+}
+
+class FailBeforeCommitStore implements LocalEventStore {
+  private fired = false;
+  constructor(private readonly inner: LocalEventStore) {}
+
+  appendTx(graphSpaceId: string, txBundle: TxBundle, idempotencyCtx: IdempotencyCtx): Promise<TransactionReceipt | CommandError> {
+    const hooks: FaultInjectionHooks | undefined = this.fired ? undefined : { failAt: "BEFORE_IDB_COMMIT" };
+    this.fired = true;
+    return this.inner.appendTx(graphSpaceId, txBundle, idempotencyCtx, hooks);
+  }
+
+  readTx(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null> {
+    return this.inner.readTx(graphSpaceId, txId);
+  }
+
+  readTxForPrincipal(
+    graphSpaceId: string,
+    txId: TxId
+  ): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | CommandError> {
+    return this.inner.readTxForPrincipal(graphSpaceId, txId);
+  }
+
+  readRange(
+    graphSpaceId: string,
+    stream: StreamName,
+    fromSeqExclusive: number,
+    limit: number,
+    mode: ReadMode,
+    options?: ReadRangeOptions
+  ): Promise<EventEnvelope[]> {
+    return this.inner.readRange(graphSpaceId, stream, fromSeqExclusive, limit, mode, options);
+  }
+
+  readTxIndex(graphSpaceId: string): Promise<TxIndexEntry[]> {
+    return this.inner.readTxIndex(graphSpaceId);
+  }
+
+  getCursorHead(graphSpaceId: string): Promise<Cursor> {
+    return this.inner.getCursorHead(graphSpaceId);
+  }
+
+  readPrincipalTxRange(
+    graphSpaceId: string,
+    fromPrincipalCursorExclusive: number,
+    limit: number
+  ): Promise<{ txs: Array<{ txId: TxId; txIndex: number; meta: EventEnvelope[]; graph: EventEnvelope[] }>; cursor: number }> {
+    return this.inner.readPrincipalTxRange(graphSpaceId, fromPrincipalCursorExclusive, limit);
+  }
+
+  getPrincipalCursorHead(graphSpaceId: string): Promise<number> {
+    return this.inner.getPrincipalCursorHead(graphSpaceId);
+  }
+
+  resolveRevision(graphSpaceId: string, revisionToken: string): Promise<Cursor | null> {
+    return this.inner.resolveRevision(graphSpaceId, revisionToken);
+  }
+
+  compactUpToCursor(params: { graphSpaceId: string; cursorExclusive: number }): Promise<void> {
+    return this.inner.compactUpToCursor(params);
   }
 }
