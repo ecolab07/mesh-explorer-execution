@@ -31,7 +31,8 @@
     "graph-server": "pnpm --dir apps/mesh-graph-server start",
     "webapp": "pnpm --dir apps/mesh-explorer-webapp dev",
     "desktop": "pnpm --dir apps/mesh-explorer-desktop start",
-    "check:lockfile-clean": "node scripts/ci/check-lockfile-clean.mjs"
+    "check:lockfile-clean": "node scripts/ci/check-lockfile-clean.mjs",
+    "repair:win-rollup": "node scripts/repair-windows-rollup.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
