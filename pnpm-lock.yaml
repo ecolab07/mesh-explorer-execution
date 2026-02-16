@@ -60,6 +60,9 @@ importers:
       '@mesh/snapshot-minimal':
         specifier: workspace:*
         version: link:../snapshot-minimal
+      '@mesh/sync-http':
+        specifier: workspace:*
+        version: link:../sync-http
       '@mesh/sync-local':
         specifier: workspace:*
         version: link:../sync-local
@@ -112,6 +115,12 @@ importers:
   packages/shared: {}
 
   packages/snapshot-minimal:
+    dependencies:
+      '@mesh/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/sync-http:
     dependencies:
       '@mesh/shared':
         specifier: workspace:*
