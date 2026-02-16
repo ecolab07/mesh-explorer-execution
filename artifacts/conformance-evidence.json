@@ -3,6 +3,7 @@
     "vitestVersion": "^2.1.8",
     "suites": [
       "CT-C-* Cursor semantics per principal",
+      "CT-HTTP-RECOVERY-* (%s)",
       "CT-HTTP-TRANSPORT-* (%s)",
       "CT-K-* Kernel command semantics (%s)",
       "CT-L-* Core Local (%s)",
@@ -81,6 +82,50 @@
           "oracle": "Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids.",
           "criticality": "Critical",
           "setup": "const graphSpaceId = \"space-comp-2\"; const txBundle = { txId: \"tx-idem\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-RECOVERY-1",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-RECOVERY-1][SURF:Transport] gap recovery via events:read converges to canonical visible stream",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "Gap detected in best-effort delivery can be repaired via events:read with final visible state convergence.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-recovery-gap\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-RECOVERY-2",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-RECOVERY-2][SURF:Transport] cursor mismatch fallback sync:poll converges without fragile timing",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "On cursorBefore mismatch, client fallback to sync:poll from durable local cursor converges to canonical visible state.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-recovery-mismatch\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-RECOVERY-3",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-RECOVERY-3][SURF:Transport] events:read and sync:poll preserve tx-closed boundaries under limits",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "Recovery endpoints never cut inside a transaction even when event/bytes limits are tight.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-recovery-tx-closed\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-RECOVERY-4",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-RECOVERY-4][SURF:Transport] recovery endpoints keep absent-vs-masked indistinguishable",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "events:read/sync:poll preserve user-safe indistinguishability between absent and masked transactions (status/payload/cursor/errors).",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-recovery-mask\"; const absentStore = store",
           "limitations": ""
         },
         {
@@ -723,13 +768,17 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 33,
+        "Critical": 37,
         "Structural": 20,
         "Regression": 10
       },
       "criticalInvariantIds": [
         "CT-COMP-1",
         "CT-COMP-2",
+        "CT-HTTP-RECOVERY-1",
+        "CT-HTTP-RECOVERY-2",
+        "CT-HTTP-RECOVERY-3",
+        "CT-HTTP-RECOVERY-4",
         "CT-HTTP-TRANSPORT-1",
         "CT-HTTP-TRANSPORT-2",
         "CT-HTTP-TRANSPORT-3",
@@ -822,6 +871,50 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-HTTP-RECOVERY-1",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-RECOVERY-1][SURF:Transport] gap recovery via events:read converges to canonical visible stream",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "Gap detected in best-effort delivery can be repaired via events:read with final visible state convergence.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-recovery-gap\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-RECOVERY-2",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-RECOVERY-2][SURF:Transport] cursor mismatch fallback sync:poll converges without fragile timing",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "On cursorBefore mismatch, client fallback to sync:poll from durable local cursor converges to canonical visible state.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-recovery-mismatch\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-RECOVERY-3",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-RECOVERY-3][SURF:Transport] events:read and sync:poll preserve tx-closed boundaries under limits",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "Recovery endpoints never cut inside a transaction even when event/bytes limits are tight.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-recovery-tx-closed\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-RECOVERY-4",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-RECOVERY-4][SURF:Transport] recovery endpoints keep absent-vs-masked indistinguishable",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "events:read/sync:poll preserve user-safe indistinguishability between absent and masked transactions (status/payload/cursor/errors).",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-recovery-mask\"; const absentStore = store",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-HTTP-TRANSPORT-1",
           "surface": "Transport",
           "backend": "Persistent",
@@ -1461,13 +1554,17 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 33,
+        "Critical": 37,
         "Structural": 20,
         "Regression": 10
       },
       "criticalInvariantIds": [
         "CT-COMP-1",
         "CT-COMP-2",
+        "CT-HTTP-RECOVERY-1",
+        "CT-HTTP-RECOVERY-2",
+        "CT-HTTP-RECOVERY-3",
+        "CT-HTTP-RECOVERY-4",
         "CT-HTTP-TRANSPORT-1",
         "CT-HTTP-TRANSPORT-2",
         "CT-HTTP-TRANSPORT-3",
@@ -1557,6 +1654,50 @@
       "oracle": "Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids.",
       "criticality": "Critical",
       "setup": "const graphSpaceId = \"space-comp-2\"; const txBundle = { txId: \"tx-idem\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-RECOVERY-1",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-RECOVERY-1][SURF:Transport] gap recovery via events:read converges to canonical visible stream",
+      "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+      "oracle": "Gap detected in best-effort delivery can be repaired via events:read with final visible state convergence.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-http-recovery-gap\"; const kernel = new KernelMinimalImpl(store)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-RECOVERY-2",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-RECOVERY-2][SURF:Transport] cursor mismatch fallback sync:poll converges without fragile timing",
+      "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+      "oracle": "On cursorBefore mismatch, client fallback to sync:poll from durable local cursor converges to canonical visible state.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-http-recovery-mismatch\"; const kernel = new KernelMinimalImpl(store)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-RECOVERY-3",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-RECOVERY-3][SURF:Transport] events:read and sync:poll preserve tx-closed boundaries under limits",
+      "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+      "oracle": "Recovery endpoints never cut inside a transaction even when event/bytes limits are tight.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-http-recovery-tx-closed\"; const kernel = new KernelMinimalImpl(store)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-RECOVERY-4",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-RECOVERY-4][SURF:Transport] recovery endpoints keep absent-vs-masked indistinguishable",
+      "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+      "oracle": "events:read/sync:poll preserve user-safe indistinguishability between absent and masked transactions (status/payload/cursor/errors).",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-http-recovery-mask\"; const absentStore = store",
       "limitations": ""
     },
     {
@@ -2199,13 +2340,17 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 33,
+    "Critical": 37,
     "Structural": 20,
     "Regression": 10
   },
   "criticalInvariantIds": [
     "CT-COMP-1",
     "CT-COMP-2",
+    "CT-HTTP-RECOVERY-1",
+    "CT-HTTP-RECOVERY-2",
+    "CT-HTTP-RECOVERY-3",
+    "CT-HTTP-RECOVERY-4",
     "CT-HTTP-TRANSPORT-1",
     "CT-HTTP-TRANSPORT-2",
     "CT-HTTP-TRANSPORT-3",

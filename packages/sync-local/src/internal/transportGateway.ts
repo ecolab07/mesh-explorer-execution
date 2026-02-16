@@ -1,5 +1,14 @@
 import type { LocalEventStore } from "@mesh/eventstore-local";
-import { canonicalString, type Command, type CommandOutcome, type PrincipalContext, type TxBundle } from "@mesh/shared";
+import {
+  canonicalString,
+  type Command,
+  type CommandOutcome,
+  type Cursor,
+  type EventEnvelope,
+  type PrincipalContext,
+  type StreamName,
+  type TxBundle
+} from "@mesh/shared";
 
 export interface TransportAck {
   accepted: true;
@@ -15,6 +24,24 @@ export interface SubmitResult {
 export interface SyncPullOptions {
   limitTx?: number;
   limitBytes?: number;
+}
+
+export interface EventsReadOptions {
+  limitEvents?: number;
+  limitBytes?: number;
+}
+
+export interface SyncPollOptions {
+  metaLimitEvents?: number;
+  metaLimitBytes?: number;
+  graphLimitEvents?: number;
+  graphLimitBytes?: number;
+}
+
+export interface SyncPollResultV1 {
+  meta: EventEnvelope[];
+  graph: EventEnvelope[];
+  cursorAfter: Cursor;
 }
 
 export interface VisibleTxBundle {
@@ -184,10 +211,99 @@ export class LocalSyncGateway {
     }
   }
 
+  async eventsRead(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    stream: StreamName,
+    fromSeqExclusive: number,
+    options: EventsReadOptions = {}
+  ): Promise<EventEnvelope[]> {
+    this.assertGraphSpaceScope(graphSpaceId);
+
+    const limitEvents = Math.max(1, options.limitEvents ?? DEFAULT_LIMIT_TX);
+    const limitBytes = Math.max(1, options.limitBytes ?? DEFAULT_LIMIT_BYTES);
+    const visible = await this.readVisiblePrincipalEvents(graphSpaceId, principal);
+    const byStream = stream === "meta" ? visible.meta : visible.graph;
+    const candidate = byStream.filter((event) => event.seq > Math.max(0, fromSeqExclusive));
+
+    const output: EventEnvelope[] = [];
+    let consumedBytes = 0;
+    let index = 0;
+    while (index < candidate.length) {
+      const txId = candidate[index]!.txId;
+      let end = index + 1;
+      while (end < candidate.length && candidate[end]!.txId === txId) {
+        end += 1;
+      }
+      const txSlice = candidate.slice(index, end);
+      const txSize = utf8Encoder.encode(canonicalString(txSlice)).length;
+      if (output.length > 0 && (output.length + txSlice.length > limitEvents || consumedBytes + txSize > limitBytes)) {
+        break;
+      }
+      output.push(...txSlice);
+      consumedBytes += txSize;
+      index = end;
+    }
+
+    return output;
+  }
+
+  async syncPoll(
+    graphSpaceId: string,
+    principal: PrincipalContext,
+    cursor: Cursor,
+    options: SyncPollOptions = {}
+  ): Promise<SyncPollResultV1> {
+    this.assertGraphSpaceScope(graphSpaceId);
+
+    const meta = await this.eventsRead(graphSpaceId, principal, "meta", cursor.metaSeq, {
+      limitEvents: options.metaLimitEvents,
+      limitBytes: options.metaLimitBytes
+    });
+    const graph = await this.eventsRead(graphSpaceId, principal, "graph", cursor.graphSeq, {
+      limitEvents: options.graphLimitEvents,
+      limitBytes: options.graphLimitBytes
+    });
+
+    return {
+      meta,
+      graph,
+      cursorAfter: {
+        metaSeq: meta[meta.length - 1]?.seq ?? cursor.metaSeq,
+        graphSeq: graph[graph.length - 1]?.seq ?? cursor.graphSeq
+      }
+    };
+  }
+
   private assertGraphSpaceScope(graphSpaceId: string): void {
     if (graphSpaceId !== this.config.graphSpaceId) {
       throw new Error("Transport graphSpace mismatch");
     }
+  }
+
+  private async readVisiblePrincipalEvents(
+    graphSpaceId: string,
+    principal: PrincipalContext
+  ): Promise<{ meta: EventEnvelope[]; graph: EventEnvelope[] }> {
+    const { txs } = await this.eventStore.readPrincipalTxRange(graphSpaceId, 0, Number.MAX_SAFE_INTEGER, principal);
+
+    let metaSeq = 0;
+    let graphSeq = 0;
+    const meta: EventEnvelope[] = [];
+    const graph: EventEnvelope[] = [];
+
+    for (const tx of txs) {
+      for (const event of tx.meta) {
+        metaSeq += 1;
+        meta.push({ ...event, seq: metaSeq });
+      }
+      for (const event of tx.graph) {
+        graphSeq += 1;
+        graph.push({ ...event, seq: graphSeq });
+      }
+    }
+
+    return { meta, graph };
   }
 }
 
