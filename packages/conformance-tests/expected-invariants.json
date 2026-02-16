@@ -273,5 +273,25 @@
     "invariantId": "CT-SYNC-4",
     "surface": "Sync",
     "criticality": "Regression"
+  },
+  {
+    "invariantId": "CT-TRANSPORT-1",
+    "surface": "Transport",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-TRANSPORT-2",
+    "surface": "Transport",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-TRANSPORT-3",
+    "surface": "Transport",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-TRANSPORT-4",
+    "surface": "Transport",
+    "criticality": "Structural"
   }
 ]

@@ -1,7 +1,7 @@
 # Conformance Evidence (Persistent backend)
 
 - Vitest: ^2.1.8
-- Suites: cross-backend equivalence, CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-REPLICA-* passive replica conformance, CT-S-* Security masking and indistinguishability (%s), security validation explicitly on indexeddb backend, CT-SNAP/COMP-* (%s), CT-SYNC-* Local sync harness (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-PR-FUZZ V2 passive replication fuzz (%s), CT-RS-* V2-lite remote sync (%s)
+- Suites: cross-backend equivalence, CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-REPLICA-* passive replica conformance, CT-S-* Security masking and indistinguishability (%s), security validation explicitly on indexeddb backend, CT-SNAP/COMP-* (%s), CT-SYNC-* Local sync harness (%s), CT-TRANSPORT-* sync transport v1 (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-PR-FUZZ V2 passive replication fuzz (%s), CT-RS-* V2-lite remote sync (%s)
 
 ## Invariant Coverage
 | InvariantID | Surface | Backend | Test(s) | Oracle | Criticality | Preconditions / Setup | Limitations connues |
@@ -61,12 +61,16 @@
 | CT-SYNC-2 | Sync | Persistent | packages/conformance-tests/src/ct_sync_harness.test.ts::[INV:CT-SYNC-2][SURF:Sync] CT-SYNC-2: subscribeOnce returns coherent follow-up cursor | subscribeOnce follow-up cursor must chain exactly like poll without skip/duplication. | Structural | const graphSpaceId = "space-sync2"; const harness = new LocalSyncHarness(store, graphSpaceId) |  |
 | CT-SYNC-3 | Sync | Persistent | packages/conformance-tests/src/ct_sync_harness.test.ts::[INV:CT-SYNC-3][SURF:Sync] CT-SYNC-3: end-to-end submit -> poll -> receipt -> replay | submit->poll->receipt->replay remain coherent: committed tx is seen once then replay is empty. | Critical | const graphSpaceId = "space-sync3"; const harness = new LocalSyncHarness(store, graphSpaceId) |  |
 | CT-SYNC-4 | Sync | Persistent | packages/conformance-tests/src/ct_sync_harness.test.ts::[INV:CT-SYNC-4][SURF:Sync] CT-SYNC-4 contradiction: rejected submit is never observable in poll | Rejected submit must never appear in subsequent poll results. | Regression | const graphSpaceId = "space-sync4"; const harness = new LocalSyncHarness(store, graphSpaceId) |  |
+| CT-TRANSPORT-1 | Transport | Persistent | packages/conformance-tests/src/ct_transport_sync.test.ts::[INV:CT-TRANSPORT-1][SURF:Transport] submit retry with same idempotencyKey keeps single commit | Lost ack/receipt then retry with same idempotency key returns same committed receipt and no duplicate commit. | Critical | const graphSpaceId = "space-transport-submit"; const principal = { principalId: "alice" } |  |
+| CT-TRANSPORT-2 | Transport | Persistent | packages/conformance-tests/src/ct_transport_sync.test.ts::[INV:CT-TRANSPORT-2][SURF:Transport] syncPull cursor monotone and tx-closed | syncPull never regresses cursor, shows no visible holes, and always returns tx-closed bundles. | Critical | const graphSpaceId = "space-transport-pull"; const principal = { principalId: "alice" } |  |
+| CT-TRANSPORT-3 | Transport | Persistent | packages/conformance-tests/src/ct_transport_sync.test.ts::[INV:CT-TRANSPORT-3][SURF:Transport] subscribe reconnect from visible cursor converges | After disconnect and cursor-based resume, final visible state converges (duplicates tolerated). | Critical | const graphSpaceId = "space-transport-subscribe"; const principal = { principalId: "alice" } |  |
+| CT-TRANSPORT-4 | Transport | Persistent | packages/conformance-tests/src/ct_transport_sync.test.ts::[INV:CT-TRANSPORT-4][SURF:Transport] masked vs absent indistinguishable via pull/subscribe cursors | Transport responses/cursors do not expose absent-vs-masked differences for a principal. | Structural | const principal = { principalId: "alice" }; const graphSpaceId = "space-transport-mask" |  |
 
 ## Criticality summary
-- Critical: 27
-- Structural: 18
+- Critical: 30
+- Structural: 19
 - Regression: 10
-- Critical IDs: CT-COMP-1, CT-COMP-2, CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-P-SEC-4, CT-PR-1, CT-PR-4, CT-PRC-2, CT-REPLICA-1, CT-REPLICA-2, CT-REPLICA-3, CT-RS-2, CT-S-1, CT-S-2, CT-SNAP-5, CT-SNAP-6, CT-SYNC-3
+- Critical IDs: CT-COMP-1, CT-COMP-2, CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-P-SEC-4, CT-PR-1, CT-PR-4, CT-PRC-2, CT-REPLICA-1, CT-REPLICA-2, CT-REPLICA-3, CT-RS-2, CT-S-1, CT-S-2, CT-SNAP-5, CT-SNAP-6, CT-SYNC-3, CT-TRANSPORT-1, CT-TRANSPORT-2, CT-TRANSPORT-3
 
 ## Coverage gaps
 Coverage gaps: none.

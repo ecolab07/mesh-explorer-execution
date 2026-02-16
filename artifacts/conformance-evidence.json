@@ -15,6 +15,7 @@
       "CT-S-* Security masking and indistinguishability (%s)",
       "CT-SNAP/COMP-* (%s)",
       "CT-SYNC-* Local sync harness (%s)",
+      "CT-TRANSPORT-* sync transport v1 (%s)",
       "cross-backend equivalence",
       "security validation explicitly on indexeddb backend"
     ],
@@ -630,11 +631,55 @@
           "criticality": "Regression",
           "setup": "const graphSpaceId = \"space-sync4\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
           "limitations": ""
+        },
+        {
+          "invariantId": "CT-TRANSPORT-1",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-TRANSPORT-1][SURF:Transport] submit retry with same idempotencyKey keeps single commit",
+          "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+          "oracle": "Lost ack/receipt then retry with same idempotency key returns same committed receipt and no duplicate commit.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-transport-submit\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-TRANSPORT-2",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-TRANSPORT-2][SURF:Transport] syncPull cursor monotone and tx-closed",
+          "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+          "oracle": "syncPull never regresses cursor, shows no visible holes, and always returns tx-closed bundles.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-transport-pull\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-TRANSPORT-3",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-TRANSPORT-3][SURF:Transport] subscribe reconnect from visible cursor converges",
+          "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+          "oracle": "After disconnect and cursor-based resume, final visible state converges (duplicates tolerated).",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-transport-subscribe\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-TRANSPORT-4",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-TRANSPORT-4][SURF:Transport] masked vs absent indistinguishable via pull/subscribe cursors",
+          "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+          "oracle": "Transport responses/cursors do not expose absent-vs-masked differences for a principal.",
+          "criticality": "Structural",
+          "setup": "const principal = { principalId: \"alice\" }; const graphSpaceId = \"space-transport-mask\"",
+          "limitations": ""
         }
       ],
       "criticalitySummary": {
-        "Critical": 27,
-        "Structural": 18,
+        "Critical": 30,
+        "Structural": 19,
         "Regression": 10
       },
       "criticalInvariantIds": [
@@ -664,7 +709,10 @@
         "CT-S-2",
         "CT-SNAP-5",
         "CT-SNAP-6",
-        "CT-SYNC-3"
+        "CT-SYNC-3",
+        "CT-TRANSPORT-1",
+        "CT-TRANSPORT-2",
+        "CT-TRANSPORT-3"
       ],
       "coverageGaps": []
     },
@@ -1274,11 +1322,55 @@
           "criticality": "Regression",
           "setup": "const graphSpaceId = \"space-sync4\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
           "limitations": ""
+        },
+        {
+          "invariantId": "CT-TRANSPORT-1",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-TRANSPORT-1][SURF:Transport] submit retry with same idempotencyKey keeps single commit",
+          "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+          "oracle": "Lost ack/receipt then retry with same idempotency key returns same committed receipt and no duplicate commit.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-transport-submit\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-TRANSPORT-2",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-TRANSPORT-2][SURF:Transport] syncPull cursor monotone and tx-closed",
+          "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+          "oracle": "syncPull never regresses cursor, shows no visible holes, and always returns tx-closed bundles.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-transport-pull\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-TRANSPORT-3",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-TRANSPORT-3][SURF:Transport] subscribe reconnect from visible cursor converges",
+          "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+          "oracle": "After disconnect and cursor-based resume, final visible state converges (duplicates tolerated).",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-transport-subscribe\"; const principal = { principalId: \"alice\" }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-TRANSPORT-4",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-TRANSPORT-4][SURF:Transport] masked vs absent indistinguishable via pull/subscribe cursors",
+          "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+          "oracle": "Transport responses/cursors do not expose absent-vs-masked differences for a principal.",
+          "criticality": "Structural",
+          "setup": "const principal = { principalId: \"alice\" }; const graphSpaceId = \"space-transport-mask\"",
+          "limitations": ""
         }
       ],
       "criticalitySummary": {
-        "Critical": 27,
-        "Structural": 18,
+        "Critical": 30,
+        "Structural": 19,
         "Regression": 10
       },
       "criticalInvariantIds": [
@@ -1308,7 +1400,10 @@
         "CT-S-2",
         "CT-SNAP-5",
         "CT-SNAP-6",
-        "CT-SYNC-3"
+        "CT-SYNC-3",
+        "CT-TRANSPORT-1",
+        "CT-TRANSPORT-2",
+        "CT-TRANSPORT-3"
       ],
       "coverageGaps": []
     }
@@ -1918,11 +2013,55 @@
       "criticality": "Regression",
       "setup": "const graphSpaceId = \"space-sync4\"; const harness = new LocalSyncHarness(store, graphSpaceId)",
       "limitations": ""
+    },
+    {
+      "invariantId": "CT-TRANSPORT-1",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-TRANSPORT-1][SURF:Transport] submit retry with same idempotencyKey keeps single commit",
+      "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+      "oracle": "Lost ack/receipt then retry with same idempotency key returns same committed receipt and no duplicate commit.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-transport-submit\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-TRANSPORT-2",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-TRANSPORT-2][SURF:Transport] syncPull cursor monotone and tx-closed",
+      "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+      "oracle": "syncPull never regresses cursor, shows no visible holes, and always returns tx-closed bundles.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-transport-pull\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-TRANSPORT-3",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-TRANSPORT-3][SURF:Transport] subscribe reconnect from visible cursor converges",
+      "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+      "oracle": "After disconnect and cursor-based resume, final visible state converges (duplicates tolerated).",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-transport-subscribe\"; const principal = { principalId: \"alice\" }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-TRANSPORT-4",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-TRANSPORT-4][SURF:Transport] masked vs absent indistinguishable via pull/subscribe cursors",
+      "file": "packages/conformance-tests/src/ct_transport_sync.test.ts",
+      "oracle": "Transport responses/cursors do not expose absent-vs-masked differences for a principal.",
+      "criticality": "Structural",
+      "setup": "const principal = { principalId: \"alice\" }; const graphSpaceId = \"space-transport-mask\"",
+      "limitations": ""
     }
   ],
   "criticalitySummary": {
-    "Critical": 27,
-    "Structural": 18,
+    "Critical": 30,
+    "Structural": 19,
     "Regression": 10
   },
   "criticalInvariantIds": [
@@ -1952,7 +2091,10 @@
     "CT-S-2",
     "CT-SNAP-5",
     "CT-SNAP-6",
-    "CT-SYNC-3"
+    "CT-SYNC-3",
+    "CT-TRANSPORT-1",
+    "CT-TRANSPORT-2",
+    "CT-TRANSPORT-3"
   ],
   "coverageGaps": []
 }
