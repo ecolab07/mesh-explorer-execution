@@ -52,6 +52,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     cursor: { metaSeq: 0, graphSeq: 0 } as Cursor,
     stop: false
   };
+  const debugAuth = isDebugAuthEnabled();
 
   const graph3d = ForceGraph3D()(el.graph3d)
     .nodeId("id")
@@ -73,11 +74,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   el.addNode.onclick = () => {
     const label = prompt("Node label", "new node") ?? "";
     if (!label) return;
-    void fetch(`${el.baseUrl.value}/graph/nodes`, {
+    void meshFetch(`${el.baseUrl.value}/graph/nodes`, {
       method: "POST",
       headers: headers(el.principal.value),
       body: JSON.stringify({ label, idempotencyKey: crypto.randomUUID() })
-    });
+    }, { principal: el.principal.value, transport: "fetch", debugAuth });
   };
 
   el.addLink.onclick = () => {
@@ -85,11 +86,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const target = prompt("Target node id") ?? "";
     const type = prompt("Link type", "related") ?? "related";
     if (!source || !target) return;
-    void fetch(`${el.baseUrl.value}/graph/links`, {
+    void meshFetch(`${el.baseUrl.value}/graph/links`, {
       method: "POST",
       headers: headers(el.principal.value),
       body: JSON.stringify({ source, target, type, idempotencyKey: crypto.randomUUID() })
-    });
+    }, { principal: el.principal.value, transport: "fetch", debugAuth });
   };
 
   void connectAndSync();
@@ -106,7 +107,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       while (!state.stop) {
         try {
           const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${state.cursor.graphSeq}`;
-          const response = await fetch(url, { headers: headers(el.principal.value) });
+          const response = await meshFetch(url, { headers: headers(el.principal.value) }, {
+            principal: el.principal.value,
+            transport: "fetch-sse",
+            debugAuth
+          });
           if (!response.body) {
             await wait(300);
             continue;
@@ -132,9 +137,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     async function pollFromCursor(): Promise<void> {
       const limits = encodeURIComponent(JSON.stringify({ graph: 128, meta: 32 }));
       const cursor = encodeURIComponent(JSON.stringify(state.cursor));
-      const response = await fetch(
+      const response = await meshFetch(
         `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${cursor}&limits=${limits}`,
-        { headers: headers(el.principal.value) }
+        { headers: headers(el.principal.value) },
+        { principal: el.principal.value, transport: "fetch", debugAuth }
       );
       if (!response.ok) return;
       const payload = (await response.json()) as { graph?: GraphEvent[]; cursorAfter?: Cursor };
@@ -215,6 +221,41 @@ function headers(principal: string): HeadersInit {
     "content-type": "application/json",
     "x-mesh-principal": normalizePrincipal(principal)
   };
+}
+
+type MeshFetchMeta = {
+  principal: string;
+  transport: "fetch" | "fetch-sse";
+  debugAuth: boolean;
+};
+
+async function meshFetch(input: string, init: RequestInit, meta: MeshFetchMeta): Promise<Response> {
+  if (meta.debugAuth) {
+    const resolvedUrl = resolveDebugUrl(input);
+    const resolvedPrincipal = normalizePrincipal(meta.principal);
+    console.info("[mesh-auth-debug] request", {
+      transport: meta.transport,
+      url: resolvedUrl,
+      principal: resolvedPrincipal
+    });
+  }
+  return fetch(input, init);
+}
+
+function isDebugAuthEnabled(): boolean {
+  try {
+    return localStorage.getItem("meshDebugAuth") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function resolveDebugUrl(input: string): string {
+  try {
+    return new URL(input, window.location.href).toString();
+  } catch {
+    return input;
+  }
 }
 
 const DEFAULT_PRINCIPAL = "local-dev";
