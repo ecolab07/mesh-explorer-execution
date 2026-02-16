@@ -14,7 +14,8 @@
     "check:reasoncodes-policy": "node tools/ci/check-reasoncodes-policy.mjs",
     "check:public-exports-exist": "node tools/ci/check-public-exports-exist.mjs",
     "bench:cold-start": "node ./scripts/bench/cold-start.mjs",
-    "bench": "pnpm bench:cold-start"
+    "bench": "pnpm bench:cold-start",
+    "bench:compare": "pnpm --filter @mesh/eventstore-local build && node ./scripts/bench/compare-backends.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
