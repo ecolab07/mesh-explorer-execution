@@ -23,7 +23,7 @@ export class PrincipalProjectionEngine {
 
   async rebuild(principal: PrincipalContext): Promise<ProjectionSnapshot> {
     const rebuild = await this.rebuildInternal(principal, 0, [], Number.MAX_SAFE_INTEGER);
-    this.cache.set(principal.principalId, rebuild.snapshot);
+    this.cache.set(this.cacheKey(principal), rebuild.snapshot);
     return rebuild.snapshot;
   }
 
@@ -36,14 +36,15 @@ export class PrincipalProjectionEngine {
       principalId: params.principal.principalId
     });
 
-    const seed = latest?.payload;
-    const seedCursor = latest?.cursorAt ?? 0;
+    const scopedLatest = this.isSnapshotReusable(latest) ? latest : null;
+    const seed = scopedLatest?.payload;
+    const seedCursor = scopedLatest?.cursorAt ?? 0;
     const seedTxIds = seed?.txIds ?? [];
 
     const rebuild = await this.rebuildInternal(params.principal, seedCursor, seedTxIds, Number.MAX_SAFE_INTEGER);
 
     const snapshotEnvelope: ProjectionSnapshotEnvelope = {
-      snapshotId: `${this.graphSpaceId}:${params.principal.principalId}:${rebuild.snapshot.cursor}`,
+      snapshotId: `${this.graphSpaceId}:${params.principal.principalId}:${rebuild.snapshot.cursor}:${this.visibilityScope()}`,
       snapshotVersion: SNAPSHOT_VERSION_V1,
       graphSpaceId: this.graphSpaceId,
       principalId: params.principal.principalId,
@@ -52,15 +53,15 @@ export class PrincipalProjectionEngine {
     };
     await params.snapshotStore.saveSnapshot(snapshotEnvelope);
 
-    this.cache.set(params.principal.principalId, rebuild.snapshot);
+    this.cache.set(this.cacheKey(params.principal), rebuild.snapshot);
     return rebuild;
   }
 
   async incremental(principal: PrincipalContext): Promise<ProjectionSnapshot> {
-    const prior = this.cache.get(principal.principalId) ?? this.compute(principal.principalId, [], 0);
+    const prior = this.cache.get(this.cacheKey(principal)) ?? this.compute(principal.principalId, [], 0);
     const delta = await this.eventStore.readPrincipalTxRange(this.graphSpaceId, prior.cursor, Number.MAX_SAFE_INTEGER, principal);
-    const merged = this.compute(principal.principalId, [...prior.txIds, ...delta.txs.map((tx) => tx.txId)], delta.cursor);
-    this.cache.set(principal.principalId, merged);
+    const merged = this.compute(principal.principalId, [...prior.txIds, ...delta.txs.map(() => PROJECTION_PLACEHOLDER_TOKEN)], delta.cursor);
+    this.cache.set(this.cacheKey(principal), merged);
     return merged;
   }
 
@@ -77,11 +78,37 @@ export class PrincipalProjectionEngine {
     limit: number
   ): Promise<{ snapshot: ProjectionSnapshot; replayStats: RebuildStats }> {
     const { txs, cursor } = await this.eventStore.readPrincipalTxRange(this.graphSpaceId, fromCursorExclusive, limit, principal);
-    const txIds = [...seedTxIds, ...txs.map((tx) => tx.txId)];
+    const txIds = [...seedTxIds, ...txs.map(() => PROJECTION_PLACEHOLDER_TOKEN)];
     return {
       snapshot: this.compute(principal.principalId, txIds, cursor),
       replayStats: { appliedTxCount: txs.length }
     };
+  }
+
+  private cacheKey(principal: PrincipalContext): string {
+    return `${principal.principalId}::${this.visibilityScope()}`;
+  }
+
+  private visibilityScope(): string {
+    return this.securityPolicyEnabled() ? `policy:${this.visibilityPolicyMode()}` : "policy:off";
+  }
+
+  private securityPolicyEnabled(): boolean {
+    const mode = this.visibilityPolicyMode();
+    return mode === "acl" || mode === "entity-secret";
+  }
+
+  private visibilityPolicyMode(): string | undefined {
+    const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+    return env?.MESH_TX_VISIBILITY_POLICY;
+  }
+
+
+  private isSnapshotReusable(snapshot: ProjectionSnapshotEnvelope | null): snapshot is ProjectionSnapshotEnvelope {
+    if (!snapshot) return false;
+    if (!this.securityPolicyEnabled()) return true;
+    if (!snapshot.snapshotId.includes(":policy:")) return true;
+    return snapshot.snapshotId.includes(`:${this.visibilityScope()}`);
   }
 
   private compute(principalId: string, txIds: string[], cursor: number): ProjectionSnapshot {
@@ -93,3 +120,5 @@ export class PrincipalProjectionEngine {
     };
   }
 }
+
+const PROJECTION_PLACEHOLDER_TOKEN = "placeholder";

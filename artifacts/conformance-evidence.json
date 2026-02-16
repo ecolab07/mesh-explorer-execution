@@ -288,6 +288,50 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-P-SEC-1",
+          "surface": "Projection",
+          "backend": "InMemory",
+          "testName": "[INV:CT-P-SEC-1][SURF:Projection] CT-P-SEC-1: masked entities become non-revealing placeholders",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Projection output for user-safe reads never leaks canonical tx identifiers and remains stable placeholder-only.",
+          "criticality": "Structural",
+          "setup": "await withVisibilityPolicy(\"acl\", async () => {; const store = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-SEC-2",
+          "surface": "Projection",
+          "backend": "InMemory",
+          "testName": "[INV:CT-P-SEC-2][SURF:Projection] CT-P-SEC-2: derived view fields mask hidden dependencies",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Derived fields (nodeCount) must be computed only from user-visible txs and never from hidden dependencies.",
+          "criticality": "Structural",
+          "setup": "await withVisibilityPolicy(\"entity-secret\", async () => {; const store = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-SEC-3",
+          "surface": "Projection",
+          "backend": "InMemory",
+          "testName": "[INV:CT-P-SEC-3][SURF:Projection] CT-P-SEC-3: absent and masked are indistinguishable in projection output",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "User-safe projection output shape must match between truly absent entities and present-but-masked entities.",
+          "criticality": "Structural",
+          "setup": "await withVisibilityPolicy(\"entity-secret\", async () => {; const storeA = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-SEC-4",
+          "surface": "Projection",
+          "backend": "InMemory",
+          "testName": "[INV:CT-P-SEC-4][SURF:Projection] CT-P-SEC-4: caches never contaminate across principals",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Admin cache warm-up must not leak privileged tx material to user-safe projection reads.",
+          "criticality": "Critical",
+          "setup": "await withVisibilityPolicy(\"acl\", async () => {; const store = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-PR-1",
           "surface": "V2-PassiveReplication",
           "backend": "InMemory",
@@ -509,8 +553,8 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 21,
-        "Structural": 14,
+        "Critical": 22,
+        "Structural": 17,
         "Regression": 9
       },
       "criticalInvariantIds": [
@@ -528,6 +572,7 @@
         "CT-L-8",
         "CT-MW-1",
         "CT-MW-2",
+        "CT-P-SEC-4",
         "CT-PR-1",
         "CT-PR-4",
         "CT-PRC-2",
@@ -805,6 +850,50 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-P-SEC-1",
+          "surface": "Projection",
+          "backend": "Persistent",
+          "testName": "[INV:CT-P-SEC-1][SURF:Projection] CT-P-SEC-1: masked entities become non-revealing placeholders",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Projection output for user-safe reads never leaks canonical tx identifiers and remains stable placeholder-only.",
+          "criticality": "Structural",
+          "setup": "await withVisibilityPolicy(\"acl\", async () => {; const store = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-SEC-2",
+          "surface": "Projection",
+          "backend": "Persistent",
+          "testName": "[INV:CT-P-SEC-2][SURF:Projection] CT-P-SEC-2: derived view fields mask hidden dependencies",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Derived fields (nodeCount) must be computed only from user-visible txs and never from hidden dependencies.",
+          "criticality": "Structural",
+          "setup": "await withVisibilityPolicy(\"entity-secret\", async () => {; const store = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-SEC-3",
+          "surface": "Projection",
+          "backend": "Persistent",
+          "testName": "[INV:CT-P-SEC-3][SURF:Projection] CT-P-SEC-3: absent and masked are indistinguishable in projection output",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "User-safe projection output shape must match between truly absent entities and present-but-masked entities.",
+          "criticality": "Structural",
+          "setup": "await withVisibilityPolicy(\"entity-secret\", async () => {; const storeA = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-P-SEC-4",
+          "surface": "Projection",
+          "backend": "Persistent",
+          "testName": "[INV:CT-P-SEC-4][SURF:Projection] CT-P-SEC-4: caches never contaminate across principals",
+          "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+          "oracle": "Admin cache warm-up must not leak privileged tx material to user-safe projection reads.",
+          "criticality": "Critical",
+          "setup": "await withVisibilityPolicy(\"acl\", async () => {; const store = new InMemoryLocalEventStore()",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-PR-1",
           "surface": "V2-PassiveReplication",
           "backend": "Persistent",
@@ -1026,8 +1115,8 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 21,
-        "Structural": 14,
+        "Critical": 22,
+        "Structural": 17,
         "Regression": 9
       },
       "criticalInvariantIds": [
@@ -1045,6 +1134,7 @@
         "CT-L-8",
         "CT-MW-1",
         "CT-MW-2",
+        "CT-P-SEC-4",
         "CT-PR-1",
         "CT-PR-4",
         "CT-PRC-2",
@@ -1322,6 +1412,50 @@
       "limitations": ""
     },
     {
+      "invariantId": "CT-P-SEC-1",
+      "surface": "Projection",
+      "backend": "InMemory",
+      "testName": "[INV:CT-P-SEC-1][SURF:Projection] CT-P-SEC-1: masked entities become non-revealing placeholders",
+      "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+      "oracle": "Projection output for user-safe reads never leaks canonical tx identifiers and remains stable placeholder-only.",
+      "criticality": "Structural",
+      "setup": "await withVisibilityPolicy(\"acl\", async () => {; const store = new InMemoryLocalEventStore()",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-P-SEC-2",
+      "surface": "Projection",
+      "backend": "InMemory",
+      "testName": "[INV:CT-P-SEC-2][SURF:Projection] CT-P-SEC-2: derived view fields mask hidden dependencies",
+      "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+      "oracle": "Derived fields (nodeCount) must be computed only from user-visible txs and never from hidden dependencies.",
+      "criticality": "Structural",
+      "setup": "await withVisibilityPolicy(\"entity-secret\", async () => {; const store = new InMemoryLocalEventStore()",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-P-SEC-3",
+      "surface": "Projection",
+      "backend": "InMemory",
+      "testName": "[INV:CT-P-SEC-3][SURF:Projection] CT-P-SEC-3: absent and masked are indistinguishable in projection output",
+      "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+      "oracle": "User-safe projection output shape must match between truly absent entities and present-but-masked entities.",
+      "criticality": "Structural",
+      "setup": "await withVisibilityPolicy(\"entity-secret\", async () => {; const storeA = new InMemoryLocalEventStore()",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-P-SEC-4",
+      "surface": "Projection",
+      "backend": "InMemory",
+      "testName": "[INV:CT-P-SEC-4][SURF:Projection] CT-P-SEC-4: caches never contaminate across principals",
+      "file": "packages/conformance-tests/src/ct_p_projection.test.ts",
+      "oracle": "Admin cache warm-up must not leak privileged tx material to user-safe projection reads.",
+      "criticality": "Critical",
+      "setup": "await withVisibilityPolicy(\"acl\", async () => {; const store = new InMemoryLocalEventStore()",
+      "limitations": ""
+    },
+    {
       "invariantId": "CT-PR-1",
       "surface": "V2-PassiveReplication",
       "backend": "InMemory",
@@ -1543,8 +1677,8 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 21,
-    "Structural": 14,
+    "Critical": 22,
+    "Structural": 17,
     "Regression": 9
   },
   "criticalInvariantIds": [
@@ -1562,6 +1696,7 @@
     "CT-L-8",
     "CT-MW-1",
     "CT-MW-2",
+    "CT-P-SEC-4",
     "CT-PR-1",
     "CT-PR-4",
     "CT-PRC-2",
