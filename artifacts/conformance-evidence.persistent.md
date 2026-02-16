@@ -1,7 +1,7 @@
 # Conformance Evidence (Persistent backend)
 
 - Vitest: ^2.1.8
-- Suites: cross-backend equivalence, CT-C-* Cursor semantics per principal, CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-REPLICA-* passive replica conformance, CT-S-* Security masking and indistinguishability (%s), security validation explicitly on indexeddb backend, CT-SNAP/COMP-* (%s), CT-SYNC-* Local sync harness (%s), CT-TRANSPORT-* sync transport v1 (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-PR-FUZZ V2 passive replication fuzz (%s), CT-RS-* V2-lite remote sync (%s)
+- Suites: cross-backend equivalence, CT-C-* Cursor semantics per principal, CT-HTTP-TRANSPORT-* (%s), CT-K-* Kernel command semantics (%s), CT-L-* Core Local (%s), CT-P-* Projection determinism, CT-REPLICA-* passive replica conformance, CT-S-* Security masking and indistinguishability (%s), security validation explicitly on indexeddb backend, CT-SNAP/COMP-* (%s), CT-SYNC-* Local sync harness (%s), CT-TRANSPORT-* sync transport v1 (%s), CT-MW-* V2-lite multi-writer (%s), CT-PR-* V2 passive replication (%s), CT-PRC-* V2 passive replication chaos (%s), CT-PR-FUZZ V2 passive replication fuzz (%s), CT-RS-* V2-lite remote sync (%s)
 
 ## Invariant Coverage
 | InvariantID | Surface | Backend | Test(s) | Oracle | Criticality | Preconditions / Setup | Limitations connues |
@@ -11,6 +11,10 @@
 | CT-C-3 | Cursor | Persistent | packages/conformance-tests/src/ct_c_cursor.test.ts::[INV:CT-C-3][SURF:Cursor] CT-C-3 contradiction: hidden tx cannot be read directly by masked principal | Direct read of a masked transaction must be rejected with NOT_FOUND/NOT_FOUND_OR_MASKED. | Regression | const store = new InMemoryLocalEventStore(); const graphSpaceId = "space-c3" |  |
 | CT-COMP-1 | Compaction | Persistent | packages/conformance-tests/src/ct_snapshots_compaction.test.ts::[INV:CT-COMP-1][SURF:Compaction] CT-COMP-1 compaction safety | Compacting tx below a durable snapshot cursor preserves final projection state after snapshot+replay rebuild. | Critical | const graphSpaceId = "space-comp-1"; const principal = { principalId: "alice" } |  |
 | CT-COMP-2 | Compaction | Persistent | packages/conformance-tests/src/ct_snapshots_compaction.test.ts::[INV:CT-COMP-2][SURF:Compaction] CT-COMP-2 compaction does not break idempotency | Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids. | Critical | const graphSpaceId = "space-comp-2"; const txBundle = { txId: "tx-idem", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] } |  |
+| CT-HTTP-TRANSPORT-1 | Transport | Persistent | packages/conformance-tests/src/ct_http_transport.test.ts::[INV:CT-HTTP-TRANSPORT-1][SURF:Transport] submit retry after client-timeout returns same final receipt | HTTP timeout/lost response then retry with same idempotencyKey yields same final receipt and no double-commit. | Critical | const graphSpaceId = "space-http-submit"; const kernel = new KernelMinimalImpl(store) |  |
+| CT-HTTP-TRANSPORT-2 | Transport | Persistent | packages/conformance-tests/src/ct_http_transport.test.ts::[INV:CT-HTTP-TRANSPORT-2][SURF:Transport] pull cursor monotone and tx-closed | HTTP sync:pull remains cursor-monotone, hole-free for visible tx, and tx-closed. | Critical | const graphSpaceId = "space-http-pull"; const kernel = new KernelMinimalImpl(store) |  |
+| CT-HTTP-TRANSPORT-3 | Transport | Persistent | packages/conformance-tests/src/ct_http_transport.test.ts::[INV:CT-HTTP-TRANSPORT-3][SURF:Transport] SSE subscribe reconnect from cursor converges | SSE reconnection from last cursor converges to same visible state (duplicates tolerated). | Critical | const graphSpaceId = "space-http-subscribe"; const kernel = new KernelMinimalImpl(store) |  |
+| CT-HTTP-TRANSPORT-4 | Transport | Persistent | packages/conformance-tests/src/ct_http_transport.test.ts::[INV:CT-HTTP-TRANSPORT-4][SURF:Transport] absent vs masked indistinguishable on status/body/cursor | HTTP surfaces (status/body/cursor) do not distinguish absent from masked data for same principal. | Structural | const graphSpaceId = "space-http-mask"; const absentStore = store |  |
 | CT-K-1 | Kernel | Persistent | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-1][SURF:Kernel] CT-K-1: receipt determinism (idempotent retry) | Replaying the same actorId+idempotencyKey+payload returns the original committed receipt exactly. | Structural | const kernel = new KernelMinimalImpl(store); const first = await kernel.execute({ ...baseCommand, commandId: "cmd-k1" }) |  |
 | CT-K-2 | Kernel | Persistent | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-2][SURF:Kernel] CT-K-2: idempotency mismatch reject | Reusing the same idempotency key with different payload rejects with CONFLICT/IDEMPOTENCY_PAYLOAD_MISMATCH. | Critical | const kernel = new KernelMinimalImpl(store); const accepted = await kernel.execute({ ...baseCommand, commandId: "cmd-k2-ok" }) |  |
 | CT-K-3 | Kernel | Persistent | packages/conformance-tests/src/ct_k_semantics.test.ts::[INV:CT-K-3][SURF:Kernel] CT-K-3: precondition mismatch is propagated | Append-layer PRECONDITION/REVISION_MISMATCH is propagated by kernel without remapping. | Critical | const fakeStore = new RevisionMismatchStore(); const kernel = new KernelMinimalImpl(fakeStore) |  |
@@ -67,10 +71,10 @@
 | CT-TRANSPORT-4 | Transport | Persistent | packages/conformance-tests/src/ct_transport_sync.test.ts::[INV:CT-TRANSPORT-4][SURF:Transport] masked vs absent indistinguishable via pull/subscribe cursors | Transport responses/cursors do not expose absent-vs-masked differences for a principal. | Structural | const principal = { principalId: "alice" }; const graphSpaceId = "space-transport-mask" |  |
 
 ## Criticality summary
-- Critical: 30
-- Structural: 19
+- Critical: 33
+- Structural: 20
 - Regression: 10
-- Critical IDs: CT-COMP-1, CT-COMP-2, CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-P-SEC-4, CT-PR-1, CT-PR-4, CT-PRC-2, CT-REPLICA-1, CT-REPLICA-2, CT-REPLICA-3, CT-RS-2, CT-S-1, CT-S-2, CT-SNAP-5, CT-SNAP-6, CT-SYNC-3, CT-TRANSPORT-1, CT-TRANSPORT-2, CT-TRANSPORT-3
+- Critical IDs: CT-COMP-1, CT-COMP-2, CT-HTTP-TRANSPORT-1, CT-HTTP-TRANSPORT-2, CT-HTTP-TRANSPORT-3, CT-K-2, CT-K-3, CT-K-4, CT-L-1, CT-L-2, CT-L-3, CT-L-4, CT-L-5, CT-L-7, CT-L-8, CT-MW-1, CT-MW-2, CT-P-SEC-4, CT-PR-1, CT-PR-4, CT-PRC-2, CT-REPLICA-1, CT-REPLICA-2, CT-REPLICA-3, CT-RS-2, CT-S-1, CT-S-2, CT-SNAP-5, CT-SNAP-6, CT-SYNC-3, CT-TRANSPORT-1, CT-TRANSPORT-2, CT-TRANSPORT-3
 
 ## Coverage gaps
 Coverage gaps: none.

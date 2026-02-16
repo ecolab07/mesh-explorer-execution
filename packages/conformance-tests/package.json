@@ -19,7 +19,8 @@
     "@mesh/kernel-minimal": "workspace:*",
     "@mesh/projection-minimal": "workspace:*",
     "@mesh/sync-local": "workspace:*",
-    "@mesh/snapshot-minimal": "workspace:*"
+    "@mesh/snapshot-minimal": "workspace:*",
+    "@mesh/sync-http": "workspace:*"
   },
   "exports": {
     ".": {

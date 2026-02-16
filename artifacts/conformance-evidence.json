@@ -3,6 +3,7 @@
     "vitestVersion": "^2.1.8",
     "suites": [
       "CT-C-* Cursor semantics per principal",
+      "CT-HTTP-TRANSPORT-* (%s)",
       "CT-K-* Kernel command semantics (%s)",
       "CT-L-* Core Local (%s)",
       "CT-MW-* V2-lite multi-writer (%s)",
@@ -80,6 +81,50 @@
           "oracle": "Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids.",
           "criticality": "Critical",
           "setup": "const graphSpaceId = \"space-comp-2\"; const txBundle = { txId: \"tx-idem\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-TRANSPORT-1",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-TRANSPORT-1][SURF:Transport] submit retry after client-timeout returns same final receipt",
+          "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+          "oracle": "HTTP timeout/lost response then retry with same idempotencyKey yields same final receipt and no double-commit.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-submit\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-TRANSPORT-2",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-TRANSPORT-2][SURF:Transport] pull cursor monotone and tx-closed",
+          "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+          "oracle": "HTTP sync:pull remains cursor-monotone, hole-free for visible tx, and tx-closed.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-pull\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-TRANSPORT-3",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-TRANSPORT-3][SURF:Transport] SSE subscribe reconnect from cursor converges",
+          "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+          "oracle": "SSE reconnection from last cursor converges to same visible state (duplicates tolerated).",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-subscribe\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-TRANSPORT-4",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-TRANSPORT-4][SURF:Transport] absent vs masked indistinguishable on status/body/cursor",
+          "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+          "oracle": "HTTP surfaces (status/body/cursor) do not distinguish absent from masked data for same principal.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-http-mask\"; const absentStore = store",
           "limitations": ""
         },
         {
@@ -678,13 +723,16 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 30,
-        "Structural": 19,
+        "Critical": 33,
+        "Structural": 20,
         "Regression": 10
       },
       "criticalInvariantIds": [
         "CT-COMP-1",
         "CT-COMP-2",
+        "CT-HTTP-TRANSPORT-1",
+        "CT-HTTP-TRANSPORT-2",
+        "CT-HTTP-TRANSPORT-3",
         "CT-K-2",
         "CT-K-3",
         "CT-K-4",
@@ -774,6 +822,50 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-HTTP-TRANSPORT-1",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-TRANSPORT-1][SURF:Transport] submit retry after client-timeout returns same final receipt",
+          "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+          "oracle": "HTTP timeout/lost response then retry with same idempotencyKey yields same final receipt and no double-commit.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-submit\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-TRANSPORT-2",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-TRANSPORT-2][SURF:Transport] pull cursor monotone and tx-closed",
+          "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+          "oracle": "HTTP sync:pull remains cursor-monotone, hole-free for visible tx, and tx-closed.",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-pull\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-TRANSPORT-3",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-TRANSPORT-3][SURF:Transport] SSE subscribe reconnect from cursor converges",
+          "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+          "oracle": "SSE reconnection from last cursor converges to same visible state (duplicates tolerated).",
+          "criticality": "Critical",
+          "setup": "const graphSpaceId = \"space-http-subscribe\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
+          "invariantId": "CT-HTTP-TRANSPORT-4",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-TRANSPORT-4][SURF:Transport] absent vs masked indistinguishable on status/body/cursor",
+          "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+          "oracle": "HTTP surfaces (status/body/cursor) do not distinguish absent from masked data for same principal.",
+          "criticality": "Structural",
+          "setup": "const graphSpaceId = \"space-http-mask\"; const absentStore = store",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-K-1",
           "surface": "Kernel",
           "backend": "Persistent",
@@ -1369,13 +1461,16 @@
         }
       ],
       "criticalitySummary": {
-        "Critical": 30,
-        "Structural": 19,
+        "Critical": 33,
+        "Structural": 20,
         "Regression": 10
       },
       "criticalInvariantIds": [
         "CT-COMP-1",
         "CT-COMP-2",
+        "CT-HTTP-TRANSPORT-1",
+        "CT-HTTP-TRANSPORT-2",
+        "CT-HTTP-TRANSPORT-3",
         "CT-K-2",
         "CT-K-3",
         "CT-K-4",
@@ -1462,6 +1557,50 @@
       "oracle": "Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids.",
       "criticality": "Critical",
       "setup": "const graphSpaceId = \"space-comp-2\"; const txBundle = { txId: \"tx-idem\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-TRANSPORT-1",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-TRANSPORT-1][SURF:Transport] submit retry after client-timeout returns same final receipt",
+      "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+      "oracle": "HTTP timeout/lost response then retry with same idempotencyKey yields same final receipt and no double-commit.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-http-submit\"; const kernel = new KernelMinimalImpl(store)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-TRANSPORT-2",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-TRANSPORT-2][SURF:Transport] pull cursor monotone and tx-closed",
+      "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+      "oracle": "HTTP sync:pull remains cursor-monotone, hole-free for visible tx, and tx-closed.",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-http-pull\"; const kernel = new KernelMinimalImpl(store)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-TRANSPORT-3",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-TRANSPORT-3][SURF:Transport] SSE subscribe reconnect from cursor converges",
+      "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+      "oracle": "SSE reconnection from last cursor converges to same visible state (duplicates tolerated).",
+      "criticality": "Critical",
+      "setup": "const graphSpaceId = \"space-http-subscribe\"; const kernel = new KernelMinimalImpl(store)",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-TRANSPORT-4",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-TRANSPORT-4][SURF:Transport] absent vs masked indistinguishable on status/body/cursor",
+      "file": "packages/conformance-tests/src/ct_http_transport.test.ts",
+      "oracle": "HTTP surfaces (status/body/cursor) do not distinguish absent from masked data for same principal.",
+      "criticality": "Structural",
+      "setup": "const graphSpaceId = \"space-http-mask\"; const absentStore = store",
       "limitations": ""
     },
     {
@@ -2060,13 +2199,16 @@
     }
   ],
   "criticalitySummary": {
-    "Critical": 30,
-    "Structural": 19,
+    "Critical": 33,
+    "Structural": 20,
     "Regression": 10
   },
   "criticalInvariantIds": [
     "CT-COMP-1",
     "CT-COMP-2",
+    "CT-HTTP-TRANSPORT-1",
+    "CT-HTTP-TRANSPORT-2",
+    "CT-HTTP-TRANSPORT-3",
     "CT-K-2",
     "CT-K-3",
     "CT-K-4",
