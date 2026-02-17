@@ -24,3 +24,7 @@ Chaos/passive-replication suites read these env vars:
 CI uses smoke values on PR and soak values on nightly.
 
 Spec-first references are in `specs/Mesh_Execution_Compiled_v_1.md`.
+## Audits
+
+- [Phase 17 post-merge audit](./PHASE_17_AUDIT_POST_MERGE.md)
+
