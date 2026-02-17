@@ -213,14 +213,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         .nodeId("id")
         .nodeLabel("label")
         .linkColor((link: unknown) => colorForType((link as GraphLink).type));
-      if (typeof (graph2d as { onNodeClick?: unknown }).onNodeClick === "function") {
-        (graph2d as any).onNodeClick((node: unknown) => {
-          const id = String((node as GraphNode).id);
-          store.toggleSelectNode(id);
-        });
-      } else {
-        reportDevError(el, "2D renderer onNodeClick API unavailable; node click selection disabled.");
-      }
+      graph2d.onNodeClick((node: GraphNode) => {
+        store.toggleSelectNode(String(node.id));
+      });
 
       setRendererMode("2d");
     } catch (error) {
