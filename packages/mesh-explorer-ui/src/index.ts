@@ -9,6 +9,8 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
+import { nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
+import { cursorStorageKey } from "./cursorStorage.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -111,16 +113,16 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
-    const savedCursor = readCursor(storageKey) ?? { metaSeq: 0, graphSeq: 0 };
+    const savedCursor = resolveBootstrapFromCursor(readCursor(storageKey));
+    dbg("sync:bootstrap:cursor-key", {
+      principal: normalizedPrincipal,
+      graphSpaceId: el.graphSpaceId.value,
+      storageKey,
+      savedCursor
+    });
     const replayResult = await pollReplayFromCursor(savedCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
-    if (savedCursor.graphSeq > 0 && replayResult.graphEventsApplied === 0 && store.getState().nodesById.size === 0) {
-      const fallbackReplay = await pollReplayFromCursor({ metaSeq: 0, graphSeq: 0 }, sessionId, activeAbort.signal);
-      if (sessionId !== syncSession) return;
-      applyCursorIfAdvanced(storageKey, fallbackReplay.cursor, "poll");
-    } else {
-      applyCursorIfAdvanced(storageKey, replayResult.cursor, "poll");
-    }
+    persistBootstrapCursor(storageKey, savedCursor, replayResult.cursor);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
 
@@ -202,17 +204,18 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             .map((entry) => asGraphEvent(entry.payload))
             .filter((event): event is GraphEvent => event !== null);
           const nextCursor = payload.cursorAfter ?? cursor;
-          const advanced = applyCursorIfAdvanced(storageKey, nextCursor, "poll");
-          if (advanced || graphEvents.length === 0) {
-            graphEventsApplied += graphEvents.length;
-            store.applyGraphEvents(graphEvents);
-            if (graphEvents.length > 0) setLastSyncNow();
-          }
+          graphEventsApplied += graphEvents.length;
+          store.applyGraphEvents(graphEvents);
+          if (graphEvents.length > 0) setLastSyncNow();
 
           const metaCount = payload.meta?.length ?? 0;
           const graphCount = payload.graph?.length ?? 0;
-          const cursorUnchanged = cursorEq(nextCursor, cursor);
-          cursor = nextCursor;
+          const nextMonotonic = nextMonotonicCursor(cursor, nextCursor);
+          const cursorUnchanged = cursorEq(nextMonotonic, cursor);
+          if (!cursorEq(nextCursor, nextMonotonic)) {
+            dbg("sync:poll:cursor-regression", { current: cursor, candidate: nextCursor });
+          }
+          cursor = nextMonotonic;
 
           if ((metaCount === 0 && graphCount === 0) || cursorUnchanged) {
             break;
@@ -324,6 +327,17 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     store.setCursor(candidate);
     persistCursor(storageKey, candidate);
     return true;
+  }
+
+  function persistBootstrapCursor(storageKey: string, fromCursor: Cursor, finalCursor: Cursor): void {
+    const current = store.getState().cursor;
+    if (!shouldPersistBootstrapCursor(fromCursor, finalCursor, current)) {
+      dbg("sync:bootstrap:cursor-regression", { fromCursor, current, finalCursor });
+      return;
+    }
+    store.setCursor(finalCursor);
+    persistCursor(storageKey, finalCursor);
+    dbg("sync:bootstrap:cursor-persisted", { storageKey, fromCursor, finalCursor });
   }
 
   function setRendererMode(mode: "2d" | "fallback-json"): void {
@@ -475,10 +489,6 @@ function colorForType(type: string): string {
   if (type === "parent") return "#3b82f6";
   if (type === "depends") return "#ef4444";
   return "#6b7280";
-}
-
-function cursorStorageKey(principal: string, graphSpaceId: string): string {
-  return `mesh.cursor.${principal}.${graphSpaceId}`;
 }
 
 function readCursor(storageKey: string): Cursor | null {
