@@ -3,7 +3,7 @@ import { createGraphStore, type GraphEvent, type GraphLink, type GraphNode, type
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
-type SyncTxBundle = { txBundle?: { graphEvents?: unknown[]; metaEvents?: unknown[] } };
+type SyncTxBundle = { principalCursor?: number; txBundle?: { graphEvents?: unknown[]; metaEvents?: unknown[] } };
 type SyncFrame =
   | { kind: "heartbeat"; cursorVisible?: number }
   | { kind: "cursor"; cursorVisible?: number }
@@ -97,18 +97,26 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   void connectAndSync();
 
   async function connectAndSync(): Promise<void> {
-    const storageKey = cursorStorageKey(el.baseUrl.value, el.graphSpaceId.value, normalizePrincipal(el.principal.value));
-    const savedCursor = readCursor(storageKey);
-    store.setCursor(savedCursor ?? { metaSeq: 0, graphSeq: 0 });
-    await pollFromCursor();
+    const normalizedPrincipal = normalizePrincipal(el.principal.value);
+    const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
+    const savedCursor = readCursor(storageKey) ?? { metaSeq: 0, graphSeq: 0 };
+    const replayResult = await pollReplayFromCursor(savedCursor);
+    if (savedCursor.graphSeq > 0 && replayResult.graphEventsApplied === 0 && store.getState().nodesById.size === 0) {
+      const fallbackReplay = await pollReplayFromCursor({ metaSeq: 0, graphSeq: 0 });
+      store.setCursor(fallbackReplay.cursor);
+      persistCursor(storageKey, fallbackReplay.cursor);
+    } else {
+      store.setCursor(replayResult.cursor);
+      persistCursor(storageKey, replayResult.cursor);
+    }
     void subscribeLoop();
 
     async function subscribeLoop(): Promise<void> {
       while (!stopSync) {
         try {
           const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
-          const response = await meshFetch(url, { headers: headers(el.principal.value) }, {
-            principal: el.principal.value,
+          const response = await meshFetch(url, { headers: headers(normalizedPrincipal) }, {
+            principal: normalizedPrincipal,
             transport: "fetch-sse",
             debugAuth
           });
@@ -123,14 +131,21 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
               continue;
             }
             if (data.kind === "txBundles") {
-              const events = extractGraphEventsFromTxBundles(data.txBundlesVisible ?? []);
+              const txBundles = data.txBundlesVisible ?? [];
+              const events = extractGraphEventsFromTxBundles(txBundles);
               store.applyGraphEvents(events);
+              const cursorFromBundles = readCursorFromTxBundles(txBundles);
+              if (cursorFromBundles !== null) {
+                const next = { ...store.getState().cursor, graphSeq: cursorFromBundles };
+                store.setCursor(next);
+                persistCursor(storageKey, next);
+              }
               lastSync = new Date().toISOString();
               dbg("sync:txBundles", { count: events.length });
               continue;
             }
             if (data.kind === "cursor" && typeof data.cursorVisible === "number") {
-              const next = { ...store.getState().cursor, graphSeq: data.cursorVisible };
+              const next = { ...store.getState().cursor, graphSeq: Math.max(store.getState().cursor.graphSeq, data.cursorVisible) };
               store.setCursor(next);
               persistCursor(storageKey, next);
               renderStatus(next, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
@@ -143,30 +158,46 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       }
     }
 
-    async function pollFromCursor(): Promise<void> {
+    async function pollReplayFromCursor(initialCursor: Cursor): Promise<{ cursor: Cursor; graphEventsApplied: number }> {
+      let cursor = initialCursor;
+      let graphEventsApplied = 0;
       try {
         const limits = encodeURIComponent(JSON.stringify({ graph: 128, meta: 32 }));
-        const cursor = encodeURIComponent(JSON.stringify(store.getState().cursor));
-        const response = await meshFetch(
-          `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${cursor}&limits=${limits}`,
-          { headers: headers(el.principal.value) },
-          { principal: el.principal.value, transport: "fetch", debugAuth }
-        );
-        if (!response.ok) {
-          reportDevError(el, `sync poll non-ok: ${response.status}`);
-          return;
+        while (!stopSync) {
+          const encodedCursor = encodeURIComponent(JSON.stringify(cursor));
+          const response = await meshFetch(
+            `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${encodedCursor}&limits=${limits}`,
+            { headers: headers(normalizedPrincipal) },
+            { principal: normalizedPrincipal, transport: "fetch", debugAuth }
+          );
+          if (!response.ok) {
+            reportDevError(el, `sync poll non-ok: ${response.status}`);
+            return { cursor, graphEventsApplied };
+          }
+          const payload = (await response.json()) as SyncPollPayload;
+          const graphEvents = (payload.graph ?? [])
+            .map((entry) => asGraphEvent(entry.payload))
+            .filter((event): event is GraphEvent => event !== null);
+          graphEventsApplied += graphEvents.length;
+          store.applyGraphEvents(graphEvents);
+          const nextCursor = payload.cursorAfter ?? cursor;
+          store.setCursor(nextCursor);
+          lastSync = new Date().toISOString();
+          renderStatus(nextCursor, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
+
+          const metaCount = payload.meta?.length ?? 0;
+          const graphCount = payload.graph?.length ?? 0;
+          const cursorUnchanged = cursorEq(nextCursor, cursor);
+          cursor = nextCursor;
+
+          if ((metaCount === 0 && graphCount === 0) || cursorUnchanged) {
+            break;
+          }
         }
-        const payload = (await response.json()) as SyncPollPayload;
-        const graphEvents = (payload.graph ?? [])
-          .map((entry) => asGraphEvent(entry.payload))
-          .filter((event): event is GraphEvent => event !== null);
-        store.applyGraphEvents(graphEvents);
-        store.setCursor(payload.cursorAfter ?? store.getState().cursor);
-        persistCursor(storageKey, store.getState().cursor);
-        lastSync = new Date().toISOString();
-        renderStatus(store.getState().cursor, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
+        return { cursor, graphEventsApplied };
       } catch (error) {
         reportDevError(el, `sync poll failed: ${String(error)}`, error);
+        return { cursor, graphEventsApplied };
       }
     }
   }
@@ -398,8 +429,8 @@ function colorForType(type: string): string {
   return "#6b7280";
 }
 
-function cursorStorageKey(baseUrl: string, graphSpaceId: string, principal: string): string {
-  return `mesh-explorer-cursor:${baseUrl}:${graphSpaceId}:${principal}`;
+function cursorStorageKey(principal: string, graphSpaceId: string): string {
+  return `mesh.cursor.${principal}.${graphSpaceId}`;
 }
 
 function readCursor(storageKey: string): Cursor | null {
@@ -472,6 +503,7 @@ function reportDevError(el: Pick<UiElements, "devBanner">, message: string, erro
 
 type MeshDebugApi = {
   selectNodes: (ids: string[]) => void;
+  dump: () => { cursor: Cursor; nodesCount: number; linksCount: number };
 };
 
 function installTestHook(store: GraphStore): void {
@@ -480,9 +512,30 @@ function installTestHook(store: GraphStore): void {
   const meshDebug: MeshDebugApi = {
     selectNodes(ids: string[]) {
       store.replaceSelection(ids);
+    },
+    dump() {
+      const state = store.getState();
+      return {
+        cursor: state.cursor,
+        nodesCount: state.nodesById.size,
+        linksCount: state.linksById.size
+      };
     }
   };
   (window as Window & { __meshDebug?: MeshDebugApi }).__meshDebug = meshDebug;
+}
+
+function readCursorFromTxBundles(txBundles: SyncTxBundle[]): number | null {
+  let maxCursor: number | null = null;
+  for (const bundle of txBundles) {
+    if (typeof bundle.principalCursor !== "number") continue;
+    maxCursor = maxCursor === null ? bundle.principalCursor : Math.max(maxCursor, bundle.principalCursor);
+  }
+  return maxCursor;
+}
+
+function cursorEq(left: Cursor, right: Cursor): boolean {
+  return left.metaSeq === right.metaSeq && left.graphSeq === right.graphSeq;
 }
 
 function wait(ms: number): Promise<void> {
