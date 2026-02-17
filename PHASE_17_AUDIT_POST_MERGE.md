@@ -176,7 +176,7 @@
 
 ## Phase 18 — Backlog issu de l’audit (checklist)
 
-- [ ] Ajouter un test explicite de re-delivery SSE qui rejoue deux fois le même `txBundles` et vérifie l’absence de duplication visible.
-- [ ] Ajouter un test explicite d’overlap poll/SSE (même événement appliqué via poll puis SSE) avec assertion de cardinalité inchangée.
-- [ ] Ajouter une garde monotone cursor + test de non-régression quand le serveur renvoie un cursor en arrière.
+- [x] Ajouter un test explicite de re-delivery SSE qui rejoue deux fois le même `txBundles` et vérifie l’absence de duplication visible.
+- [x] Ajouter un test explicite d’overlap poll/SSE (même événement appliqué via poll puis SSE) avec assertion de cardinalité inchangée.
+- [x] Ajouter une garde monotone cursor + test de non-régression quand le serveur renvoie un cursor en arrière.
 - [ ] Ajouter une validation de cohérence principal/graphSpace côté client + test d’isolation quand payload divergent.

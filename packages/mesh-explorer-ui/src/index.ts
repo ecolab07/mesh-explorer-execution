@@ -1,5 +1,14 @@
 import ForceGraph2D from "force-graph";
-import { createGraphStore, type GraphEvent, type GraphLink, type GraphNode, type GraphState, type GraphStore } from "./graphStore.js";
+import {
+  createGraphStore,
+  type ConnectionStatus,
+  type GraphEvent,
+  type GraphLink,
+  type GraphNode,
+  type GraphState,
+  type GraphStore
+} from "./graphStore.js";
+import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -15,8 +24,6 @@ type SyncPollPayload = {
   graph?: Array<{ payload?: unknown }>;
   cursorAfter?: Cursor;
 };
-
-type ConnectionStatus = "disconnected" | "connecting" | "connected" | "connected (poll-only)" | "reconnecting";
 
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
@@ -57,8 +64,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let syncSession = 0;
   let graph2d: any = null;
   let rendererMode: "2d" | "fallback-json" = "2d";
-  let lastSync = "n/a";
-  let connectionStatus: ConnectionStatus = "disconnected";
+  let activeAbort: AbortController | null = null;
 
   setConnectionStatus("disconnected");
 
@@ -77,7 +83,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     };
     graph2d?.graphData(data);
     updateSelectionUi(snapshot);
-    renderStatus(snapshot.cursor, lastSync, data.nodes.length, data.links.length);
+    renderStatus(snapshot, data.nodes.length, data.links.length);
   });
 
   el.connect.onclick = () => {
@@ -101,29 +107,28 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   void connectAndSync(syncSession);
 
   async function connectAndSync(sessionId: number): Promise<void> {
+    activeAbort = rotateAbortController(activeAbort);
     setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
     const savedCursor = readCursor(storageKey) ?? { metaSeq: 0, graphSeq: 0 };
-    const replayResult = await pollReplayFromCursor(savedCursor, sessionId);
+    const replayResult = await pollReplayFromCursor(savedCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
     if (savedCursor.graphSeq > 0 && replayResult.graphEventsApplied === 0 && store.getState().nodesById.size === 0) {
-      const fallbackReplay = await pollReplayFromCursor({ metaSeq: 0, graphSeq: 0 }, sessionId);
+      const fallbackReplay = await pollReplayFromCursor({ metaSeq: 0, graphSeq: 0 }, sessionId, activeAbort.signal);
       if (sessionId !== syncSession) return;
-      store.setCursor(fallbackReplay.cursor);
-      persistCursor(storageKey, fallbackReplay.cursor);
+      applyCursorIfAdvanced(storageKey, fallbackReplay.cursor, "poll");
     } else {
-      store.setCursor(replayResult.cursor);
-      persistCursor(storageKey, replayResult.cursor);
+      applyCursorIfAdvanced(storageKey, replayResult.cursor, "poll");
     }
     setConnectionStatus("connected (poll-only)");
-    void subscribeLoop(sessionId);
+    void subscribeLoop(sessionId, activeAbort.signal);
 
-    async function subscribeLoop(activeSessionId: number): Promise<void> {
+    async function subscribeLoop(activeSessionId: number, signal: AbortSignal): Promise<void> {
       while (activeSessionId === syncSession) {
         try {
           const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
-          const response = await meshFetch(url, { headers: headers(normalizedPrincipal) }, {
+          const response = await meshFetch(url, { headers: headers(normalizedPrincipal), signal }, {
             principal: normalizedPrincipal,
             transport: "fetch-sse",
             debugAuth
@@ -142,26 +147,33 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             }
             if (data.kind === "txBundles") {
               const txBundles = data.txBundlesVisible ?? [];
-              const events = extractGraphEventsFromTxBundles(txBundles);
-              store.applyGraphEvents(events);
               const cursorFromBundles = readCursorFromTxBundles(txBundles);
               if (cursorFromBundles !== null) {
                 const next = { ...store.getState().cursor, graphSeq: cursorFromBundles };
-                store.setCursor(next);
-                persistCursor(storageKey, next);
+                const advanced = applyCursorIfAdvanced(storageKey, next, "sse");
+                if (advanced) {
+                  const events = extractGraphEventsFromTxBundles(txBundles);
+                  store.applyGraphEvents(events);
+                  setLastSyncNow();
+                  dbg("sync:txBundles", { count: events.length });
+                }
+                continue;
               }
-              lastSync = new Date().toISOString();
-              dbg("sync:txBundles", { count: events.length });
+              const events = extractGraphEventsFromTxBundles(txBundles);
+              store.applyGraphEvents(events);
+              setLastSyncNow();
+              dbg("sync:txBundles:no-cursor", { count: events.length });
               continue;
             }
             if (data.kind === "cursor" && typeof data.cursorVisible === "number") {
-              renderStatus(store.getState().cursor, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
+              renderStatus(store.getState(), store.getState().nodesById.size, store.getState().linksById.size);
             }
           }
           if (activeSessionId === syncSession) {
             setConnectionStatus("reconnecting");
           }
         } catch (error) {
+          if (signal.aborted) return;
           setConnectionStatus("reconnecting");
           reportDevError(el, `sync subscribe failed: ${String(error)}`, error);
           await wait(500);
@@ -169,7 +181,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       }
     }
 
-    async function pollReplayFromCursor(initialCursor: Cursor, activeSessionId: number): Promise<{ cursor: Cursor; graphEventsApplied: number }> {
+    async function pollReplayFromCursor(initialCursor: Cursor, activeSessionId: number, signal: AbortSignal): Promise<{ cursor: Cursor; graphEventsApplied: number }> {
       let cursor = initialCursor;
       let graphEventsApplied = 0;
       try {
@@ -178,7 +190,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           const encodedCursor = encodeURIComponent(JSON.stringify(cursor));
           const response = await meshFetch(
             `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${encodedCursor}&limits=${limits}`,
-            { headers: headers(normalizedPrincipal) },
+            { headers: headers(normalizedPrincipal), signal },
             { principal: normalizedPrincipal, transport: "fetch", debugAuth }
           );
           if (!response.ok) {
@@ -189,12 +201,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           const graphEvents = (payload.graph ?? [])
             .map((entry) => asGraphEvent(entry.payload))
             .filter((event): event is GraphEvent => event !== null);
-          graphEventsApplied += graphEvents.length;
-          store.applyGraphEvents(graphEvents);
           const nextCursor = payload.cursorAfter ?? cursor;
-          store.setCursor(nextCursor);
-          lastSync = new Date().toISOString();
-          renderStatus(nextCursor, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
+          const advanced = applyCursorIfAdvanced(storageKey, nextCursor, "poll");
+          if (advanced || graphEvents.length === 0) {
+            graphEventsApplied += graphEvents.length;
+            store.applyGraphEvents(graphEvents);
+            if (graphEvents.length > 0) setLastSyncNow();
+          }
 
           const metaCount = payload.meta?.length ?? 0;
           const graphCount = payload.graph?.length ?? 0;
@@ -207,6 +220,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         }
         return { cursor, graphEventsApplied };
       } catch (error) {
+        if (signal.aborted) return { cursor, graphEventsApplied };
         reportDevError(el, `sync poll failed: ${String(error)}`, error);
         return { cursor, graphEventsApplied };
       }
@@ -282,10 +296,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     el.addLink.disabled = false;
   }
 
-  function renderStatus(cursor: Cursor, lastSyncText: string, nodes: number, links: number): void {
-    el.status.textContent = connectionStatus;
-    el.lastCursor.textContent = `cursor: ${JSON.stringify(cursor)}`;
-    el.lastSync.textContent = `last sync: ${lastSyncText}`;
+  function renderStatus(snapshot: GraphState, nodes: number, links: number): void {
+    el.status.textContent = snapshot.connectionStatus;
+    el.lastCursor.textContent = `cursor: ${JSON.stringify(snapshot.cursor)}`;
+    el.lastSync.textContent = `last sync: ${snapshot.lastSync}`;
     el.rendererBadge.textContent = `Renderer: ${rendererMode} | nodes=${nodes} links=${links}`;
     if (!el.principal.value.trim()) {
       el.status.textContent = `principal required: sending default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
@@ -293,8 +307,23 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   }
 
   function setConnectionStatus(next: ConnectionStatus): void {
-    connectionStatus = next;
-    renderStatus(store.getState().cursor, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
+    store.setConnectionStatus(next);
+  }
+
+  function setLastSyncNow(): void {
+    store.setLastSync(new Date().toISOString());
+  }
+
+  function applyCursorIfAdvanced(storageKey: string, candidate: Cursor, source: "poll" | "sse"): boolean {
+    const current = store.getState().cursor;
+    if (compareCursor(candidate, current) <= 0) {
+      dbg(`cursor-regression:${source}`, { current, candidate });
+      emitMeshDebugLog("cursor-regression", { source, current, candidate });
+      return false;
+    }
+    store.setCursor(candidate);
+    persistCursor(storageKey, candidate);
+    return true;
   }
 
   function setRendererMode(mode: "2d" | "fallback-json"): void {
@@ -310,6 +339,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   container.addEventListener("DOMNodeRemoved", () => {
     unsubscribe();
     syncSession += 1;
+    activeAbort?.abort();
     setConnectionStatus("disconnected");
   });
 }
@@ -464,7 +494,7 @@ function readCursor(storageKey: string): Cursor | null {
 }
 
 function persistCursor(storageKey: string, cursor: Cursor): void {
-  localStorage.setItem(storageKey, JSON.stringify(cursor));
+  persistCursorSafely(storageKey, cursor, (key, value) => localStorage.setItem(key, value));
 }
 
 async function *parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<SyncFrame> {
@@ -522,6 +552,8 @@ function reportDevError(el: Pick<UiElements, "devBanner">, message: string, erro
 type MeshDebugApi = {
   selectNodes: (ids: string[]) => void;
   dump: () => { cursor: Cursor; nodesCount: number; linksCount: number };
+  logs?: Array<{ message: string; detail?: unknown }>;
+  log?: (message: string, detail?: unknown) => void;
 };
 
 function installTestHook(store: GraphStore): void {
@@ -538,6 +570,10 @@ function installTestHook(store: GraphStore): void {
         nodesCount: state.nodesById.size,
         linksCount: state.linksById.size
       };
+    },
+    logs: [],
+    log(message, detail) {
+      this.logs?.push({ message, detail });
     }
   };
   (window as Window & { __meshDebug?: MeshDebugApi }).__meshDebug = meshDebug;
@@ -554,6 +590,11 @@ function readCursorFromTxBundles(txBundles: SyncTxBundle[]): number | null {
 
 function cursorEq(left: Cursor, right: Cursor): boolean {
   return left.metaSeq === right.metaSeq && left.graphSeq === right.graphSeq;
+}
+
+function emitMeshDebugLog(message: string, detail?: unknown): void {
+  const target = (window as Window & { __meshDebug?: MeshDebugApi }).__meshDebug;
+  target?.log?.(message, detail);
 }
 
 function wait(ms: number): Promise<void> {

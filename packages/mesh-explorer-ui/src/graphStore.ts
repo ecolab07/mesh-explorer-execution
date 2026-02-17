@@ -1,4 +1,5 @@
 export type Cursor = { metaSeq: number; graphSeq: number };
+export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "connected (poll-only)" | "reconnecting";
 export type GraphNode = { id: string; label: string; level?: number; metadata?: Record<string, unknown> };
 export type GraphLink = { id: string; source: string; target: string; type: string; label?: string };
 
@@ -14,6 +15,8 @@ export type GraphState = {
   linksById: Map<string, GraphLink>;
   selectedNodeIds: Set<string>;
   cursor: Cursor;
+  connectionStatus: ConnectionStatus;
+  lastSync: string;
 };
 
 export type GraphStore = {
@@ -21,6 +24,8 @@ export type GraphStore = {
   subscribe: (listener: (state: GraphState) => void) => () => void;
   applyGraphEvents: (events: GraphEvent[]) => void;
   setCursor: (cursor: Cursor) => void;
+  setConnectionStatus: (status: ConnectionStatus) => void;
+  setLastSync: (value: string) => void;
   toggleSelectNode: (id: string) => void;
   replaceSelection: (ids: string[]) => void;
   clearSelection: () => void;
@@ -31,7 +36,9 @@ export function createGraphStore(): GraphStore {
     nodesById: new Map(),
     linksById: new Map(),
     selectedNodeIds: new Set(),
-    cursor: { metaSeq: 0, graphSeq: 0 }
+    cursor: { metaSeq: 0, graphSeq: 0 },
+    connectionStatus: "disconnected",
+    lastSync: "n/a"
   };
   const listeners = new Set<(value: GraphState) => void>();
 
@@ -93,6 +100,12 @@ export function createGraphStore(): GraphStore {
     },
     setCursor(cursor) {
       emit({ ...state, cursor });
+    },
+    setConnectionStatus(connectionStatus) {
+      emit({ ...state, connectionStatus });
+    },
+    setLastSync(lastSync) {
+      emit({ ...state, lastSync });
     },
     toggleSelectNode(id) {
       const next = new Set(state.selectedNodeIds);
