@@ -9,8 +9,9 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
-import { nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
+import { isStoreEmpty, nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { cursorStorageKey } from "./cursorStorage.js";
+import { buildSyncPollUrl } from "./syncPollRequest.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -113,16 +114,23 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
-    const savedCursor = resolveBootstrapFromCursor(readCursor(storageKey));
+    const persistedCursor = readCursor(storageKey);
+    const storeSnapshot = {
+      nodesCount: store.getState().nodesById.size,
+      linksCount: store.getState().linksById.size
+    };
+    const fromCursor = resolveBootstrapFromCursor(persistedCursor, storeSnapshot);
     dbg("sync:bootstrap:cursor-key", {
       principal: normalizedPrincipal,
       graphSpaceId: el.graphSpaceId.value,
       storageKey,
-      savedCursor
+      isStoreEmpty: isStoreEmpty(storeSnapshot),
+      persistedCursor,
+      fromCursor
     });
-    const replayResult = await pollReplayFromCursor(savedCursor, sessionId, activeAbort.signal);
+    const replayResult = await pollReplayFromCursor(fromCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
-    persistBootstrapCursor(storageKey, savedCursor, replayResult.cursor);
+    persistBootstrapCursor(storageKey, fromCursor, replayResult.cursor);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
 
@@ -187,11 +195,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       let cursor = initialCursor;
       let graphEventsApplied = 0;
       try {
-        const limits = encodeURIComponent(JSON.stringify({ graph: 128, meta: 32 }));
         while (activeSessionId === syncSession) {
-          const encodedCursor = encodeURIComponent(JSON.stringify(cursor));
           const response = await meshFetch(
-            `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${encodedCursor}&limits=${limits}`,
+            buildSyncPollUrl(el.baseUrl.value, el.graphSpaceId.value, cursor, { graph: 128, meta: 32 }),
             { headers: headers(normalizedPrincipal), signal },
             { principal: normalizedPrincipal, transport: "fetch", debugAuth }
           );

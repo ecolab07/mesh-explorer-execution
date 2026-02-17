@@ -3,8 +3,17 @@ import { compareCursor } from "./syncGuards.js";
 
 export const ZERO_CURSOR: Cursor = { metaSeq: 0, graphSeq: 0 };
 
-export function resolveBootstrapFromCursor(saved: Cursor | null): Cursor {
-  return saved ?? ZERO_CURSOR;
+type StoreSnapshot = { nodesCount: number; linksCount: number };
+
+export function resolveBootstrapFromCursor(saved: Cursor | null, snapshot: StoreSnapshot): Cursor {
+  if (isStoreEmpty(snapshot)) return ZERO_CURSOR;
+  if (!saved) return ZERO_CURSOR;
+  if (compareCursor(saved, ZERO_CURSOR) < 0) return ZERO_CURSOR;
+  return saved;
+}
+
+export function isStoreEmpty(snapshot: StoreSnapshot): boolean {
+  return snapshot.nodesCount === 0 && snapshot.linksCount === 0;
 }
 
 export function nextMonotonicCursor(current: Cursor, candidate: Cursor): Cursor {
