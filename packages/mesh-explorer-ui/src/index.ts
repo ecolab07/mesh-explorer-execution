@@ -1,18 +1,21 @@
 import ForceGraph3D from "react-force-graph-3d";
 import ForceGraph2D from "force-graph";
+import { createGraphStore, type GraphEvent, type GraphLink, type GraphNode, type GraphState, type GraphStore } from "./graphStore.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
-type GraphNode = { id: string; label: string; level?: number; metadata?: Record<string, unknown> };
-type GraphLink = { id: string; source: string; target: string; type: string; label?: string };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
-type GraphFrame = { kind?: string; cursorVisible?: number; txBundle?: { graphEvents: unknown[] } };
+type SyncTxBundle = { txBundle?: { graphEvents?: unknown[]; metaEvents?: unknown[] } };
+type SyncFrame =
+  | { kind: "heartbeat"; cursorVisible?: number }
+  | { kind: "cursor"; cursorVisible?: number }
+  | { kind: "txBundles"; txBundlesVisible?: SyncTxBundle[] }
+  | { kind?: string; cursorVisible?: number; txBundlesVisible?: SyncTxBundle[]; txBundle?: { graphEvents?: unknown[] } };
 
-type GraphEvent =
-  | { type: "graph.node.created"; node: GraphNode }
-  | { type: "graph.node.label.updated"; nodeId: string; label: string }
-  | { type: "graph.node.deleted"; nodeId: string }
-  | { type: "graph.link.created"; link: GraphLink }
-  | { type: "graph.link.deleted"; linkId: string };
+type SyncPollPayload = {
+  meta?: Array<{ payload?: unknown }>;
+  graph?: Array<{ payload?: unknown }>;
+  cursorAfter?: Cursor;
+};
 
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
@@ -30,83 +33,83 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         <div id="lastSync">last sync: n/a</div>
         <hr/>
         <button id="addNode">Add node</button>
-        <button id="addLink">Add link</button>
+        <div style="margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:8px;">
+          <div><strong>Create link</strong></div>
+          <label>type <input id="linkType" style="width:100%" value="related"/></label>
+          <div id="linkSelectionHint" style="margin-top:6px;font-size:12px;color:#555;">Select exactly two nodes in the graph.</div>
+          <button id="addLink" style="margin-top:6px;" disabled>Create link</button>
+        </div>
+        <div id="devBanner" style="display:none;margin-top:8px;padding:6px;border:1px solid #f59e0b;background:#fffbeb;border-radius:6px;font-size:12px;"></div>
       </aside>
-      <main style="display:grid;grid-template-rows:1fr 320px;gap:8px;padding:8px;">
+      <main style="position:relative;display:grid;grid-template-rows:1fr 320px;gap:8px;padding:8px;">
         <div id="graph3d" style="border:1px solid #ddd;"></div>
         <div id="graph2d" style="border:1px solid #ddd;"></div>
+        <div id="rendererBadge" style="position:absolute;top:16px;right:16px;padding:4px 8px;border-radius:999px;background:#111827;color:white;font-size:12px;opacity:0.85;"></div>
       </main>
     </section>
   `;
 
   const el = byId(container);
+  const debugAuth = isDebugAuthEnabled();
+  const debugEnabled = isDebugEnabled();
+  const store = createGraphStore();
+  let stopSync = false;
+  let graph3d: any = null;
+  let graph2d: any = null;
+  let rendererMode: "3d" | "2d" | "fallback-json" = "3d";
+  let lastSync = "n/a";
+
+  setupRenderer();
   persistPrincipal(el.principal.value);
   el.principal.onchange = () => {
     const normalized = normalizePrincipal(el.principal.value);
     el.principal.value = normalized;
     persistPrincipal(normalized);
   };
-  const state = {
-    nodes: new Map<string, GraphNode>(),
-    links: new Map<string, GraphLink>(),
-    cursor: { metaSeq: 0, graphSeq: 0 } as Cursor,
-    stop: false
-  };
-  const debugAuth = isDebugAuthEnabled();
 
-  const graph3d = ForceGraph3D()(el.graph3d)
-    .nodeId("id")
-    .nodeLabel((node: unknown) => (node as GraphNode).label)
-    .linkLabel((link: unknown) => `${(link as GraphLink).type}`)
-    .linkColor((link: unknown) => colorForType((link as GraphLink).type));
-
-  const graph2d = ForceGraph2D()(el.graph2d)
-    .nodeId("id")
-    .nodeLabel("label")
-    .linkColor((link: unknown) => colorForType((link as GraphLink).type));
+  const unsubscribe = store.subscribe((snapshot: GraphState) => {
+    const data: GraphData = {
+      nodes: Array.from(snapshot.nodesById.values()),
+      links: Array.from(snapshot.linksById.values()).filter((link: GraphLink) => snapshot.nodesById.has(link.source) && snapshot.nodesById.has(link.target))
+    };
+    graph3d?.graphData(data);
+    graph2d?.graphData(data);
+    updateSelectionUi(snapshot);
+    renderStatus(snapshot.cursor, lastSync, data.nodes.length, data.links.length);
+  });
 
   el.connect.onclick = () => {
-    state.stop = true;
-    state.stop = false;
+    stopSync = true;
+    stopSync = false;
+    el.status.textContent = "connected";
     void connectAndSync();
   };
 
   el.addNode.onclick = () => {
     const label = prompt("Node label", "new node") ?? "";
     if (!label) return;
-    void meshFetch(`${el.baseUrl.value}/graph/nodes`, {
-      method: "POST",
-      headers: headers(el.principal.value),
-      body: JSON.stringify({ label, idempotencyKey: crypto.randomUUID() })
-    }, { principal: el.principal.value, transport: "fetch", debugAuth });
+    dbg("add-node:submit", { label });
+    void addNode(label);
   };
 
   el.addLink.onclick = () => {
-    const source = prompt("Source node id") ?? "";
-    const target = prompt("Target node id") ?? "";
-    const type = prompt("Link type", "related") ?? "related";
-    if (!source || !target) return;
-    void meshFetch(`${el.baseUrl.value}/graph/links`, {
-      method: "POST",
-      headers: headers(el.principal.value),
-      body: JSON.stringify({ source, target, type, idempotencyKey: crypto.randomUUID() })
-    }, { principal: el.principal.value, transport: "fetch", debugAuth });
+    void addLinkFromSelection();
   };
 
+  installTestHook(store);
   void connectAndSync();
 
   async function connectAndSync(): Promise<void> {
     const storageKey = cursorStorageKey(el.baseUrl.value, el.graphSpaceId.value, normalizePrincipal(el.principal.value));
     const savedCursor = readCursor(storageKey);
-    state.cursor = savedCursor ?? { metaSeq: 0, graphSeq: 0 };
-    el.status.textContent = "connected";
+    store.setCursor(savedCursor ?? { metaSeq: 0, graphSeq: 0 });
     await pollFromCursor();
     void subscribeLoop();
 
     async function subscribeLoop(): Promise<void> {
-      while (!state.stop) {
+      while (!stopSync) {
         try {
-          const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${state.cursor.graphSeq}`;
+          const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
           const response = await meshFetch(url, { headers: headers(el.principal.value) }, {
             principal: el.principal.value,
             transport: "fetch-sse",
@@ -116,74 +119,161 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             await wait(300);
             continue;
           }
-          for await (const frame of parseSse(response.body)) {
-            const data = frame as GraphFrame;
-            if (state.stop) return;
-            if (data.kind === "tx" && data.txBundle) {
-              applyTx(data.txBundle.graphEvents as GraphEvent[]);
+          for await (const data of parseSse(response.body)) {
+            if (stopSync) return;
+            if (data.kind === "heartbeat") {
+              dbg("sync:heartbeat", data);
+              continue;
+            }
+            if (data.kind === "txBundles") {
+              const events = extractGraphEventsFromTxBundles(data.txBundlesVisible ?? []);
+              store.applyGraphEvents(events);
+              lastSync = new Date().toISOString();
+              dbg("sync:txBundles", { count: events.length });
+              continue;
             }
             if (data.kind === "cursor" && typeof data.cursorVisible === "number") {
-              state.cursor.graphSeq = data.cursorVisible;
-              persistCursor(storageKey, state.cursor);
-              renderStatus();
+              const next = { ...store.getState().cursor, graphSeq: data.cursorVisible };
+              store.setCursor(next);
+              persistCursor(storageKey, next);
+              renderStatus(next, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
             }
           }
-        } catch {
+        } catch (error) {
+          reportDevError(el, `sync subscribe failed: ${String(error)}`, error);
           await wait(500);
         }
       }
     }
 
     async function pollFromCursor(): Promise<void> {
-      const limits = encodeURIComponent(JSON.stringify({ graph: 128, meta: 32 }));
-      const cursor = encodeURIComponent(JSON.stringify(state.cursor));
-      const response = await meshFetch(
-        `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${cursor}&limits=${limits}`,
-        { headers: headers(el.principal.value) },
-        { principal: el.principal.value, transport: "fetch", debugAuth }
-      );
-      if (!response.ok) return;
-      const payload = (await response.json()) as { graph?: GraphEvent[]; cursorAfter?: Cursor };
-      applyTx(payload.graph ?? []);
-      state.cursor = payload.cursorAfter ?? state.cursor;
-      persistCursor(storageKey, state.cursor);
-      renderStatus();
-    }
-  }
-
-  function applyTx(events: GraphEvent[]): void {
-    for (const event of events) {
-      if (event.type === "graph.node.created") state.nodes.set(event.node.id, event.node);
-      if (event.type === "graph.node.label.updated") {
-        const node = state.nodes.get(event.nodeId);
-        if (node) state.nodes.set(event.nodeId, { ...node, label: event.label });
-      }
-      if (event.type === "graph.node.deleted") {
-        state.nodes.delete(event.nodeId);
-        for (const [id, link] of state.links) {
-          if (link.source === event.nodeId || link.target === event.nodeId) state.links.delete(id);
+      try {
+        const limits = encodeURIComponent(JSON.stringify({ graph: 128, meta: 32 }));
+        const cursor = encodeURIComponent(JSON.stringify(store.getState().cursor));
+        const response = await meshFetch(
+          `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${cursor}&limits=${limits}`,
+          { headers: headers(el.principal.value) },
+          { principal: el.principal.value, transport: "fetch", debugAuth }
+        );
+        if (!response.ok) {
+          reportDevError(el, `sync poll non-ok: ${response.status}`);
+          return;
         }
+        const payload = (await response.json()) as SyncPollPayload;
+        const graphEvents = (payload.graph ?? [])
+          .map((entry) => asGraphEvent(entry.payload))
+          .filter((event): event is GraphEvent => event !== null);
+        store.applyGraphEvents(graphEvents);
+        store.setCursor(payload.cursorAfter ?? store.getState().cursor);
+        persistCursor(storageKey, store.getState().cursor);
+        lastSync = new Date().toISOString();
+        renderStatus(store.getState().cursor, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
+      } catch (error) {
+        reportDevError(el, `sync poll failed: ${String(error)}`, error);
       }
-      if (event.type === "graph.link.created") state.links.set(event.link.id, event.link);
-      if (event.type === "graph.link.deleted") state.links.delete(event.linkId);
     }
-    const data: GraphData = {
-      nodes: Array.from(state.nodes.values()),
-      links: Array.from(state.links.values()).filter((link) => state.nodes.has(link.source) && state.nodes.has(link.target))
-    };
-    graph3d.graphData(data);
-    graph2d.graphData(data);
-    renderStatus();
   }
 
-  function renderStatus(): void {
-    el.lastCursor.textContent = `cursor: ${JSON.stringify(state.cursor)}`;
-    el.lastSync.textContent = `last sync: ${new Date().toISOString()}`;
-    if (!el.principal.value.trim()) {
-      el.status.textContent = `principal required: sending default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
+  async function addNode(label: string): Promise<void> {
+    try {
+      const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
+        method: "POST",
+        headers: headers(el.principal.value),
+        body: JSON.stringify({ label, idempotencyKey: crypto.randomUUID() })
+      }, { principal: el.principal.value, transport: "fetch", debugAuth });
+      dbg("add-node:result", { ok: response.ok, status: response.status });
+    } catch (error) {
+      reportDevError(el, `add node failed: ${String(error)}`, error);
+    }
+  }
+
+  async function addLinkFromSelection(): Promise<void> {
+    const selected = Array.from(store.getState().selectedNodeIds);
+    if (selected.length !== 2) {
+      reportDevError(el, "Select exactly two nodes before creating a link.");
       return;
     }
+    try {
+      const [source, target] = selected;
+      const type = el.linkType.value.trim() || "related";
+      const response = await meshFetch(`${el.baseUrl.value}/graph/links`, {
+        method: "POST",
+        headers: headers(el.principal.value),
+        body: JSON.stringify({ source, target, type, idempotencyKey: crypto.randomUUID() })
+      }, { principal: el.principal.value, transport: "fetch", debugAuth });
+      dbg("add-link:result", { ok: response.ok, status: response.status, source, target, type });
+    } catch (error) {
+      reportDevError(el, `add link failed: ${String(error)}`, error);
+    }
   }
+
+  function setupRenderer(): void {
+    try {
+      graph3d = ForceGraph3D()(el.graph3d)
+        .nodeId("id")
+        .nodeLabel((node: unknown) => (node as GraphNode).label)
+        .linkLabel((link: unknown) => `${(link as GraphLink).type}`)
+        .linkColor((link: unknown) => colorForType((link as GraphLink).type));
+      (graph3d as any).onNodeClick((node: unknown) => {
+        const id = String((node as GraphNode).id);
+        store.toggleSelectNode(id);
+      });
+
+      graph2d = ForceGraph2D()(el.graph2d)
+        .nodeId("id")
+        .nodeLabel("label")
+        .linkColor((link: unknown) => colorForType((link as GraphLink).type));
+      (graph2d as any).onNodeClick((node: unknown) => {
+        const id = String((node as GraphNode).id);
+        store.toggleSelectNode(id);
+      });
+
+      setRendererMode("3d");
+    } catch (error) {
+      setRendererMode("fallback-json");
+      el.graph3d.innerHTML = `<pre style="margin:0;padding:8px;overflow:auto;">Renderer fallback:\n${escapeHtml(String(error))}</pre>`;
+      el.graph2d.innerHTML = "";
+      reportDevError(el, `renderer init failed: ${String(error)}`, error);
+    }
+  }
+
+  function updateSelectionUi(snapshot: GraphState): void {
+    const selected = Array.from(snapshot.selectedNodeIds);
+    if (selected.length !== 2) {
+      el.linkSelectionHint.textContent = `Select exactly two nodes in the graph (${selected.length}/2 selected).`;
+      el.addLink.disabled = true;
+      return;
+    }
+    const [fromId, toId] = selected;
+    const from = snapshot.nodesById.get(fromId)?.label ?? fromId;
+    const to = snapshot.nodesById.get(toId)?.label ?? toId;
+    el.linkSelectionHint.textContent = `Link from ${from} to ${to}`;
+    el.addLink.disabled = false;
+  }
+
+  function renderStatus(cursor: Cursor, lastSyncText: string, nodes: number, links: number): void {
+    el.lastCursor.textContent = `cursor: ${JSON.stringify(cursor)}`;
+    el.lastSync.textContent = `last sync: ${lastSyncText}`;
+    el.rendererBadge.textContent = `Renderer: ${rendererMode} | nodes=${nodes} links=${links}`;
+    if (!el.principal.value.trim()) {
+      el.status.textContent = `principal required: sending default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
+    }
+  }
+
+  function setRendererMode(mode: "3d" | "2d" | "fallback-json"): void {
+    rendererMode = mode;
+    el.rendererBadge.textContent = `Renderer: ${rendererMode}`;
+  }
+
+  function dbg(message: string, detail?: unknown): void {
+    if (!debugEnabled) return;
+    console.info("[mesh-debug]", message, detail);
+  }
+
+  container.addEventListener("DOMNodeRemoved", () => {
+    unsubscribe();
+    stopSync = true;
+  });
 }
 
 type UiElements = {
@@ -193,11 +283,15 @@ type UiElements = {
   connect: HTMLButtonElement;
   addNode: HTMLButtonElement;
   addLink: HTMLButtonElement;
+  linkType: HTMLInputElement;
+  linkSelectionHint: HTMLDivElement;
   status: HTMLDivElement;
   lastCursor: HTMLDivElement;
   lastSync: HTMLDivElement;
   graph3d: HTMLDivElement;
   graph2d: HTMLDivElement;
+  rendererBadge: HTMLDivElement;
+  devBanner: HTMLDivElement;
 };
 
 function byId(container: HTMLElement): UiElements {
@@ -208,11 +302,15 @@ function byId(container: HTMLElement): UiElements {
     connect: container.querySelector("#connect") as HTMLButtonElement,
     addNode: container.querySelector("#addNode") as HTMLButtonElement,
     addLink: container.querySelector("#addLink") as HTMLButtonElement,
+    linkType: container.querySelector("#linkType") as HTMLInputElement,
+    linkSelectionHint: container.querySelector("#linkSelectionHint") as HTMLDivElement,
     status: container.querySelector("#status") as HTMLDivElement,
     lastCursor: container.querySelector("#lastCursor") as HTMLDivElement,
     lastSync: container.querySelector("#lastSync") as HTMLDivElement,
     graph3d: container.querySelector("#graph3d") as HTMLDivElement,
-    graph2d: container.querySelector("#graph2d") as HTMLDivElement
+    graph2d: container.querySelector("#graph2d") as HTMLDivElement,
+    rendererBadge: container.querySelector("#rendererBadge") as HTMLDivElement,
+    devBanner: container.querySelector("#devBanner") as HTMLDivElement
   };
 }
 
@@ -245,6 +343,16 @@ async function meshFetch(input: string, init: RequestInit, meta: MeshFetchMeta):
 function isDebugAuthEnabled(): boolean {
   try {
     return localStorage.getItem("meshDebugAuth") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function isDebugEnabled(): boolean {
+  const mode = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV;
+  if (mode) return true;
+  try {
+    return localStorage.getItem("mesh.debug") === "1";
   } catch {
     return false;
   }
@@ -321,7 +429,7 @@ function persistCursor(storageKey: string, cursor: Cursor): void {
   localStorage.setItem(storageKey, JSON.stringify(cursor));
 }
 
-async function *parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<{ kind?: string; cursorVisible?: number; txBundle?: { graphEvents: unknown[] } }> {
+async function *parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<SyncFrame> {
   const decoder = new TextDecoder();
   const reader = body.getReader();
   let buffer = "";
@@ -342,9 +450,50 @@ async function *parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<{ kind
         ?.slice(5)
         .trim();
       if (!data) continue;
-      yield JSON.parse(data) as { kind?: string; cursorVisible?: number; txBundle?: { graphEvents: unknown[] } };
+      yield JSON.parse(data) as SyncFrame;
     }
   }
+}
+
+function extractGraphEventsFromTxBundles(txBundles: SyncTxBundle[]): GraphEvent[] {
+  const output: GraphEvent[] = [];
+  for (const item of txBundles) {
+    const graphEvents = item.txBundle?.graphEvents ?? [];
+    for (const raw of graphEvents) {
+      const event = asGraphEvent(raw);
+      if (event) output.push(event);
+    }
+  }
+  return output;
+}
+
+function asGraphEvent(value: unknown): GraphEvent | null {
+  if (!value || typeof value !== "object") return null;
+  const maybe = value as GraphEvent;
+  if (typeof maybe.type !== "string") return null;
+  return maybe;
+}
+
+function reportDevError(el: Pick<UiElements, "devBanner">, message: string, error?: unknown): void {
+  console.error("[mesh-explorer]", message, error);
+  if (!isDebugEnabled()) return;
+  el.devBanner.style.display = "block";
+  el.devBanner.textContent = message;
+}
+
+type MeshDebugApi = {
+  selectNodes: (ids: string[]) => void;
+};
+
+function installTestHook(store: GraphStore): void {
+  const mode = (import.meta as ImportMeta & { env?: { MODE?: string } }).env?.MODE;
+  if (mode !== "test" && !isDebugEnabled()) return;
+  const meshDebug: MeshDebugApi = {
+    selectNodes(ids: string[]) {
+      store.replaceSelection(ids);
+    }
+  };
+  (window as Window & { __meshDebug?: MeshDebugApi }).__meshDebug = meshDebug;
 }
 
 function wait(ms: number): Promise<void> {
