@@ -22,8 +22,8 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     const server: MeshGraphServerHandle = await startMeshGraphServer({ storageDir, port: 0 });
     cleanups.push(async () => server.close());
 
-    await createNode(server.url, "alice", "Node A");
-    await createNode(server.url, "alice", "Node B");
+    await createNode(server.url, "alice", "test01");
+    await createNode(server.url, "alice", "test02");
 
     const store = createGraphStore();
     const cursor = { metaSeq: 0, graphSeq: 0 };
@@ -34,8 +34,11 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     store.applyGraphEvents(graphEvents);
     store.applyGraphEvents(graphEvents);
 
-    const nodeIds = Array.from(store.getState().nodesById.keys());
-    expect(nodeIds.length).toBe(2);
+    const nodes = Array.from(store.getState().nodesById.values());
+    expect(nodes.length).toBe(2);
+    expect(nodes.map((node) => node.label).sort()).toEqual(["test01", "test02"]);
+
+    const nodeIds = nodes.map((node) => node.id);
     expect(nodeIds[0]).not.toBe(nodeIds[1]);
 
     store.replaceSelection(nodeIds.slice(0, 2));

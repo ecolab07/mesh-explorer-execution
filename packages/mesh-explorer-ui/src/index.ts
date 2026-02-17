@@ -1,4 +1,3 @@
-import ForceGraph3D from "react-force-graph-3d";
 import ForceGraph2D from "force-graph";
 import { createGraphStore, type GraphEvent, type GraphLink, type GraphNode, type GraphState, type GraphStore } from "./graphStore.js";
 
@@ -54,9 +53,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   const debugEnabled = isDebugEnabled();
   const store = createGraphStore();
   let stopSync = false;
-  let graph3d: any = null;
   let graph2d: any = null;
-  let rendererMode: "3d" | "2d" | "fallback-json" = "3d";
+  let rendererMode: "2d" | "fallback-json" = "2d";
   let lastSync = "n/a";
 
   setupRenderer();
@@ -72,7 +70,6 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       nodes: Array.from(snapshot.nodesById.values()),
       links: Array.from(snapshot.linksById.values()).filter((link: GraphLink) => snapshot.nodesById.has(link.source) && snapshot.nodesById.has(link.target))
     };
-    graph3d?.graphData(data);
     graph2d?.graphData(data);
     updateSelectionUi(snapshot);
     renderStatus(snapshot.cursor, lastSync, data.nodes.length, data.links.length);
@@ -209,30 +206,27 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   function setupRenderer(): void {
     try {
-      graph3d = ForceGraph3D()(el.graph3d)
-        .nodeId("id")
-        .nodeLabel((node: unknown) => (node as GraphNode).label)
-        .linkLabel((link: unknown) => `${(link as GraphLink).type}`)
-        .linkColor((link: unknown) => colorForType((link as GraphLink).type));
-      (graph3d as any).onNodeClick((node: unknown) => {
-        const id = String((node as GraphNode).id);
-        store.toggleSelectNode(id);
-      });
+      el.graph3d.style.display = "none";
+      reportDevError(el, "3D renderer disabled (react-force-graph-3d is a React component; imperative 3D not wired).");
 
       graph2d = ForceGraph2D()(el.graph2d)
         .nodeId("id")
         .nodeLabel("label")
         .linkColor((link: unknown) => colorForType((link as GraphLink).type));
-      (graph2d as any).onNodeClick((node: unknown) => {
-        const id = String((node as GraphNode).id);
-        store.toggleSelectNode(id);
-      });
+      if (typeof (graph2d as { onNodeClick?: unknown }).onNodeClick === "function") {
+        (graph2d as any).onNodeClick((node: unknown) => {
+          const id = String((node as GraphNode).id);
+          store.toggleSelectNode(id);
+        });
+      } else {
+        reportDevError(el, "2D renderer onNodeClick API unavailable; node click selection disabled.");
+      }
 
-      setRendererMode("3d");
+      setRendererMode("2d");
     } catch (error) {
       setRendererMode("fallback-json");
-      el.graph3d.innerHTML = `<pre style="margin:0;padding:8px;overflow:auto;">Renderer fallback:\n${escapeHtml(String(error))}</pre>`;
-      el.graph2d.innerHTML = "";
+      el.graph3d.style.display = "none";
+      el.graph2d.innerHTML = `<pre style="margin:0;padding:8px;overflow:auto;">Renderer fallback:\n${escapeHtml(String(error))}</pre>`;
       reportDevError(el, `renderer init failed: ${String(error)}`, error);
     }
   }
@@ -260,7 +254,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   }
 
-  function setRendererMode(mode: "3d" | "2d" | "fallback-json"): void {
+  function setRendererMode(mode: "2d" | "fallback-json"): void {
     rendererMode = mode;
     el.rendererBadge.textContent = `Renderer: ${rendererMode}`;
   }
