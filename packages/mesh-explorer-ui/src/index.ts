@@ -16,6 +16,8 @@ type SyncPollPayload = {
   cursorAfter?: Cursor;
 };
 
+type ConnectionStatus = "disconnected" | "connecting" | "connected" | "connected (poll-only)" | "reconnecting";
+
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
   container.innerHTML = `
@@ -52,10 +54,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   const debugAuth = isDebugAuthEnabled();
   const debugEnabled = isDebugEnabled();
   const store = createGraphStore();
-  let stopSync = false;
+  let syncSession = 0;
   let graph2d: any = null;
   let rendererMode: "2d" | "fallback-json" = "2d";
   let lastSync = "n/a";
+  let connectionStatus: ConnectionStatus = "disconnected";
+
+  setConnectionStatus("disconnected");
 
   setupRenderer();
   persistPrincipal(el.principal.value);
@@ -76,10 +81,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   });
 
   el.connect.onclick = () => {
-    stopSync = true;
-    stopSync = false;
-    el.status.textContent = "connected";
-    void connectAndSync();
+    syncSession += 1;
+    void connectAndSync(syncSession);
   };
 
   el.addNode.onclick = () => {
@@ -94,25 +97,30 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   };
 
   installTestHook(store);
-  void connectAndSync();
+  syncSession += 1;
+  void connectAndSync(syncSession);
 
-  async function connectAndSync(): Promise<void> {
+  async function connectAndSync(sessionId: number): Promise<void> {
+    setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
     const savedCursor = readCursor(storageKey) ?? { metaSeq: 0, graphSeq: 0 };
-    const replayResult = await pollReplayFromCursor(savedCursor);
+    const replayResult = await pollReplayFromCursor(savedCursor, sessionId);
+    if (sessionId !== syncSession) return;
     if (savedCursor.graphSeq > 0 && replayResult.graphEventsApplied === 0 && store.getState().nodesById.size === 0) {
-      const fallbackReplay = await pollReplayFromCursor({ metaSeq: 0, graphSeq: 0 });
+      const fallbackReplay = await pollReplayFromCursor({ metaSeq: 0, graphSeq: 0 }, sessionId);
+      if (sessionId !== syncSession) return;
       store.setCursor(fallbackReplay.cursor);
       persistCursor(storageKey, fallbackReplay.cursor);
     } else {
       store.setCursor(replayResult.cursor);
       persistCursor(storageKey, replayResult.cursor);
     }
-    void subscribeLoop();
+    setConnectionStatus("connected (poll-only)");
+    void subscribeLoop(sessionId);
 
-    async function subscribeLoop(): Promise<void> {
-      while (!stopSync) {
+    async function subscribeLoop(activeSessionId: number): Promise<void> {
+      while (activeSessionId === syncSession) {
         try {
           const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
           const response = await meshFetch(url, { headers: headers(normalizedPrincipal) }, {
@@ -121,11 +129,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             debugAuth
           });
           if (!response.body) {
+            setConnectionStatus("reconnecting");
             await wait(300);
             continue;
           }
+          setConnectionStatus("connected");
           for await (const data of parseSse(response.body)) {
-            if (stopSync) return;
+            if (activeSessionId !== syncSession) return;
             if (data.kind === "heartbeat") {
               dbg("sync:heartbeat", data);
               continue;
@@ -145,25 +155,26 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
               continue;
             }
             if (data.kind === "cursor" && typeof data.cursorVisible === "number") {
-              const next = { ...store.getState().cursor, graphSeq: Math.max(store.getState().cursor.graphSeq, data.cursorVisible) };
-              store.setCursor(next);
-              persistCursor(storageKey, next);
-              renderStatus(next, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
+              renderStatus(store.getState().cursor, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
             }
           }
+          if (activeSessionId === syncSession) {
+            setConnectionStatus("reconnecting");
+          }
         } catch (error) {
+          setConnectionStatus("reconnecting");
           reportDevError(el, `sync subscribe failed: ${String(error)}`, error);
           await wait(500);
         }
       }
     }
 
-    async function pollReplayFromCursor(initialCursor: Cursor): Promise<{ cursor: Cursor; graphEventsApplied: number }> {
+    async function pollReplayFromCursor(initialCursor: Cursor, activeSessionId: number): Promise<{ cursor: Cursor; graphEventsApplied: number }> {
       let cursor = initialCursor;
       let graphEventsApplied = 0;
       try {
         const limits = encodeURIComponent(JSON.stringify({ graph: 128, meta: 32 }));
-        while (!stopSync) {
+        while (activeSessionId === syncSession) {
           const encodedCursor = encodeURIComponent(JSON.stringify(cursor));
           const response = await meshFetch(
             `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:poll?cursor=${encodedCursor}&limits=${limits}`,
@@ -272,12 +283,18 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   }
 
   function renderStatus(cursor: Cursor, lastSyncText: string, nodes: number, links: number): void {
+    el.status.textContent = connectionStatus;
     el.lastCursor.textContent = `cursor: ${JSON.stringify(cursor)}`;
     el.lastSync.textContent = `last sync: ${lastSyncText}`;
     el.rendererBadge.textContent = `Renderer: ${rendererMode} | nodes=${nodes} links=${links}`;
     if (!el.principal.value.trim()) {
       el.status.textContent = `principal required: sending default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
     }
+  }
+
+  function setConnectionStatus(next: ConnectionStatus): void {
+    connectionStatus = next;
+    renderStatus(store.getState().cursor, lastSync, store.getState().nodesById.size, store.getState().linksById.size);
   }
 
   function setRendererMode(mode: "2d" | "fallback-json"): void {
@@ -292,7 +309,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   container.addEventListener("DOMNodeRemoved", () => {
     unsubscribe();
-    stopSync = true;
+    syncSession += 1;
+    setConnectionStatus("disconnected");
   });
 }
 
