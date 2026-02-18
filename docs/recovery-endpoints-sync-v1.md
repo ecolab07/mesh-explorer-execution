@@ -15,9 +15,12 @@
 
 ## Poll vs Subscribe
 
-- Use `sync:subscribe` for low-latency deltas.
-- Always keep a durable local cursor (`metaSeq`, `graphSeq`).
-- On reconnect, uncertainty, duplicate ambiguity, or cursor mismatch, run `sync:poll` from the durable cursor.
+- `sync:poll` is the authoritative recovery path and must return backlog from the provided event cursor `{metaSeq,graphSeq}`.
+- `sync:subscribe` is best-effort low-latency acceleration and may replay visible tx bundles from `from` (principal-visible tx cursor), but replay completeness is not guaranteed.
+- Cursor families are different by design:
+  - `sync:poll` / `events:read`: event-sequence cursors (`metaSeq`, `graphSeq`).
+  - `sync:subscribe` / `sync:pull`: principal-visible transaction cursor (`from`, `cursorVisible`).
+- Always keep a durable local event cursor (`metaSeq`, `graphSeq`) for recovery and call `sync:poll` on reconnect, uncertainty, duplicate ambiguity, or cursor mismatch.
 
 ## Gap / mismatch handling
 

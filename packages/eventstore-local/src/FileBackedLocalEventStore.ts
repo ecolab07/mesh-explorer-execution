@@ -148,6 +148,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   }
 
   async readTx(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null> {
+    await this.loadState();
     const space = this.getSpace(graphSpaceId);
     if (!space) return null;
     recordTxIndexLookup();
@@ -180,6 +181,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     _mode: ReadMode,
     options?: ReadRangeOptions
   ): Promise<EventEnvelope[]> {
+    await this.loadState();
     const space = this.getSpace(graphSpaceId);
     if (!space) return [];
     recordRangeRead();
@@ -210,11 +212,13 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   }
 
   async readTxIndex(graphSpaceId: string): Promise<TxIndexEntry[]> {
+    await this.loadState();
     const space = this.getSpace(graphSpaceId);
     return space ? [...space.txIndex] : [];
   }
 
   async getCursorHead(graphSpaceId: string): Promise<Cursor> {
+    await this.loadState();
     const space = this.getSpace(graphSpaceId);
     return { metaSeq: space?.meta.length ?? 0, graphSeq: space?.graph.length ?? 0 };
   }
@@ -225,6 +229,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     limit: number,
     principal?: PrincipalContext
   ): Promise<{ txs: Array<{ txId: TxId; txIndex: number; meta: EventEnvelope[]; graph: EventEnvelope[] }>; cursor: number }> {
+    await this.loadState();
     const space = this.getSpace(graphSpaceId);
     if (!space) return { txs: [], cursor: fromPrincipalCursorExclusive };
 
@@ -239,6 +244,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   }
 
   async getPrincipalCursorHead(graphSpaceId: string, principal?: PrincipalContext): Promise<number> {
+    await this.loadState();
     const space = this.getSpace(graphSpaceId);
     if (!space) return 0;
     const txs = buildTxBundles(space.txIndex, space.meta, space.graph);
