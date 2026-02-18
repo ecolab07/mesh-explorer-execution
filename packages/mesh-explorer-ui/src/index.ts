@@ -12,6 +12,11 @@ import { compareCursor, persistCursorSafely, rotateAbortController } from "./syn
 import { isStoreEmpty, nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
+import {
+  SUBSCRIBE_ERROR_LOG_THROTTLE_MS,
+  SUBSCRIBE_RETRY_DELAY_MS,
+  isSyncDebugEnabled
+} from "./syncConfig.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -27,6 +32,7 @@ type SyncPollPayload = {
   graph?: Array<{ payload?: unknown }>;
   cursorAfter?: Cursor;
 };
+
 
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
@@ -63,6 +69,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   const el = byId(container);
   const debugAuth = isDebugAuthEnabled();
   const debugEnabled = isDebugEnabled();
+  const verboseSyncErrors = isSyncDebugEnabled();
   const store = createGraphStore();
   let syncSession = 0;
   let graph2d: any = null;
@@ -135,6 +142,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     void subscribeLoop(sessionId, activeAbort.signal);
 
     async function subscribeLoop(activeSessionId: number, signal: AbortSignal): Promise<void> {
+      let retryDelayMs = SUBSCRIBE_RETRY_DELAY_MS;
+      let lastSubscribeErrorLogAt = 0;
       while (activeSessionId === syncSession) {
         try {
           const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
@@ -145,10 +154,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           });
           if (!response.body) {
             setConnectionStatus("reconnecting");
-            await wait(300);
+            await wait(retryDelayMs);
             continue;
           }
           setConnectionStatus("connected");
+          retryDelayMs = SUBSCRIBE_RETRY_DELAY_MS;
           for await (const data of parseSse(response.body)) {
             if (activeSessionId !== syncSession) return;
             if (data.kind === "heartbeat") {
@@ -185,8 +195,15 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         } catch (error) {
           if (signal.aborted) return;
           setConnectionStatus("reconnecting");
-          reportDevError(el, `sync subscribe failed: ${String(error)}`, error);
-          await wait(500);
+          const now = Date.now();
+          const shouldLog =
+            verboseSyncErrors ||
+            now - lastSubscribeErrorLogAt >= SUBSCRIBE_ERROR_LOG_THROTTLE_MS;
+          if (shouldLog) {
+            reportDevError(el, `sync subscribe failed: ${String(error)}`, error);
+            lastSubscribeErrorLogAt = now;
+          }
+          await wait(retryDelayMs);
         }
       }
     }
