@@ -17,6 +17,8 @@ import {
   isSyncDebugEnabled
 } from "./syncConfig.js";
 import {
+  computeGraphBounds,
+  fitCameraToBounds,
   GraphCanvas2D,
   type CameraState,
   type CanvasUiState,
@@ -56,6 +58,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         <div id="lastSync">last sync: n/a</div>
         <hr/>
         <button id="addNode">Add node</button>
+        <button id="fitGraph" style="margin-left:8px;">Fit</button>
         <div style="margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:8px;">
           <div><strong>Create link</strong></div>
           <label>type <input id="linkType" style="width:100%" value="related"/></label>
@@ -79,6 +82,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let rendererMode: "canvas-2d" | "fallback-json" = "canvas-2d";
   let activeAbort: AbortController | null = null;
   const localPositions = new Map<string, Vec2>();
+  const pendingMoveCommits = new Map<string, Vec2>();
+  let hasUserMovedCamera = false;
+  let autoFitApplied = false;
 
   const uiState: CanvasUiState = {
     camera: { x: -280, y: -180, zoom: 1, minZoom: 0.2, maxZoom: 3.5 },
@@ -105,6 +111,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       links: Array.from(snapshot.linksById.values()).filter((link: GraphLink) => snapshot.nodesById.has(link.source) && snapshot.nodesById.has(link.target))
     };
     const positionedNodes = materializeNodePositions(data.nodes);
+    resolvePendingMoveCommit(positionedNodes);
+    if (!hasUserMovedCamera && !autoFitApplied && positionedNodes.length > 0) {
+      fitCameraToCurrentGraph(positionedNodes);
+      autoFitApplied = true;
+    }
     canvasRenderer?.update({ nodes: positionedNodes, links: data.links, selectedNodeIds: snapshot.selectedNodeIds }, uiState);
     updateSelectionUi(snapshot);
     renderStatus(snapshot, positionedNodes.length, data.links.length);
@@ -121,6 +132,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     dbg("add-node:submit", { label });
     void addNode(label, cameraCenter(uiState.camera));
   };
+
+  el.fitGraph.onclick = () => fitCameraToCurrentGraph(materializeNodePositions(Array.from(store.getState().nodesById.values())));
 
   installTestHook(store);
   syncSession += 1;
@@ -266,8 +279,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   }
 
   async function commitNodeMove(overlays: Map<string, Vec2>): Promise<boolean> {
-    const previous = new Map(localPositions);
-    for (const [id, position] of overlays) localPositions.set(id, position);
+    for (const [id, position] of overlays) {
+      localPositions.set(id, position);
+      pendingMoveCommits.set(id, position);
+    }
     canvasRenderer?.update({
       nodes: materializeNodePositions(Array.from(store.getState().nodesById.values())),
       links: Array.from(store.getState().linksById.values()),
@@ -291,16 +306,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           })
         }, { principal: el.principal.value, transport: "fetch", debugAuth });
         if (!response.ok) {
-          localPositions.clear();
-          for (const [key, value] of previous) localPositions.set(key, value);
+          rollbackPending(overlays);
           reportDevError(el, `move rejected: ${response.status}`);
           return false;
         }
       }
       return true;
     } catch (error) {
-      localPositions.clear();
-      for (const [key, value] of previous) localPositions.set(key, value);
+      rollbackPending(overlays);
       reportDevError(el, `move failed: ${String(error)}`, error);
       return false;
     }
@@ -325,6 +338,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           void createLinkFromDraft(source, target);
         },
         onMoveCommit: commitNodeMove
+        ,
+        onCameraChange: () => {
+          hasUserMovedCamera = true;
+        },
+        onFitRequest: () => {
+          fitCameraToCurrentGraph(materializeNodePositions(Array.from(store.getState().nodesById.values())));
+        }
       });
       setRendererMode("canvas-2d");
     } catch (error) {
@@ -339,12 +359,52 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     for (const node of nodes) {
       const metadataPos = readMetadataPosition(node);
       const fromLocal = localPositions.get(node.id);
-      const position = metadataPos ?? fromLocal ?? defaultPosition(index);
+      const pendingPos = pendingMoveCommits.get(node.id);
+      const position = pendingPos ?? metadataPos ?? fromLocal ?? defaultPosition(index);
       localPositions.set(node.id, position);
       output.push({ ...node, position });
       index += 1;
     }
     return output;
+  }
+
+  function rollbackPending(overlays: Map<string, Vec2>): void {
+    for (const [id] of overlays) {
+      pendingMoveCommits.delete(id);
+      const canonical = store.getState().nodesById.get(id);
+      const canonicalPos = canonical ? readMetadataPosition(canonical) : null;
+      if (canonicalPos) {
+        localPositions.set(id, canonicalPos);
+      } else {
+        localPositions.delete(id);
+      }
+      uiState.overlayPositions.delete(id);
+    }
+  }
+
+  function resolvePendingMoveCommit(positionedNodes: PositionedNode[]): void {
+    for (const node of positionedNodes) {
+      const pending = pendingMoveCommits.get(node.id);
+      const canonical = readMetadataPosition(node);
+      if (!pending || !canonical) continue;
+      if (canonical.x === pending.x && canonical.y === pending.y) {
+        pendingMoveCommits.delete(node.id);
+        uiState.overlayPositions.delete(node.id);
+        localPositions.set(node.id, canonical);
+      }
+    }
+  }
+
+  function fitCameraToCurrentGraph(nodes: PositionedNode[]): void {
+    const bounds = computeGraphBounds(nodes);
+    if (!bounds) return;
+    const rect = el.graphCanvas.getBoundingClientRect();
+    uiState.camera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12);
+    canvasRenderer?.update({
+      nodes,
+      links: Array.from(store.getState().linksById.values()),
+      selectedNodeIds: store.getState().selectedNodeIds
+    }, uiState);
   }
 
   function updateSelectionUi(snapshot: GraphState): void {
@@ -422,6 +482,7 @@ type UiElements = {
   principal: HTMLInputElement;
   connect: HTMLButtonElement;
   addNode: HTMLButtonElement;
+  fitGraph: HTMLButtonElement;
   linkType: HTMLInputElement;
   linkSelectionHint: HTMLDivElement;
   status: HTMLDivElement;
@@ -439,6 +500,7 @@ function byId(container: HTMLElement): UiElements {
     principal: container.querySelector("#principal") as HTMLInputElement,
     connect: container.querySelector("#connect") as HTMLButtonElement,
     addNode: container.querySelector("#addNode") as HTMLButtonElement,
+    fitGraph: container.querySelector("#fitGraph") as HTMLButtonElement,
     linkType: container.querySelector("#linkType") as HTMLInputElement,
     linkSelectionHint: container.querySelector("#linkSelectionHint") as HTMLDivElement,
     status: container.querySelector("#status") as HTMLDivElement,
