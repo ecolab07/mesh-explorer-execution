@@ -86,6 +86,7 @@ const DEFAULT_LIMIT_BYTES = 128 * 1024;
 const DEFAULT_POLL_INTERVAL_MS = 15;
 const DEFAULT_HEARTBEAT_EVERY_MS = 200;
 const utf8Encoder = new TextEncoder();
+const DEBUG_SYNC_ENABLED = process.env.MESH_DEBUG_SYNC === "1";
 
 export class LocalSyncGateway {
   constructor(
@@ -176,6 +177,11 @@ export class LocalSyncGateway {
     options: SyncSubscribeOptions = {}
   ): AsyncIterable<SyncFrame> {
     this.assertGraphSpaceScope(graphSpaceId);
+    debugSync("sync:subscribe:start", {
+      graphSpaceId,
+      principalId: principal.principalId,
+      fromCursorVisible
+    });
 
     const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
     const heartbeatEveryMs = Math.max(pollIntervalMs, options.heartbeatEveryMs ?? DEFAULT_HEARTBEAT_EVERY_MS);
@@ -186,6 +192,13 @@ export class LocalSyncGateway {
     while (true) {
       const pulled = await this.syncPull(graphSpaceId, principal, cursor, options);
       if (pulled.txBundlesVisible.length > 0) {
+        debugSync("sync:subscribe:txBundles", {
+          graphSpaceId,
+          principalId: principal.principalId,
+          cursorBefore: cursor,
+          txBundlesVisibleCount: pulled.txBundlesVisible.length,
+          cursorAfterVisible: pulled.cursorAfterVisible
+        });
         yield {
           kind: "txBundles",
           txBundlesVisible: pulled.txBundlesVisible
@@ -200,6 +213,11 @@ export class LocalSyncGateway {
 
       const now = Date.now();
       if (now - lastHeartbeatAt >= heartbeatEveryMs) {
+        debugSync("sync:subscribe:heartbeat", {
+          graphSpaceId,
+          principalId: principal.principalId,
+          cursorVisible: cursor
+        });
         yield {
           kind: "heartbeat",
           cursorVisible: cursor
@@ -265,7 +283,7 @@ export class LocalSyncGateway {
       limitBytes: options.graphLimitBytes
     });
 
-    return {
+    const result = {
       meta,
       graph,
       cursorAfter: {
@@ -273,6 +291,18 @@ export class LocalSyncGateway {
         graphSeq: graph[graph.length - 1]?.seq ?? cursor.graphSeq
       }
     };
+
+    debugSync("sync:poll", {
+      graphSpaceId,
+      principalId: principal.principalId,
+      cursor,
+      cursorAfter: result.cursorAfter,
+      metaCount: result.meta.length,
+      graphCount: result.graph.length,
+      options
+    });
+
+    return result;
   }
 
   private assertGraphSpaceScope(graphSpaceId: string): void {
@@ -305,6 +335,13 @@ export class LocalSyncGateway {
 
     return { meta, graph };
   }
+}
+
+function debugSync(message: string, details: Record<string, unknown>): void {
+  if (!DEBUG_SYNC_ENABLED) {
+    return;
+  }
+  process.stdout.write(`[sync-local] ${message} ${JSON.stringify(details)}\n`);
 }
 
 function sleep(ms: number): Promise<void> {
