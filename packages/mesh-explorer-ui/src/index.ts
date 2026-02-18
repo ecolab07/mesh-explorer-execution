@@ -1,4 +1,3 @@
-import ForceGraph2D from "force-graph";
 import {
   createGraphStore,
   type ConnectionStatus,
@@ -17,6 +16,12 @@ import {
   SUBSCRIBE_RETRY_DELAY_MS,
   isSyncDebugEnabled
 } from "./syncConfig.js";
+import {
+  GraphCanvas2D,
+  type CameraState,
+  type CanvasUiState,
+  type Vec2
+} from "./graphCanvas2d.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -33,6 +38,7 @@ type SyncPollPayload = {
   cursorAfter?: Cursor;
 };
 
+type PositionedNode = GraphNode & { position: Vec2 };
 
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
@@ -53,14 +59,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         <div style="margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:8px;">
           <div><strong>Create link</strong></div>
           <label>type <input id="linkType" style="width:100%" value="related"/></label>
-          <div id="linkSelectionHint" style="margin-top:6px;font-size:12px;color:#555;">Select exactly two nodes in the graph.</div>
-          <button id="addLink" style="margin-top:6px;" disabled>Create link</button>
+          <div id="linkSelectionHint" style="margin-top:6px;font-size:12px;color:#555;">Click a node, then click another node to create a link. Escape cancels draft.</div>
         </div>
         <div id="devBanner" style="display:none;margin-top:8px;padding:6px;border:1px solid #f59e0b;background:#fffbeb;border-radius:6px;font-size:12px;"></div>
       </aside>
-      <main style="position:relative;display:grid;grid-template-rows:1fr 320px;gap:8px;padding:8px;">
-        <div id="graph3d" style="border:1px solid #ddd;"></div>
-        <div id="graph2d" style="border:1px solid #ddd;"></div>
+      <main style="position:relative;display:grid;grid-template-rows:1fr;gap:8px;padding:8px;">
+        <canvas id="graphCanvas" style="border:1px solid #ddd;width:100%;height:100%;touch-action:none;"></canvas>
         <div id="rendererBadge" style="position:absolute;top:16px;right:16px;padding:4px 8px;border-radius:999px;background:#111827;color:white;font-size:12px;opacity:0.85;"></div>
       </main>
     </section>
@@ -72,12 +76,21 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   const verboseSyncErrors = isSyncDebugEnabled();
   const store = createGraphStore();
   let syncSession = 0;
-  let graph2d: any = null;
-  let rendererMode: "2d" | "fallback-json" = "2d";
+  let rendererMode: "canvas-2d" | "fallback-json" = "canvas-2d";
   let activeAbort: AbortController | null = null;
+  const localPositions = new Map<string, Vec2>();
+
+  const uiState: CanvasUiState = {
+    camera: { x: -280, y: -180, zoom: 1, minZoom: 0.2, maxZoom: 3.5 },
+    hoveredNodeId: null,
+    edgeDraft: null,
+    overlayPositions: new Map(),
+    dragSelectionRect: null
+  };
+
+  let canvasRenderer: GraphCanvas2D | null = null;
 
   setConnectionStatus("disconnected");
-
   setupRenderer();
   persistPrincipal(el.principal.value);
   el.principal.onchange = () => {
@@ -91,9 +104,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       nodes: Array.from(snapshot.nodesById.values()),
       links: Array.from(snapshot.linksById.values()).filter((link: GraphLink) => snapshot.nodesById.has(link.source) && snapshot.nodesById.has(link.target))
     };
-    graph2d?.graphData(data);
+    const positionedNodes = materializeNodePositions(data.nodes);
+    canvasRenderer?.update({ nodes: positionedNodes, links: data.links, selectedNodeIds: snapshot.selectedNodeIds }, uiState);
     updateSelectionUi(snapshot);
-    renderStatus(snapshot, data.nodes.length, data.links.length);
+    renderStatus(snapshot, positionedNodes.length, data.links.length);
   });
 
   el.connect.onclick = () => {
@@ -105,11 +119,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const label = prompt("Node label", "new node") ?? "";
     if (!label) return;
     dbg("add-node:submit", { label });
-    void addNode(label);
-  };
-
-  el.addLink.onclick = () => {
-    void addLinkFromSelection();
+    void addNode(label, cameraCenter(uiState.camera));
   };
 
   installTestHook(store);
@@ -161,10 +171,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           retryDelayMs = SUBSCRIBE_RETRY_DELAY_MS;
           for await (const data of parseSse(response.body)) {
             if (activeSessionId !== syncSession) return;
-            if (data.kind === "heartbeat") {
-              dbg("sync:heartbeat", data);
-              continue;
-            }
+            if (data.kind === "heartbeat") continue;
             if (data.kind === "txBundles") {
               const txBundles = data.txBundlesVisible ?? [];
               const cursorFromBundles = readCursorFromTxBundles(txBundles);
@@ -172,33 +179,21 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
                 const next = { ...store.getState().cursor, graphSeq: cursorFromBundles };
                 const advanced = applyCursorIfAdvanced(storageKey, next, "sse");
                 if (advanced) {
-                  const events = extractGraphEventsFromTxBundles(txBundles);
-                  store.applyGraphEvents(events);
+                  store.applyGraphEvents(extractGraphEventsFromTxBundles(txBundles));
                   setLastSyncNow();
-                  dbg("sync:txBundles", { count: events.length });
                 }
                 continue;
               }
-              const events = extractGraphEventsFromTxBundles(txBundles);
-              store.applyGraphEvents(events);
+              store.applyGraphEvents(extractGraphEventsFromTxBundles(txBundles));
               setLastSyncNow();
-              dbg("sync:txBundles:no-cursor", { count: events.length });
-              continue;
-            }
-            if (data.kind === "cursor" && typeof data.cursorVisible === "number") {
-              renderStatus(store.getState(), store.getState().nodesById.size, store.getState().linksById.size);
             }
           }
-          if (activeSessionId === syncSession) {
-            setConnectionStatus("reconnecting");
-          }
+          if (activeSessionId === syncSession) setConnectionStatus("reconnecting");
         } catch (error) {
           if (signal.aborted) return;
           setConnectionStatus("reconnecting");
           const now = Date.now();
-          const shouldLog =
-            verboseSyncErrors ||
-            now - lastSubscribeErrorLogAt >= SUBSCRIBE_ERROR_LOG_THROTTLE_MS;
+          const shouldLog = verboseSyncErrors || now - lastSubscribeErrorLogAt >= SUBSCRIBE_ERROR_LOG_THROTTLE_MS;
           if (shouldLog) {
             reportDevError(el, `sync subscribe failed: ${String(error)}`, error);
             lastSubscribeErrorLogAt = now;
@@ -223,26 +218,16 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             return { cursor, graphEventsApplied };
           }
           const payload = (await response.json()) as SyncPollPayload;
-          const graphEvents = (payload.graph ?? [])
-            .map((entry) => asGraphEvent(entry.payload))
-            .filter((event): event is GraphEvent => event !== null);
+          const graphEvents = (payload.graph ?? []).map((entry) => asGraphEvent(entry.payload)).filter((event): event is GraphEvent => event !== null);
           const nextCursor = payload.cursorAfter ?? cursor;
           graphEventsApplied += graphEvents.length;
           store.applyGraphEvents(graphEvents);
           if (graphEvents.length > 0) setLastSyncNow();
 
-          const metaCount = payload.meta?.length ?? 0;
-          const graphCount = payload.graph?.length ?? 0;
           const nextMonotonic = nextMonotonicCursor(cursor, nextCursor);
           const cursorUnchanged = cursorEq(nextMonotonic, cursor);
-          if (!cursorEq(nextCursor, nextMonotonic)) {
-            dbg("sync:poll:cursor-regression", { current: cursor, candidate: nextCursor });
-          }
           cursor = nextMonotonic;
-
-          if ((metaCount === 0 && graphCount === 0) || cursorUnchanged) {
-            break;
-          }
+          if ((payload.meta?.length ?? 0) === 0 && (payload.graph?.length ?? 0) === 0 || cursorUnchanged) break;
         }
         return { cursor, graphEventsApplied };
       } catch (error) {
@@ -253,80 +238,134 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   }
 
-  async function addNode(label: string): Promise<void> {
+  async function addNode(label: string, position: Vec2): Promise<void> {
     try {
       const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
         method: "POST",
         headers: headers(el.principal.value),
-        body: JSON.stringify({ label, idempotencyKey: crypto.randomUUID() })
+        body: JSON.stringify({ label, metadata: { position }, idempotencyKey: crypto.randomUUID() })
       }, { principal: el.principal.value, transport: "fetch", debugAuth });
-      dbg("add-node:result", { ok: response.ok, status: response.status });
+      if (!response.ok) reportDevError(el, `add node failed: ${response.status}`);
     } catch (error) {
       reportDevError(el, `add node failed: ${String(error)}`, error);
     }
   }
 
-  async function addLinkFromSelection(): Promise<void> {
-    const selected = Array.from(store.getState().selectedNodeIds);
-    if (selected.length !== 2) {
-      reportDevError(el, "Select exactly two nodes before creating a link.");
-      return;
-    }
+  async function createLinkFromDraft(source: string, target: string): Promise<void> {
+    const type = el.linkType.value.trim() || "related";
     try {
-      const [source, target] = selected;
-      const type = el.linkType.value.trim() || "related";
       const response = await meshFetch(`${el.baseUrl.value}/graph/links`, {
         method: "POST",
         headers: headers(el.principal.value),
         body: JSON.stringify({ source, target, type, idempotencyKey: crypto.randomUUID() })
       }, { principal: el.principal.value, transport: "fetch", debugAuth });
-      dbg("add-link:result", { ok: response.ok, status: response.status, source, target, type });
+      if (!response.ok) reportDevError(el, `create link rejected: ${response.status}`);
     } catch (error) {
       reportDevError(el, `add link failed: ${String(error)}`, error);
     }
   }
 
+  async function commitNodeMove(overlays: Map<string, Vec2>): Promise<boolean> {
+    const previous = new Map(localPositions);
+    for (const [id, position] of overlays) localPositions.set(id, position);
+    canvasRenderer?.update({
+      nodes: materializeNodePositions(Array.from(store.getState().nodesById.values())),
+      links: Array.from(store.getState().linksById.values()),
+      selectedNodeIds: store.getState().selectedNodeIds
+    }, uiState);
+
+    try {
+      const targets = Array.from(overlays.entries());
+      for (const [id, position] of targets) {
+        const canonical = store.getState().nodesById.get(id);
+        if (!canonical) continue;
+        const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
+          method: "POST",
+          headers: headers(el.principal.value),
+          body: JSON.stringify({
+            id,
+            label: canonical.label,
+            level: canonical.level,
+            metadata: { ...(canonical.metadata ?? {}), position },
+            idempotencyKey: crypto.randomUUID()
+          })
+        }, { principal: el.principal.value, transport: "fetch", debugAuth });
+        if (!response.ok) {
+          localPositions.clear();
+          for (const [key, value] of previous) localPositions.set(key, value);
+          reportDevError(el, `move rejected: ${response.status}`);
+          return false;
+        }
+      }
+      return true;
+    } catch (error) {
+      localPositions.clear();
+      for (const [key, value] of previous) localPositions.set(key, value);
+      reportDevError(el, `move failed: ${String(error)}`, error);
+      return false;
+    }
+  }
+
   function setupRenderer(): void {
     try {
-      el.graph3d.style.display = "none";
-      reportDevError(el, "3D renderer disabled (react-force-graph-3d is a React component; imperative 3D not wired).");
-
-      graph2d = ForceGraph2D()(el.graph2d)
-        .nodeId("id")
-        .nodeLabel("label")
-        .linkColor((link: unknown) => colorForType((link as GraphLink).type));
-      graph2d.onNodeClick((node: GraphNode) => {
-        store.toggleSelectNode(String(node.id));
+      canvasRenderer = new GraphCanvas2D(el.graphCanvas, { nodes: [], links: [], selectedNodeIds: new Set() }, uiState, {
+        onSelectionReplace: (ids) => store.replaceSelection(ids),
+        onSelectionToggle: (id) => store.toggleSelectNode(id),
+        onSelectionClear: () => store.clearSelection(),
+        onEdgeDraftChange: (edgeDraft) => {
+          uiState.edgeDraft = edgeDraft;
+          updateSelectionUi(store.getState());
+          canvasRenderer?.update({
+            nodes: materializeNodePositions(Array.from(store.getState().nodesById.values())),
+            links: Array.from(store.getState().linksById.values()),
+            selectedNodeIds: store.getState().selectedNodeIds
+          }, uiState);
+        },
+        onCreateEdge: (source, target) => {
+          void createLinkFromDraft(source, target);
+        },
+        onMoveCommit: commitNodeMove
       });
-
-      setRendererMode("2d");
+      setRendererMode("canvas-2d");
     } catch (error) {
       setRendererMode("fallback-json");
-      el.graph3d.style.display = "none";
-      el.graph2d.innerHTML = `<pre style="margin:0;padding:8px;overflow:auto;">Renderer fallback:\n${escapeHtml(String(error))}</pre>`;
       reportDevError(el, `renderer init failed: ${String(error)}`, error);
     }
   }
 
+  function materializeNodePositions(nodes: GraphNode[]): PositionedNode[] {
+    const output: PositionedNode[] = [];
+    let index = 0;
+    for (const node of nodes) {
+      const metadataPos = readMetadataPosition(node);
+      const fromLocal = localPositions.get(node.id);
+      const position = metadataPos ?? fromLocal ?? defaultPosition(index);
+      localPositions.set(node.id, position);
+      output.push({ ...node, position });
+      index += 1;
+    }
+    return output;
+  }
+
   function updateSelectionUi(snapshot: GraphState): void {
     const selected = Array.from(snapshot.selectedNodeIds);
-    if (selected.length !== 2) {
-      el.linkSelectionHint.textContent = `Select exactly two nodes in the graph (${selected.length}/2 selected).`;
-      el.addLink.disabled = true;
+    if (uiState.edgeDraft) {
+      const from = snapshot.nodesById.get(uiState.edgeDraft.startNodeId)?.label ?? uiState.edgeDraft.startNodeId;
+      el.linkSelectionHint.textContent = `Draft: ${from} → (click destination node, Escape to cancel)`;
       return;
     }
-    const [fromId, toId] = selected;
-    const from = snapshot.nodesById.get(fromId)?.label ?? fromId;
-    const to = snapshot.nodesById.get(toId)?.label ?? toId;
-    el.linkSelectionHint.textContent = `Link from ${from} to ${to}`;
-    el.addLink.disabled = false;
+    if (selected.length === 0) {
+      el.linkSelectionHint.textContent = "Click a node, then click another node to create a link. Shift+click toggles selection.";
+      return;
+    }
+    el.linkSelectionHint.textContent = `Selected: ${selected.join(", ")}`;
   }
 
   function renderStatus(snapshot: GraphState, nodes: number, links: number): void {
     el.status.textContent = snapshot.connectionStatus;
     el.lastCursor.textContent = `cursor: ${JSON.stringify(snapshot.cursor)}`;
     el.lastSync.textContent = `last sync: ${snapshot.lastSync}`;
-    el.rendererBadge.textContent = `Renderer: ${rendererMode} | nodes=${nodes} links=${links}`;
+    el.rendererBadge.textContent = `Renderer: ${rendererMode} | nodes=${nodes} links=${links} zoom=${uiState.camera.zoom.toFixed(2)}`;
     if (!el.principal.value.trim()) {
       el.status.textContent = `principal required: sending default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
     }
@@ -343,7 +382,6 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   function applyCursorIfAdvanced(storageKey: string, candidate: Cursor, source: "poll" | "sse"): boolean {
     const current = store.getState().cursor;
     if (compareCursor(candidate, current) <= 0) {
-      dbg(`cursor-regression:${source}`, { current, candidate });
       emitMeshDebugLog("cursor-regression", { source, current, candidate });
       return false;
     }
@@ -354,16 +392,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   function persistBootstrapCursor(storageKey: string, fromCursor: Cursor, finalCursor: Cursor): void {
     const current = store.getState().cursor;
-    if (!shouldPersistBootstrapCursor(fromCursor, finalCursor, current)) {
-      dbg("sync:bootstrap:cursor-regression", { fromCursor, current, finalCursor });
-      return;
-    }
+    if (!shouldPersistBootstrapCursor(fromCursor, finalCursor, current)) return;
     store.setCursor(finalCursor);
     persistCursor(storageKey, finalCursor);
-    dbg("sync:bootstrap:cursor-persisted", { storageKey, fromCursor, finalCursor });
   }
 
-  function setRendererMode(mode: "2d" | "fallback-json"): void {
+  function setRendererMode(mode: "canvas-2d" | "fallback-json"): void {
     rendererMode = mode;
     el.rendererBadge.textContent = `Renderer: ${rendererMode}`;
   }
@@ -375,6 +409,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   container.addEventListener("DOMNodeRemoved", () => {
     unsubscribe();
+    canvasRenderer?.destroy();
     syncSession += 1;
     activeAbort?.abort();
     setConnectionStatus("disconnected");
@@ -387,14 +422,12 @@ type UiElements = {
   principal: HTMLInputElement;
   connect: HTMLButtonElement;
   addNode: HTMLButtonElement;
-  addLink: HTMLButtonElement;
   linkType: HTMLInputElement;
   linkSelectionHint: HTMLDivElement;
   status: HTMLDivElement;
   lastCursor: HTMLDivElement;
   lastSync: HTMLDivElement;
-  graph3d: HTMLDivElement;
-  graph2d: HTMLDivElement;
+  graphCanvas: HTMLCanvasElement;
   rendererBadge: HTMLDivElement;
   devBanner: HTMLDivElement;
 };
@@ -406,14 +439,12 @@ function byId(container: HTMLElement): UiElements {
     principal: container.querySelector("#principal") as HTMLInputElement,
     connect: container.querySelector("#connect") as HTMLButtonElement,
     addNode: container.querySelector("#addNode") as HTMLButtonElement,
-    addLink: container.querySelector("#addLink") as HTMLButtonElement,
     linkType: container.querySelector("#linkType") as HTMLInputElement,
     linkSelectionHint: container.querySelector("#linkSelectionHint") as HTMLDivElement,
     status: container.querySelector("#status") as HTMLDivElement,
     lastCursor: container.querySelector("#lastCursor") as HTMLDivElement,
     lastSync: container.querySelector("#lastSync") as HTMLDivElement,
-    graph3d: container.querySelector("#graph3d") as HTMLDivElement,
-    graph2d: container.querySelector("#graph2d") as HTMLDivElement,
+    graphCanvas: container.querySelector("#graphCanvas") as HTMLCanvasElement,
     rendererBadge: container.querySelector("#rendererBadge") as HTMLDivElement,
     devBanner: container.querySelector("#devBanner") as HTMLDivElement
   };
@@ -508,10 +539,23 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
-function colorForType(type: string): string {
-  if (type === "parent") return "#3b82f6";
-  if (type === "depends") return "#ef4444";
-  return "#6b7280";
+function readMetadataPosition(node: GraphNode): Vec2 | null {
+  const pos = node.metadata?.position;
+  if (!pos || typeof pos !== "object") return null;
+  const x = (pos as Record<string, unknown>).x;
+  const y = (pos as Record<string, unknown>).y;
+  if (typeof x !== "number" || typeof y !== "number") return null;
+  return { x, y };
+}
+
+function defaultPosition(index: number): Vec2 {
+  const col = index % 6;
+  const row = Math.floor(index / 6);
+  return { x: col * 120, y: row * 100 };
+}
+
+function cameraCenter(camera: CameraState): Vec2 {
+  return { x: camera.x + 420 / camera.zoom, y: camera.y + 280 / camera.zoom };
 }
 
 function readCursor(storageKey: string): Cursor | null {
@@ -621,15 +665,15 @@ function readCursorFromTxBundles(txBundles: SyncTxBundle[]): number | null {
   return maxCursor;
 }
 
-function cursorEq(left: Cursor, right: Cursor): boolean {
-  return left.metaSeq === right.metaSeq && left.graphSeq === right.graphSeq;
+function cursorEq(a: Cursor, b: Cursor): boolean {
+  return a.metaSeq === b.metaSeq && a.graphSeq === b.graphSeq;
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function emitMeshDebugLog(message: string, detail?: unknown): void {
-  const target = (window as Window & { __meshDebug?: MeshDebugApi }).__meshDebug;
-  target?.log?.(message, detail);
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const dbgObj = (window as Window & { __meshDebug?: { log?: (message: string, detail?: unknown) => void } }).__meshDebug;
+  dbgObj?.log?.(message, detail);
 }
