@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeGraphBounds, fitCameraToBounds, hitTestNode, nextEdgeDraft, screenToWorld, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { computeEdgeHitSlopWorld, computeGraphBounds, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, screenToWorld, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
 
 describe("graphCanvas2d transforms", () => {
   it("keeps world point stable under cursor while zooming", () => {
@@ -22,10 +22,16 @@ describe("graphCanvas2d transforms", () => {
 });
 
 describe("graphCanvas2d hit-testing", () => {
-  it("hits node with slop", () => {
+  it("hits node strictly within rendered shape", () => {
     const camera: CameraState = { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 };
-    const hit = hitTestNode([{ id: "a", position: { x: 100, y: 100 } }], camera, { x: 126, y: 100 });
+    const hit = hitTestNode([{ id: "a", position: { x: 100, y: 100 } }], camera, { x: 121.9, y: 100 });
     expect(hit).toBe("a");
+  });
+
+  it("does not hit node outside rendered shape", () => {
+    const camera: CameraState = { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 };
+    const hit = hitTestNode([{ id: "a", position: { x: 100, y: 100 } }], camera, { x: 122.1, y: 100 });
+    expect(hit).toBeNull();
   });
 
   it("returns top-most node when overlapping", () => {
@@ -35,6 +41,42 @@ describe("graphCanvas2d hit-testing", () => {
       { id: "top", position: { x: 50, y: 50 } }
     ], camera, { x: 50, y: 50 });
     expect(hit).toBe("top");
+  });
+});
+
+describe("edge hit-test helpers", () => {
+  it("computes shortest distance from point to segment", () => {
+    const d1 = distancePointToSegment({ x: 5, y: 3 }, { x: 0, y: 0 }, { x: 10, y: 0 });
+    expect(d1).toBeCloseTo(3, 6);
+
+    const d2 = distancePointToSegment({ x: -2, y: 4 }, { x: 0, y: 0 }, { x: 10, y: 0 });
+    expect(d2).toBeCloseTo(Math.hypot(2, 4), 6);
+  });
+
+  it("hit-tests a segment with world slop", () => {
+    const near = hitTestEdge({ x: 5, y: 0.8 }, { aWorld: { x: 0, y: 0 }, bWorld: { x: 10, y: 0 } }, 1);
+    const far = hitTestEdge({ x: 5, y: 1.2 }, { aWorld: { x: 0, y: 0 }, bWorld: { x: 10, y: 0 } }, 1);
+    expect(near).toBe(true);
+    expect(far).toBe(false);
+  });
+
+  it("converts edge slop px to world units from zoom", () => {
+    const camera: CameraState = { x: 0, y: 0, zoom: 2, minZoom: 0.2, maxZoom: 4 };
+    expect(computeEdgeHitSlopWorld(camera)).toBe(4);
+  });
+
+  it("keeps edge hit-testing disabled by default", () => {
+    const camera: CameraState = { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 };
+    const edgeId = hitTestEdges(
+      [{ id: "e1", source: "a", target: "b" }],
+      new Map([
+        ["a", { x: 0, y: 0 }],
+        ["b", { x: 10, y: 0 }]
+      ]),
+      camera,
+      { x: 5, y: 0 }
+    );
+    expect(edgeId).toBeNull();
   });
 });
 

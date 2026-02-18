@@ -30,7 +30,9 @@ export type GraphCanvasCallbacks = {
 };
 
 const NODE_RADIUS = 22;
-const HIT_SLOP = 8;
+const NODE_HIT_SLOP_PX = 0;
+const EDGE_HIT_SLOP_PX = 8;
+export const ENABLE_EDGE_HIT_TEST = false;
 
 export function worldToScreen(world: Vec2, camera: CameraState): Vec2 {
   return { x: (world.x - camera.x) * camera.zoom, y: (world.y - camera.y) * camera.zoom };
@@ -58,9 +60,50 @@ export function hitTestNode(nodes: Array<{ id: string; position: Vec2 }>, camera
     const node = nodes[index]!;
     const dx = worldPoint.x - node.position.x;
     const dy = worldPoint.y - node.position.y;
-    const radius = NODE_RADIUS + HIT_SLOP / camera.zoom;
+    const radius = NODE_RADIUS + NODE_HIT_SLOP_PX / camera.zoom;
     if (dx * dx + dy * dy <= radius * radius) {
       return node.id;
+    }
+  }
+  return null;
+}
+
+export function distancePointToSegment(worldPoint: Vec2, aWorld: Vec2, bWorld: Vec2): number {
+  const ab = { x: bWorld.x - aWorld.x, y: bWorld.y - aWorld.y };
+  const ap = { x: worldPoint.x - aWorld.x, y: worldPoint.y - aWorld.y };
+  const abLenSq = ab.x * ab.x + ab.y * ab.y;
+  if (abLenSq === 0) {
+    return Math.hypot(ap.x, ap.y);
+  }
+  const t = clamp((ap.x * ab.x + ap.y * ab.y) / abLenSq, 0, 1);
+  const closest = { x: aWorld.x + ab.x * t, y: aWorld.y + ab.y * t };
+  return Math.hypot(worldPoint.x - closest.x, worldPoint.y - closest.y);
+}
+
+export function hitTestEdge(worldPoint: Vec2, edge: { aWorld: Vec2; bWorld: Vec2 }, edgeSlopWorld: number): boolean {
+  return distancePointToSegment(worldPoint, edge.aWorld, edge.bWorld) <= edgeSlopWorld;
+}
+
+export function computeEdgeHitSlopWorld(camera: CameraState): number {
+  return EDGE_HIT_SLOP_PX / camera.zoom;
+}
+
+export function hitTestEdges(
+  links: Array<{ id: string; source: string; target: string }>,
+  nodePositions: Map<string, Vec2>,
+  camera: CameraState,
+  screenPoint: Vec2
+): string | null {
+  if (!ENABLE_EDGE_HIT_TEST) return null;
+  const worldPoint = screenToWorld(screenPoint, camera);
+  const edgeSlopWorld = computeEdgeHitSlopWorld(camera);
+  for (let index = links.length - 1; index >= 0; index -= 1) {
+    const link = links[index]!;
+    const aWorld = nodePositions.get(link.source);
+    const bWorld = nodePositions.get(link.target);
+    if (!aWorld || !bWorld) continue;
+    if (hitTestEdge(worldPoint, { aWorld, bWorld }, edgeSlopWorld)) {
+      return link.id;
     }
   }
   return null;
