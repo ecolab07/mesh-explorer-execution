@@ -25,6 +25,8 @@ export type GraphCanvasCallbacks = {
   onEdgeDraftChange: (edgeDraft: EdgeDraft | null) => void;
   onCreateEdge: (source: string, target: string) => void;
   onMoveCommit: (positions: Map<string, Vec2>) => Promise<boolean>;
+  onCameraChange?: (camera: CameraState) => void;
+  onFitRequest?: () => void;
 };
 
 const NODE_RADIUS = 22;
@@ -62,6 +64,41 @@ export function hitTestNode(nodes: Array<{ id: string; position: Vec2 }>, camera
     }
   }
   return null;
+}
+
+export function computeGraphBounds(nodes: Array<{ position: Vec2 }>): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (nodes.length === 0) return null;
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const node of nodes) {
+    minX = Math.min(minX, node.position.x - NODE_RADIUS);
+    minY = Math.min(minY, node.position.y - NODE_RADIUS);
+    maxX = Math.max(maxX, node.position.x + NODE_RADIUS);
+    maxY = Math.max(maxY, node.position.y + NODE_RADIUS);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+export function fitCameraToBounds(
+  bounds: { minX: number; minY: number; maxX: number; maxY: number },
+  viewport: { width: number; height: number },
+  camera: CameraState,
+  paddingRatio = 0.1
+): CameraState {
+  const boundsWidth = Math.max(1, bounds.maxX - bounds.minX);
+  const boundsHeight = Math.max(1, bounds.maxY - bounds.minY);
+  const paddedScale = Math.max(0.01, 1 - paddingRatio);
+  const targetZoom = clamp(Math.min(viewport.width / boundsWidth, viewport.height / boundsHeight) * paddedScale, camera.minZoom, camera.maxZoom);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  return {
+    ...camera,
+    zoom: targetZoom,
+    x: centerX - viewport.width / (2 * targetZoom),
+    y: centerY - viewport.height / (2 * targetZoom)
+  };
 }
 
 export function nextEdgeDraft(current: EdgeDraft | null, clickedNodeId: string | null, cursorWorldPos: Vec2): { edgeDraft: EdgeDraft | null; commit?: { source: string; target: string } } {
@@ -114,10 +151,16 @@ export class GraphCanvas2D {
 
   private bindEvents(): void {
     const onPointerDown = (event: PointerEvent) => {
+      if (event.button === 1) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       this.pointer = { x: event.offsetX, y: event.offsetY };
       const hit = hitTestNode(this.readModel.nodes, this.ui.camera, this.pointer);
       if (event.button === 1 || event.ctrlKey || event.metaKey || event.altKey) {
         this.panning = true;
+        this.callbacks.onCameraChange?.(this.ui.camera);
+        this.canvas.setPointerCapture(event.pointerId);
         this.startLoop();
         return;
       }
@@ -153,6 +196,7 @@ export class GraphCanvas2D {
           x: this.ui.camera.x - event.movementX / this.ui.camera.zoom,
           y: this.ui.camera.y - event.movementY / this.ui.camera.zoom
         };
+        this.callbacks.onCameraChange?.(this.ui.camera);
         this.startLoop();
         return;
       }
@@ -177,14 +221,17 @@ export class GraphCanvas2D {
       if (this.dragging) {
         const commitMap = new Map(this.ui.overlayPositions);
         this.dragging = null;
-        this.ui.overlayPositions.clear();
         this.running = false;
         if (commitMap.size > 0) {
-          await this.callbacks.onMoveCommit(commitMap);
+          const accepted = await this.callbacks.onMoveCommit(commitMap);
+          if (!accepted) this.ui.overlayPositions.clear();
         }
       }
       if (this.panning) {
         this.panning = false;
+      }
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
       }
       const pointerWorld = screenToWorld({ x: event.offsetX, y: event.offsetY }, this.ui.camera);
       if (!wasDragging) {
@@ -196,19 +243,33 @@ export class GraphCanvas2D {
       this.render();
     };
 
-    this.canvas.addEventListener("pointerdown", onPointerDown);
+    this.canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
     this.canvas.addEventListener("pointermove", onPointerMove);
     this.canvas.addEventListener("pointerup", (event) => {
       void onPointerUp(event);
     });
+    this.canvas.addEventListener("pointercancel", (event) => {
+      void onPointerUp(event);
+    });
+    this.canvas.addEventListener("mousedown", (event) => {
+      if (event.button === 1) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }, { passive: false });
+    this.canvas.addEventListener("auxclick", (event) => {
+      if (event.button === 1) event.preventDefault();
+    }, { passive: false });
     this.canvas.addEventListener("wheel", (event) => {
       event.preventDefault();
       const ratio = Math.exp(-event.deltaY * 0.0015);
       this.ui.camera = zoomAtPoint(this.ui.camera, { x: event.offsetX, y: event.offsetY }, this.ui.camera.zoom * ratio);
+      this.callbacks.onCameraChange?.(this.ui.camera);
       this.startLoop();
     }, { passive: false });
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") this.callbacks.onEdgeDraftChange(null);
+      if (event.key.toLowerCase() === "f") this.callbacks.onFitRequest?.();
     });
     window.addEventListener("resize", () => this.resize());
   }
@@ -228,55 +289,62 @@ export class GraphCanvas2D {
   }
 
   private render(): void {
-    const width = this.canvas.clientWidth;
-    const height = this.canvas.clientHeight;
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.clearRect(0, 0, width, height);
     this.ctx.fillStyle = "#f8fafc";
     this.ctx.fillRect(0, 0, width, height);
+
+    this.ctx.setTransform(
+      dpr * this.ui.camera.zoom,
+      0,
+      0,
+      dpr * this.ui.camera.zoom,
+      -this.ui.camera.x * dpr * this.ui.camera.zoom,
+      -this.ui.camera.y * dpr * this.ui.camera.zoom
+    );
 
     for (const link of this.readModel.links) {
       const source = this.nodePos(link.source);
       const target = this.nodePos(link.target);
       if (!source || !target) continue;
-      const sourceScreen = worldToScreen(source, this.ui.camera);
-      const targetScreen = worldToScreen(target, this.ui.camera);
       this.ctx.strokeStyle = "#94a3b8";
-      this.ctx.lineWidth = 2;
+      this.ctx.lineWidth = 2 / this.ui.camera.zoom;
       this.ctx.beginPath();
-      this.ctx.moveTo(sourceScreen.x, sourceScreen.y);
-      this.ctx.lineTo(targetScreen.x, targetScreen.y);
+      this.ctx.moveTo(source.x, source.y);
+      this.ctx.lineTo(target.x, target.y);
       this.ctx.stroke();
     }
 
     for (const node of this.readModel.nodes) {
       const pos = this.nodePos(node.id) ?? node.position;
-      const screen = worldToScreen(pos, this.ui.camera);
       const selected = this.readModel.selectedNodeIds.has(node.id);
       this.ctx.fillStyle = selected ? "#1d4ed8" : "#0f172a";
       this.ctx.beginPath();
-      this.ctx.arc(screen.x, screen.y, NODE_RADIUS, 0, Math.PI * 2);
+      this.ctx.arc(pos.x, pos.y, NODE_RADIUS, 0, Math.PI * 2);
       this.ctx.fill();
       if (this.ui.hoveredNodeId === node.id) {
         this.ctx.strokeStyle = "#38bdf8";
-        this.ctx.lineWidth = 3;
+        this.ctx.lineWidth = 3 / this.ui.camera.zoom;
         this.ctx.stroke();
       }
       this.ctx.fillStyle = "#ffffff";
-      this.ctx.font = "12px sans-serif";
+      this.ctx.font = `${12 / this.ui.camera.zoom}px sans-serif`;
       this.ctx.textAlign = "center";
-      this.ctx.fillText(node.label.slice(0, 14), screen.x, screen.y + 4);
+      this.ctx.fillText(node.label.slice(0, 14), pos.x, pos.y + 4 / this.ui.camera.zoom);
     }
 
     if (this.ui.edgeDraft) {
       const start = this.nodePos(this.ui.edgeDraft.startNodeId);
       if (start) {
-        const startScreen = worldToScreen(start, this.ui.camera);
-        const endScreen = worldToScreen(this.ui.edgeDraft.cursorWorldPos, this.ui.camera);
-        this.ctx.setLineDash([6, 6]);
+        this.ctx.setLineDash([6 / this.ui.camera.zoom, 6 / this.ui.camera.zoom]);
         this.ctx.strokeStyle = "#f59e0b";
+        this.ctx.lineWidth = 2 / this.ui.camera.zoom;
         this.ctx.beginPath();
-        this.ctx.moveTo(startScreen.x, startScreen.y);
-        this.ctx.lineTo(endScreen.x, endScreen.y);
+        this.ctx.moveTo(start.x, start.y);
+        this.ctx.lineTo(this.ui.edgeDraft.cursorWorldPos.x, this.ui.edgeDraft.cursorWorldPos.y);
         this.ctx.stroke();
         this.ctx.setLineDash([]);
       }

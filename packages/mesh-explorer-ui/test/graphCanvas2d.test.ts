@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hitTestNode, nextEdgeDraft, screenToWorld, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { computeGraphBounds, fitCameraToBounds, hitTestNode, nextEdgeDraft, screenToWorld, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
 
 describe("graphCanvas2d transforms", () => {
   it("keeps world point stable under cursor while zooming", () => {
@@ -51,5 +51,24 @@ describe("edge draft state machine", () => {
     const start = nextEdgeDraft(null, "n1", { x: 0, y: 0 }).edgeDraft;
     expect(nextEdgeDraft(start ?? null, "n1", { x: 0, y: 0 }).edgeDraft).toBeNull();
     expect(nextEdgeDraft(start ?? null, null, { x: 0, y: 0 }).edgeDraft).toBeNull();
+  });
+});
+
+
+describe("graph fit helpers", () => {
+  it("computes graph bounds from node centers", () => {
+    const bounds = computeGraphBounds([
+      { position: { x: 20, y: 30 } },
+      { position: { x: 120, y: 160 } }
+    ]);
+    expect(bounds).toEqual({ minX: -2, minY: 8, maxX: 142, maxY: 182 });
+  });
+
+  it("fits camera to bounds and keeps center in viewport", () => {
+    const camera: CameraState = { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 };
+    const next = fitCameraToBounds({ minX: 0, minY: 0, maxX: 200, maxY: 100 }, { width: 800, height: 400 }, camera, 0.1);
+    expect(next.zoom).toBeCloseTo(3.6, 6);
+    expect(next.x).toBeCloseTo(-11.111111, 5);
+    expect(next.y).toBeCloseTo(-5.555555, 5);
   });
 });
