@@ -84,7 +84,9 @@ export interface LocalSyncGatewayConfig {
 const DEFAULT_LIMIT_TX = 64;
 const DEFAULT_LIMIT_BYTES = 128 * 1024;
 const DEFAULT_POLL_INTERVAL_MS = 15;
-const DEFAULT_HEARTBEAT_EVERY_MS = 200;
+export const HEARTBEAT_INTERVAL_MS = Number(
+  process.env.MESH_HEARTBEAT_INTERVAL_MS ?? 5000
+);
 const utf8Encoder = new TextEncoder();
 const DEBUG_SYNC_ENABLED = process.env.MESH_DEBUG_SYNC === "1";
 
@@ -184,7 +186,7 @@ export class LocalSyncGateway {
     });
 
     const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
-    const heartbeatEveryMs = Math.max(pollIntervalMs, options.heartbeatEveryMs ?? DEFAULT_HEARTBEAT_EVERY_MS);
+    const heartbeatEveryMs = Math.max(pollIntervalMs, options.heartbeatEveryMs ?? HEARTBEAT_INTERVAL_MS);
 
     let cursor = fromCursorVisible;
     let lastHeartbeatAt = Date.now();
