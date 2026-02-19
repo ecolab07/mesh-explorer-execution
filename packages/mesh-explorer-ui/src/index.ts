@@ -23,6 +23,8 @@ import {
   type CameraState,
   type CanvasUiState
 } from "./graphCanvas2d.js";
+import { LayoutPanel } from "./ui/LayoutPanel.js";
+import { deriveLayoutParams, loadLayoutUiState, saveLayoutUiState, type LayoutUiState } from "./ui/layoutSettings.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -50,13 +52,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         <label>principal <input id="principal" style="width:100%" value="${escapeHtml(initialPrincipal)}"/></label><br/>
         <button id="connect">Connect</button>
         <hr/>
-        <div id="status">disconnected</div>
-        <div id="connectivity">connectivity: unknown</div>
+        <div id="status">Connectivity: Degraded</div>
+        <div id="transport">transport: disconnected</div>
         <div id="lastCursor">cursor: n/a</div>
         <div id="lastSync">last sync: n/a</div>
         <hr/>
         <button id="addNode">Add node</button>
         <button id="fitGraph" style="margin-left:8px;">Fit</button>
+        <div id="layoutPanelHost"></div>
         <div style="margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:8px;">
           <div><strong>Create link</strong></div>
           <label>type <input id="linkType" style="width:100%" value="related"/></label>
@@ -96,11 +99,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   };
 
   let canvasRenderer: GraphCanvas2D | null = null;
+  let layoutUiState: LayoutUiState = loadLayoutUiState();
+
 
   setConnectionStatus("disconnected");
   installConnectivityListeners();
   updateConnectivity("init");
   setupRenderer();
+  mountLayoutPanel();
   persistPrincipal(el.principal.value);
   el.principal.onchange = () => {
     const normalized = normalizePrincipal(el.principal.value);
@@ -315,12 +321,37 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         onFitRequest: () => {
           fitCameraToCurrentGraph();
         }
+      }, {
+        layoutParams: deriveLayoutParams(layoutUiState.settings),
+        warmupMode: layoutUiState.settings.warmupMode
       });
       setRendererMode("canvas-2d");
     } catch (error) {
       setRendererMode("fallback-json");
       reportDevError(el, `renderer init failed: ${String(error)}`, error);
     }
+  }
+
+  function mountLayoutPanel(): void {
+    const enabled = isLayoutPanelEnabled();
+    new LayoutPanel(el.layoutPanelHost, {
+      enabled,
+      settings: layoutUiState.settings,
+      panel: layoutUiState.panel
+    }, {
+      onSettingsChange: (next) => {
+        layoutUiState = { ...layoutUiState, settings: next };
+        saveLayoutUiState(layoutUiState);
+        canvasRenderer?.setLayoutParams(deriveLayoutParams(next));
+        canvasRenderer?.setWarmupMode(next.warmupMode);
+      },
+      onPanelStateChange: (panel) => {
+        layoutUiState = { ...layoutUiState, panel };
+        saveLayoutUiState(layoutUiState);
+      },
+      onReheat: () => canvasRenderer?.reheatLayout(),
+      onFit: () => fitCameraToCurrentGraph()
+    });
   }
 
   function fitCameraToCurrentGraph(): void {
@@ -353,14 +384,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   }
 
   function renderStatus(snapshot: GraphState, nodes: number, links: number): void {
-    el.status.textContent = snapshot.connectionStatus;
-    el.connectivity.textContent = `connectivity: ${connectivityState}`;
+    el.status.textContent = `Connectivity: ${formatConnectivity(connectivityState)}`;
+    el.transport.textContent = `transport: ${snapshot.connectionStatus}`;
     el.lastCursor.textContent = `cursor: ${JSON.stringify(snapshot.cursor)}`;
     el.lastSync.textContent = `last sync: ${snapshot.lastSync}`;
     badgeStats = { nodes, links };
     queueBadgeRender();
     if (!el.principal.value.trim()) {
-      el.status.textContent = `principal required: sending default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
+      el.transport.textContent = `transport: principal required, default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
     }
   }
 
@@ -452,12 +483,13 @@ type UiElements = {
   linkType: HTMLInputElement;
   linkSelectionHint: HTMLDivElement;
   status: HTMLDivElement;
-  connectivity: HTMLDivElement;
+  transport: HTMLDivElement;
   lastCursor: HTMLDivElement;
   lastSync: HTMLDivElement;
   graphCanvas: HTMLCanvasElement;
   rendererBadge: HTMLDivElement;
   devBanner: HTMLDivElement;
+  layoutPanelHost: HTMLDivElement;
 };
 
 function byId(container: HTMLElement): UiElements {
@@ -471,12 +503,13 @@ function byId(container: HTMLElement): UiElements {
     linkType: container.querySelector("#linkType") as HTMLInputElement,
     linkSelectionHint: container.querySelector("#linkSelectionHint") as HTMLDivElement,
     status: container.querySelector("#status") as HTMLDivElement,
-    connectivity: container.querySelector("#connectivity") as HTMLDivElement,
+    transport: container.querySelector("#transport") as HTMLDivElement,
     lastCursor: container.querySelector("#lastCursor") as HTMLDivElement,
     lastSync: container.querySelector("#lastSync") as HTMLDivElement,
     graphCanvas: container.querySelector("#graphCanvas") as HTMLCanvasElement,
     rendererBadge: container.querySelector("#rendererBadge") as HTMLDivElement,
-    devBanner: container.querySelector("#devBanner") as HTMLDivElement
+    devBanner: container.querySelector("#devBanner") as HTMLDivElement,
+    layoutPanelHost: container.querySelector("#layoutPanelHost") as HTMLDivElement
   };
 }
 
@@ -541,6 +574,22 @@ function isDebugEnabled(): boolean {
     return localStorage.getItem("mesh.debug") === "1";
   } catch {
     return false;
+  }
+}
+
+function formatConnectivity(state: ConnectivityStatus): string {
+  if (state === "online") return "Online";
+  if (state === "offline") return "Offline";
+  return "Degraded";
+}
+
+function isLayoutPanelEnabled(): boolean {
+  const mode = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV;
+  if (mode) return true;
+  try {
+    return localStorage.getItem("mesh.layoutPanel") !== "0";
+  } catch {
+    return true;
   }
 }
 

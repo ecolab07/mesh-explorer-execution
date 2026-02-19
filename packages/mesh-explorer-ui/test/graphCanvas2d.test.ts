@@ -163,6 +163,59 @@ describe("layout seeding helpers", () => {
   });
 });
 
+
+
+describe("layout warmup modes", () => {
+  it("runs HARD warmup synchronously", () => {
+    const hard = new ForceLayout2D({ warmupMode: "HARD" });
+    const off = new ForceLayout2D({ warmupMode: "OFF" });
+    const nodes = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    const links = [{ source: "a", target: "b" }, { source: "b", target: "c" }];
+
+    hard.syncGraph(nodes, links);
+    off.syncGraph(nodes, links);
+
+    expect(hard.getPositions()).not.toEqual(off.getPositions());
+  });
+
+  it("schedules SOFT warmup through RAF", () => {
+    const queue: FrameRequestCallback[] = [];
+    const layout = new ForceLayout2D({
+      warmupMode: "SOFT",
+      requestFrame: (cb) => {
+        queue.push(cb);
+        return queue.length;
+      },
+      cancelFrame: () => undefined
+    });
+
+    layout.syncGraph([{ id: "a" }, { id: "b" }], [{ source: "a", target: "b" }]);
+    expect(queue.length).toBeGreaterThan(0);
+
+    let safety = 0;
+    while (queue.length > 0 && safety < 20) {
+      const cb = queue.shift()!;
+      cb(16);
+      safety += 1;
+    }
+    expect(safety).toBeGreaterThan(1);
+  });
+
+  it("does not warmup when OFF", () => {
+    const queue: FrameRequestCallback[] = [];
+    const layout = new ForceLayout2D({
+      warmupMode: "OFF",
+      requestFrame: (cb) => {
+        queue.push(cb);
+        return queue.length;
+      },
+      cancelFrame: () => undefined
+    });
+
+    layout.syncGraph([{ id: "a" }, { id: "b" }], [{ source: "a", target: "b" }]);
+    expect(queue).toHaveLength(0);
+  });
+});
 describe("layout engine", () => {
   it("uses deterministic seeded initial positions", () => {
     expect(seededNodePosition("node-a", 20)).toEqual(seededNodePosition("node-a", 20));
