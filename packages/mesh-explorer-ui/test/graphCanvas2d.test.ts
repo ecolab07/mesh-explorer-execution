@@ -65,18 +65,20 @@ describe("edge hit-test helpers", () => {
     expect(computeEdgeHitSlopWorld(camera)).toBe(4);
   });
 
-  it("keeps edge hit-testing disabled by default", () => {
-    const camera: CameraState = { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 };
-    const edgeId = hitTestEdges(
-      [{ id: "e1", source: "a", target: "b" }],
-      new Map([
-        ["a", { x: 0, y: 0 }],
-        ["b", { x: 10, y: 0 }]
-      ]),
-      camera,
-      { x: 5, y: 0 }
-    );
-    expect(edgeId).toBeNull();
+  it("hits edges using constant screen-pixel slop", () => {
+    const edge = [{ id: "e1", source: "a", target: "b" }];
+    const positions = new Map([
+      ["a", { x: 0, y: 0 }],
+      ["b", { x: 100, y: 0 }]
+    ]);
+
+    const lowZoom: CameraState = { x: 0, y: 0, zoom: 0.25, minZoom: 0.2, maxZoom: 4 };
+    expect(hitTestEdges(edge, positions, lowZoom, { x: 50 * lowZoom.zoom, y: 7.5 })).toBe("e1");
+    expect(hitTestEdges(edge, positions, lowZoom, { x: 50 * lowZoom.zoom, y: 8.5 })).toBeNull();
+
+    const highZoom: CameraState = { x: 0, y: 0, zoom: 3.5, minZoom: 0.2, maxZoom: 4 };
+    expect(hitTestEdges(edge, positions, highZoom, { x: 50 * highZoom.zoom, y: 7.5 })).toBe("e1");
+    expect(hitTestEdges(edge, positions, highZoom, { x: 50 * highZoom.zoom, y: 8.5 })).toBeNull();
   });
 });
 

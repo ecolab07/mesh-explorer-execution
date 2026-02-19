@@ -85,9 +85,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   const pendingMoveCommits = new Map<string, Vec2>();
   let hasUserMovedCamera = false;
   let autoFitApplied = false;
+  let cameraInfo: CameraState = { x: -280, y: -180, zoom: 1, minZoom: 0.2, maxZoom: 3.5 };
+  let badgeStats = { nodes: 0, links: 0 };
+  let badgeRaf = 0;
 
   const uiState: CanvasUiState = {
-    camera: { x: -280, y: -180, zoom: 1, minZoom: 0.2, maxZoom: 3.5 },
+    camera: cameraInfo,
     hoveredNodeId: null,
     edgeDraft: null,
     overlayPositions: new Map(),
@@ -337,10 +340,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         onCreateEdge: (source, target) => {
           void createLinkFromDraft(source, target);
         },
-        onMoveCommit: commitNodeMove
-        ,
-        onCameraChange: () => {
+        onMoveCommit: commitNodeMove,
+        onCameraChange: (camera) => {
           hasUserMovedCamera = true;
+          cameraInfo = camera;
+          queueBadgeRender();
         },
         onFitRequest: () => {
           fitCameraToCurrentGraph(materializeNodePositions(Array.from(store.getState().nodesById.values())));
@@ -400,6 +404,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     if (!bounds) return;
     const rect = el.graphCanvas.getBoundingClientRect();
     uiState.camera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12);
+    cameraInfo = uiState.camera;
+    queueBadgeRender();
     canvasRenderer?.update({
       nodes,
       links: Array.from(store.getState().linksById.values()),
@@ -425,7 +431,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     el.status.textContent = snapshot.connectionStatus;
     el.lastCursor.textContent = `cursor: ${JSON.stringify(snapshot.cursor)}`;
     el.lastSync.textContent = `last sync: ${snapshot.lastSync}`;
-    el.rendererBadge.textContent = `Renderer: ${rendererMode} | nodes=${nodes} links=${links} zoom=${uiState.camera.zoom.toFixed(2)}`;
+    badgeStats = { nodes, links };
+    queueBadgeRender();
     if (!el.principal.value.trim()) {
       el.status.textContent = `principal required: sending default "${DEFAULT_PRINCIPAL}" via x-mesh-principal`;
     }
@@ -459,7 +466,15 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   function setRendererMode(mode: "canvas-2d" | "fallback-json"): void {
     rendererMode = mode;
-    el.rendererBadge.textContent = `Renderer: ${rendererMode}`;
+    queueBadgeRender();
+  }
+
+  function queueBadgeRender(): void {
+    if (badgeRaf) return;
+    badgeRaf = requestAnimationFrame(() => {
+      badgeRaf = 0;
+      el.rendererBadge.textContent = `Renderer: ${rendererMode} | nodes=${badgeStats.nodes} links=${badgeStats.links} zoom=x${cameraInfo.zoom.toFixed(2)}`;
+    });
   }
 
   function dbg(message: string, detail?: unknown): void {
