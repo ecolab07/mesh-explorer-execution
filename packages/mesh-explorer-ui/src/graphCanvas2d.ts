@@ -34,13 +34,19 @@ export type GraphCanvasCallbacks = {
 const NODE_RADIUS = 22;
 const NODE_HIT_SLOP_PX = 0;
 const EDGE_HIT_SLOP_PX = 8;
-const LAYOUT_LINK_DISTANCE = 130;
-const LAYOUT_LINK_STRENGTH = 0.02;
-const LAYOUT_CHARGE_STRENGTH = 3000;
-const LAYOUT_CENTERING = 0.01;
+const LAYOUT_LINK_DISTANCE = 64;
+const LAYOUT_LINK_STRENGTH = 0.18;
+const LAYOUT_CHARGE_STRENGTH = 58;
+const LAYOUT_COLLISION_RADIUS = NODE_RADIUS * 1.05;
+const LAYOUT_CENTERING = 0.03;
 const LAYOUT_DAMPING = 0.82;
 const LAYOUT_MIN_ALPHA = 0.0005;
 const LAYOUT_ALPHA_DECAY = 0.04;
+const SEED_BASE = 40;
+const SEED_JITTER_RATIO = 0.35;
+const MIN_ZOOM_DENSITY_THRESHOLD = 50;
+const MIN_ZOOM_DENSITY_FLOOR = 0.05;
+const WARMUP_TICKS = 64;
 export const ENABLE_EDGE_HIT_TEST = true;
 
 export function worldToScreen(world: Vec2, camera: CameraState): Vec2 {
@@ -137,12 +143,14 @@ export function fitCameraToBounds(
   bounds: { minX: number; minY: number; maxX: number; maxY: number },
   viewport: { width: number; height: number },
   camera: CameraState,
-  paddingRatio = 0.1
+  paddingRatio = 0.1,
+  nodeCount = 1
 ): CameraState {
   const boundsWidth = Math.max(1, bounds.maxX - bounds.minX);
   const boundsHeight = Math.max(1, bounds.maxY - bounds.minY);
   const paddedScale = Math.max(0.01, 1 - paddingRatio);
-  const targetZoom = clamp(Math.min(viewport.width / boundsWidth, viewport.height / boundsHeight) * paddedScale, camera.minZoom, camera.maxZoom);
+  const minZoomEffective = computeMinZoomEffective(camera.minZoom, nodeCount);
+  const targetZoom = clamp(Math.min(viewport.width / boundsWidth, viewport.height / boundsHeight) * paddedScale, minZoomEffective, camera.maxZoom);
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerY = (bounds.minY + bounds.maxY) / 2;
   return {
@@ -151,6 +159,12 @@ export function fitCameraToBounds(
     x: centerX - viewport.width / (2 * targetZoom),
     y: centerY - viewport.height / (2 * targetZoom)
   };
+}
+
+export function computeMinZoomEffective(minZoomBase: number, nodeCount: number): number {
+  if (nodeCount < MIN_ZOOM_DENSITY_THRESHOLD) return minZoomBase;
+  const densityFactor = Math.sqrt(Math.max(1, nodeCount / MIN_ZOOM_DENSITY_THRESHOLD));
+  return Math.max(MIN_ZOOM_DENSITY_FLOOR, minZoomBase / densityFactor);
 }
 
 export function nextEdgeDraft(current: EdgeDraft | null, clickedNodeId: string | null, cursorWorldPos: Vec2): { edgeDraft: EdgeDraft | null; commit?: { source: string; target: string } } {
@@ -175,10 +189,16 @@ export function nextSelectedEdgeIds(
   return new Set();
 }
 
-export function seededNodePosition(nodeId: string): Vec2 {
+export function computeSeedRadius(nodeCount: number): number {
+  return SEED_BASE * Math.sqrt(Math.max(1, nodeCount));
+}
+
+export function seededNodePosition(nodeId: string, nodeCount = 1): Vec2 {
   const seedA = fnv1a32(nodeId);
   const seedB = fnv1a32(`${nodeId}:y`);
-  const radius = 120 + (seedA % 60);
+  const radiusBase = computeSeedRadius(nodeCount);
+  const jitter = (seedA % 1000) / 1000;
+  const radius = radiusBase * (1 - SEED_JITTER_RATIO + jitter * SEED_JITTER_RATIO);
   const angle = ((seedB % 3600) / 3600) * Math.PI * 2;
   return {
     x: Math.cos(angle) * radius,
@@ -197,14 +217,16 @@ export class ForceLayout2D {
       if (!nextIds.has(id)) this.nodeById.delete(id);
     }
 
+    const nodeCount = nodes.length;
     for (const node of nodes) {
       if (this.nodeById.has(node.id)) continue;
-      const seeded = seededNodePosition(node.id);
+      const seeded = seededNodePosition(node.id, nodeCount);
       this.nodeById.set(node.id, { id: node.id, x: seeded.x, y: seeded.y, vx: 0, vy: 0 });
     }
 
     this.links = links.filter((link) => this.nodeById.has(link.source) && this.nodeById.has(link.target));
     this.reheat(0.45);
+    this.tick(WARMUP_TICKS);
   }
 
   reheat(amount = 0.25): void {
@@ -270,9 +292,12 @@ export class ForceLayout2D {
         const dx = a.x - b.x;
         const dy = a.y - b.y;
         const distSq = dx * dx + dy * dy + 0.01;
+        const dist = Math.sqrt(distSq);
+        const collisionOverlap = LAYOUT_COLLISION_RADIUS * 2 - dist;
         const force = (LAYOUT_CHARGE_STRENGTH * alpha) / distSq;
-        const fx = dx * force;
-        const fy = dy * force;
+        const collisionForce = collisionOverlap > 0 ? (collisionOverlap * 0.35 + 0.001) * alpha : 0;
+        const fx = dx * force + (dx / dist) * collisionForce;
+        const fy = dy * force + (dy / dist) * collisionForce;
         if (a.fx === undefined) {
           a.vx += fx;
           a.vy += fy;

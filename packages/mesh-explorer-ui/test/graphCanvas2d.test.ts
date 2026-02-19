@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { ForceLayout2D, computeEdgeHitSlopWorld, computeGraphBounds, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { ForceLayout2D, computeEdgeHitSlopWorld, computeGraphBounds, computeMinZoomEffective, computeSeedRadius, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
 
 describe("graphCanvas2d transforms", () => {
   it("keeps world point stable under cursor while zooming", () => {
@@ -134,19 +134,55 @@ describe("graph fit helpers", () => {
     expect(next.x).toBeCloseTo(-11.111111, 5);
     expect(next.y).toBeCloseTo(-5.555555, 5);
   });
+  it("lowers effective min zoom as node count increases", () => {
+    expect(computeMinZoomEffective(0.2, 10)).toBeCloseTo(0.2, 6);
+    expect(computeMinZoomEffective(0.2, 50)).toBeCloseTo(0.2, 6);
+    expect(computeMinZoomEffective(0.2, 200)).toBeLessThan(0.2);
+  });
+
+  it("fit camera can use adaptive min zoom for dense graphs", () => {
+    const camera: CameraState = { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 };
+    const next = fitCameraToBounds({ minX: 0, minY: 0, maxX: 4000, maxY: 3000 }, { width: 800, height: 600 }, camera, 0.1, 200);
+    expect(next.zoom).toBeLessThan(0.2);
+  });
+
 });
 
 
+
+describe("layout seeding helpers", () => {
+  it("scales seed radius with square root of node count", () => {
+    expect(computeSeedRadius(1)).toBeCloseTo(40, 6);
+    expect(computeSeedRadius(4)).toBeCloseTo(80, 6);
+    expect(computeSeedRadius(100)).toBeCloseTo(400, 6);
+  });
+
+  it("keeps seeded position deterministic for same id and node count", () => {
+    expect(seededNodePosition("node-a", 30)).toEqual(seededNodePosition("node-a", 30));
+    expect(seededNodePosition("node-a", 30)).not.toEqual(seededNodePosition("node-a", 90));
+  });
+});
+
 describe("layout engine", () => {
   it("uses deterministic seeded initial positions", () => {
-    expect(seededNodePosition("node-a")).toEqual(seededNodePosition("node-a"));
-    expect(seededNodePosition("node-a")).not.toEqual(seededNodePosition("node-b"));
+    expect(seededNodePosition("node-a", 20)).toEqual(seededNodePosition("node-a", 20));
+    expect(seededNodePosition("node-a", 20)).not.toEqual(seededNodePosition("node-b", 20));
   });
 
   it("keeps initial layout deterministic for same topology", () => {
     const mk = () => {
       const layout = new ForceLayout2D();
       layout.syncGraph([{ id: "a" }, { id: "b" }, { id: "c" }], [{ source: "a", target: "b" }, { source: "b", target: "c" }]);
+      return layout.getPositions();
+    };
+    expect(mk()).toEqual(mk());
+  });
+
+
+  it("applies deterministic warmup ticks for same topology", () => {
+    const mk = () => {
+      const layout = new ForceLayout2D();
+      layout.syncGraph([{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }], [{ source: "a", target: "b" }, { source: "b", target: "c" }, { source: "c", target: "d" }]);
       return layout.getPositions();
     };
     expect(mk()).toEqual(mk());

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hitTestEdges, nextEdgeDraft, nextSelectedEdgeIds, type CameraState, type Vec2 } from "../src/graphCanvas2d.js";
+import { computeGraphBounds, fitCameraToBounds, hitTestEdges, nextEdgeDraft, nextSelectedEdgeIds, worldToScreen, type CameraState, type Vec2 } from "../src/graphCanvas2d.js";
 
 describe("canvas flow integration", () => {
   it("click near edge at various zoom levels hits edge", () => {
@@ -55,4 +55,21 @@ describe("canvas flow integration", () => {
     expect(selectedB).toEqual(new Set(["edge-b"]));
     expect(cleared).toEqual(new Set());
   });
+
+  it("fit includes all nodes for large graph with adaptive min zoom", () => {
+    const nodes = Array.from({ length: 120 }, (_, index) => ({ position: { x: (index % 12) * 180, y: Math.floor(index / 12) * 160 } }));
+    const bounds = computeGraphBounds(nodes);
+    expect(bounds).not.toBeNull();
+    const camera: CameraState = { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 };
+    const fitted = fitCameraToBounds(bounds!, { width: 900, height: 600 }, camera, 0.12, nodes.length);
+
+    for (const node of nodes) {
+      const screen = worldToScreen(node.position, fitted);
+      expect(screen.x).toBeGreaterThanOrEqual(0);
+      expect(screen.y).toBeGreaterThanOrEqual(0);
+      expect(screen.x).toBeLessThanOrEqual(900);
+      expect(screen.y).toBeLessThanOrEqual(600);
+    }
+  });
+
 });
