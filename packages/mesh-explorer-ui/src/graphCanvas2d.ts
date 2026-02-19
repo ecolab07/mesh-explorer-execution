@@ -462,9 +462,13 @@ export class ForceLayout2D {
   }
 }
 
+export type GraphCanvasDebugLog = (event: string, payload?: Record<string, unknown>, throttleMs?: number) => void;
+
 export type GraphCanvasOptions = {
   layoutParams?: Partial<LayoutParams>;
   warmupMode?: WarmupMode;
+  debugLogsEnabled?: boolean;
+  debugLog?: GraphCanvasDebugLog;
 };
 
 export class GraphCanvas2D {
@@ -476,6 +480,10 @@ export class GraphCanvas2D {
   private draggingNodeIds: string[] = [];
   private hoveredEdgeId: string | null = null;
   private selectedEdgeIds = new Set<string>();
+  private edgeDraftCursorWorldPos: Vec2 | null = null;
+  private topologySignature = "";
+  private debugLogsEnabled = false;
+  private readonly debugLog?: GraphCanvasDebugLog;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -487,13 +495,15 @@ export class GraphCanvas2D {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context unavailable");
     this.ctx = ctx;
+    this.debugLogsEnabled = options.debugLogsEnabled ?? false;
+    this.debugLog = options.debugLog;
     this.layout = new ForceLayout2D({
       layoutParams: options.layoutParams,
       warmupMode: options.warmupMode,
       onSoftWarmupFrame: () => this.requestRender(),
       onTick: () => this.requestRender()
     });
-    this.syncLayoutGraph();
+    this.syncLayoutGraph("init");
     this.bindEvents();
     this.resize();
     this.render();
@@ -502,7 +512,11 @@ export class GraphCanvas2D {
   update(readModel: GraphCanvasReadModel, ui: CanvasUiState): void {
     this.readModel = readModel;
     this.ui = ui;
-    this.syncLayoutGraph();
+    if (!this.ui.edgeDraft) this.edgeDraftCursorWorldPos = null;
+    const nextSignature = this.computeTopologySignature();
+    if (nextSignature !== this.topologySignature) {
+      this.syncLayoutGraph("topology-change");
+    }
     this.requestRender();
   }
 
@@ -517,8 +531,9 @@ export class GraphCanvas2D {
 
   setLayoutParams(params: Partial<LayoutParams>): void {
     this.layout.setLayoutParams(params);
-    this.layout.reheat(0.3);
-    this.layout.restart();
+    this.syncLayoutGraph("layout-params-change");
+    this.emitDebug("layout.reheat", { amount: 0.45, reason: "layout-params-change" });
+    this.emitDebug("layout.restart", { reason: "layout-params-change" });
     this.requestRender();
   }
 
@@ -526,8 +541,14 @@ export class GraphCanvas2D {
     this.layout.setWarmupMode(mode);
   }
 
+  setDebugLogsEnabled(enabled: boolean): void {
+    this.debugLogsEnabled = enabled;
+  }
+
   reheatLayout(): void {
-    this.layout.reheat(0.42);
+    this.emitDebug("layout.reheat", { amount: 0.9, reason: "ui-reheat-button" });
+    this.layout.reheat(0.9);
+    this.emitDebug("layout.restart", { reason: "ui-reheat-button" });
     this.layout.restart();
     this.requestRender();
   }
@@ -541,12 +562,17 @@ export class GraphCanvas2D {
     this.render();
   }
 
-  private syncLayoutGraph(): void {
+  private syncLayoutGraph(reason: string): void {
+    this.topologySignature = this.computeTopologySignature();
+    const nodeCount = this.readModel.nodes.length;
+    const linkCount = this.readModel.links.length;
+    this.emitDebug("layout.syncGraph", { reason, nodeCount, linkCount });
     this.layout.syncGraph(this.readModel.nodes.map((node) => ({ id: node.id })), this.readModel.links.map((link) => ({ source: link.source, target: link.target })));
   }
 
   private bindEvents(): void {
     const onPointerDown = (event: PointerEvent) => {
+      this.emitDebug("ui.pointerdown", { button: event.button, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey });
       if (event.button === 1) {
         event.preventDefault();
         event.stopPropagation();
@@ -575,6 +601,7 @@ export class GraphCanvas2D {
           for (const id of this.draggingNodeIds) {
             this.layout.setPin(id, pointerWorld);
           }
+          this.emitDebug("ui.drag.start", { draggedCount: this.draggingNodeIds.length });
           this.requestRender();
         }
       } else {
@@ -586,7 +613,7 @@ export class GraphCanvas2D {
     const onPointerMove = (event: PointerEvent) => {
       this.pointer = { x: event.offsetX, y: event.offsetY };
       const pointerWorld = screenToWorld(this.pointer, this.ui.camera);
-      this.callbacks.onEdgeDraftChange(this.ui.edgeDraft ? { ...this.ui.edgeDraft, cursorWorldPos: pointerWorld } : null);
+      if (this.ui.edgeDraft) this.edgeDraftCursorWorldPos = pointerWorld;
       if (this.panning) {
         this.ui.camera = {
           ...this.ui.camera,
@@ -609,18 +636,23 @@ export class GraphCanvas2D {
       for (const id of this.draggingNodeIds) {
         this.layout.setPin(id, pointerWorld);
       }
+      this.emitDebug("layout.reheat", { amount: 0.3, reason: "drag-move" });
       this.layout.reheat(0.3);
+      this.emitDebug("layout.restart", { reason: "drag-move" });
       this.layout.restart();
       this.requestRender();
     };
 
     const onPointerUp = (event: PointerEvent) => {
+      this.emitDebug("ui.pointerup", { button: event.button });
       const wasDragging = this.draggingNodeIds.length > 0;
       if (wasDragging) {
         for (const id of this.draggingNodeIds) {
           this.layout.clearPin(id);
         }
         this.draggingNodeIds = [];
+        this.emitDebug("ui.drag.end", {});
+        this.emitDebug("layout.reheat", { amount: 0.22, reason: "drag-end" });
         this.layout.reheat(0.22);
       }
       if (this.panning) {
@@ -639,9 +671,11 @@ export class GraphCanvas2D {
         this.selectedEdgeIds = nextSelectedEdgeIds(this.selectedEdgeIds, { nodeHit: hit, edgeHit, shiftKey: event.shiftKey });
         if (hit) {
           const next = nextEdgeDraft(this.ui.edgeDraft, hit, pointerWorld);
+          this.edgeDraftCursorWorldPos = next.edgeDraft ? pointerWorld : null;
           this.callbacks.onEdgeDraftChange(next.edgeDraft);
           if (next.commit) this.callbacks.onCreateEdge(next.commit.source, next.commit.target);
         } else if (edgeHit) {
+          this.edgeDraftCursorWorldPos = null;
           this.callbacks.onEdgeDraftChange(null);
         }
       }
@@ -669,7 +703,11 @@ export class GraphCanvas2D {
       this.requestRender();
     }, { passive: false });
     window.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") this.callbacks.onEdgeDraftChange(null);
+      this.emitDebug("ui.keydown", { key: event.key });
+      if (event.key === "Escape") {
+        this.edgeDraftCursorWorldPos = null;
+        this.callbacks.onEdgeDraftChange(null);
+      }
       if (event.key.toLowerCase() === "f") this.callbacks.onFitRequest?.();
     });
     window.addEventListener("resize", () => this.resize());
@@ -737,17 +775,31 @@ export class GraphCanvas2D {
 
     if (this.ui.edgeDraft) {
       const start = positions.get(this.ui.edgeDraft.startNodeId);
+      const draftCursor = this.edgeDraftCursorWorldPos ?? this.ui.edgeDraft.cursorWorldPos;
       if (start) {
         this.ctx.setLineDash([6 / this.ui.camera.zoom, 6 / this.ui.camera.zoom]);
         this.ctx.strokeStyle = "#f59e0b";
         this.ctx.lineWidth = 2 / this.ui.camera.zoom;
         this.ctx.beginPath();
         this.ctx.moveTo(start.x, start.y);
-        this.ctx.lineTo(this.ui.edgeDraft.cursorWorldPos.x, this.ui.edgeDraft.cursorWorldPos.y);
+        this.ctx.lineTo(draftCursor.x, draftCursor.y);
         this.ctx.stroke();
         this.ctx.setLineDash([]);
       }
     }
+  }
+
+  private computeTopologySignature(): string {
+    const nodeIds = this.readModel.nodes.map((node) => node.id).sort();
+    const linkIds = this.readModel.links
+      .map((link) => `${link.id}:${link.source}->${link.target}`)
+      .sort();
+    return `${nodeIds.join("|")}::${linkIds.join("|")}`;
+  }
+
+  private emitDebug(event: string, payload?: Record<string, unknown>, throttleMs?: number): void {
+    if (!this.debugLogsEnabled) return;
+    this.debugLog?.(event, payload, throttleMs);
   }
 
   private positionedNodes(): Array<{ id: string; position: Vec2 }> {

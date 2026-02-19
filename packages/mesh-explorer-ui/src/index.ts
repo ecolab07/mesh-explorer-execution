@@ -100,7 +100,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   let canvasRenderer: GraphCanvas2D | null = null;
   let layoutUiState: LayoutUiState = loadLayoutUiState();
-
+  const debugThrottleByEvent = new Map<string, number>();
 
   setConnectionStatus("disconnected");
   installConnectivityListeners();
@@ -323,7 +323,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         }
       }, {
         layoutParams: deriveLayoutParams(layoutUiState.settings),
-        warmupMode: layoutUiState.settings.warmupMode
+        warmupMode: layoutUiState.settings.warmupMode,
+        debugLogsEnabled: layoutUiState.settings.debugLogs,
+        debugLog: emitUiDebugLog
       });
       setRendererMode("canvas-2d");
     } catch (error) {
@@ -340,17 +342,26 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       panel: layoutUiState.panel
     }, {
       onSettingsChange: (next) => {
+        const previous = layoutUiState.settings;
         layoutUiState = { ...layoutUiState, settings: next };
         saveLayoutUiState(layoutUiState);
+        canvasRenderer?.setDebugLogsEnabled(next.debugLogs);
         canvasRenderer?.setLayoutParams(deriveLayoutParams(next));
         canvasRenderer?.setWarmupMode(next.warmupMode);
+        emitUiDebugLog("settings.change", { previous, next });
       },
       onPanelStateChange: (panel) => {
         layoutUiState = { ...layoutUiState, panel };
         saveLayoutUiState(layoutUiState);
       },
-      onReheat: () => canvasRenderer?.reheatLayout(),
-      onFit: () => fitCameraToCurrentGraph()
+      onReheat: () => {
+        emitUiDebugLog("ui.keydown", { key: "Reheat" });
+        canvasRenderer?.reheatLayout();
+      },
+      onFit: () => {
+        emitUiDebugLog("ui.keydown", { key: "Fit" });
+        fitCameraToCurrentGraph();
+      }
     });
   }
 
@@ -396,6 +407,17 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   }
 
+  function emitUiDebugLog(event: string, payload: Record<string, unknown> = {}, throttleMs = 0): void {
+    if (!layoutUiState.settings.debugLogs) return;
+    const now = Date.now();
+    if (throttleMs > 0) {
+      const last = debugThrottleByEvent.get(event) ?? 0;
+      if (now - last < throttleMs) return;
+      debugThrottleByEvent.set(event, now);
+    }
+    console.debug("[mesh-ui]", { event, t: now, ...payload });
+  }
+
   function setConnectionStatus(next: ConnectionStatus): void {
     store.setConnectionStatus(next);
   }
@@ -410,6 +432,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     if (next !== connectivityState) {
       connectivityState = next;
       renderStatus(store.getState(), store.getState().nodesById.size, store.getState().linksById.size);
+      emitUiDebugLog("connectivity.change", { source, connectivityState, browserConnectivityHint, networkConnectivityHint });
     }
     dbg(`connectivity:${source}`, { browserConnectivityHint, networkConnectivityHint, connectivityState });
   }

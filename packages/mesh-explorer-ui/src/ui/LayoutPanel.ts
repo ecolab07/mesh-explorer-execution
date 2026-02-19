@@ -64,6 +64,7 @@ export class LayoutPanel {
     this.panelBody.appendChild(this.buildSlider("Reactivity", this.settings.reactivity, LAYOUT_LIMITS.reactivity.min, LAYOUT_LIMITS.reactivity.max, 0.01, (value) => this.updateSettings({ reactivity: value })));
     this.panelBody.appendChild(this.buildSlider("Collision", this.settings.collision, LAYOUT_LIMITS.collision.min, LAYOUT_LIMITS.collision.max, 1, (value) => this.updateSettings({ collision: value })));
     this.panelBody.appendChild(this.buildSelect("Warmup", ["OFF", "SOFT", "HARD"], this.settings.warmupMode, (value) => this.updateSettings({ warmupMode: value as WarmupMode })));
+    this.panelBody.appendChild(this.buildToggle("Debug logs", this.settings.debugLogs, (checked) => this.updateSettings({ debugLogs: checked })));
 
     const actions = document.createElement("div");
     actions.style.display = "flex";
@@ -153,6 +154,27 @@ export class LayoutPanel {
     }
     select.onchange = () => onChange(select.value);
     row.appendChild(select);
+    return row;
+  }
+
+  private buildToggle(label: string, checked: boolean, onChange: (next: boolean) => void): HTMLElement {
+    const row = document.createElement("label");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "6px";
+    row.style.marginTop = "8px";
+    row.style.fontSize = "12px";
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = checked;
+    input.onchange = () => onChange(input.checked);
+
+    const text = document.createElement("span");
+    text.textContent = label;
+
+    row.appendChild(input);
+    row.appendChild(text);
     return row;
   }
 

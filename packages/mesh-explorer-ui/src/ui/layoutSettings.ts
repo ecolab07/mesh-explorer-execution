@@ -10,6 +10,7 @@ export type LayoutSettings = {
   reactivity: number;
   collision: number;
   warmupMode: WarmupMode;
+  debugLogs: boolean;
 };
 
 export type DevPanelState = { open: boolean };
@@ -29,10 +30,10 @@ export const LAYOUT_LIMITS = {
 } as const;
 
 const PRESETS: Record<LayoutPreset, Omit<LayoutSettings, "preset">> = {
-  Compact: { repulsion: -48, edgeLength: 48, reactivity: 0.8, collision: 20, warmupMode: "SOFT" },
-  Balanced: { repulsion: -58, edgeLength: 64, reactivity: 0.55, collision: 23, warmupMode: "HARD" },
-  Spread: { repulsion: -82, edgeLength: 92, reactivity: 0.38, collision: 26, warmupMode: "SOFT" },
-  Snappy: { repulsion: -52, edgeLength: 58, reactivity: 0.92, collision: 22, warmupMode: "OFF" }
+  Compact: { repulsion: -48, edgeLength: 48, reactivity: 0.8, collision: 20, warmupMode: "SOFT", debugLogs: false },
+  Balanced: { repulsion: -58, edgeLength: 64, reactivity: 0.55, collision: 23, warmupMode: "HARD", debugLogs: false },
+  Spread: { repulsion: -82, edgeLength: 92, reactivity: 0.38, collision: 26, warmupMode: "SOFT", debugLogs: false },
+  Snappy: { repulsion: -52, edgeLength: 58, reactivity: 0.92, collision: 22, warmupMode: "OFF", debugLogs: false }
 };
 
 export function defaultLayoutSettings(): LayoutSettings {
@@ -74,7 +75,8 @@ export function serializeLayoutSettings(settings: LayoutSettings): LayoutSetting
     edgeLength: settings.edgeLength,
     reactivity: settings.reactivity,
     collision: settings.collision,
-    warmupMode: settings.warmupMode
+    warmupMode: settings.warmupMode,
+    debugLogs: settings.debugLogs
   };
 }
 
@@ -92,7 +94,8 @@ export function loadLayoutUiState(): LayoutUiState {
         edgeLength: clamp(asNumber(settings.edgeLength) ?? base.settings.edgeLength, LAYOUT_LIMITS.edgeLength.min, LAYOUT_LIMITS.edgeLength.max),
         reactivity: clamp(asNumber(settings.reactivity) ?? base.settings.reactivity, LAYOUT_LIMITS.reactivity.min, LAYOUT_LIMITS.reactivity.max),
         collision: clamp(asNumber(settings.collision) ?? base.settings.collision, LAYOUT_LIMITS.collision.min, LAYOUT_LIMITS.collision.max),
-        warmupMode: asWarmupMode(settings.warmupMode) ?? base.settings.warmupMode
+        warmupMode: asWarmupMode(settings.warmupMode) ?? base.settings.warmupMode,
+        debugLogs: typeof settings.debugLogs === "boolean" ? settings.debugLogs : base.settings.debugLogs
       },
       panel: { open: Boolean(parsed.panel?.open) }
     };
