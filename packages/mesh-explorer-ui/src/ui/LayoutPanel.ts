@@ -1,4 +1,4 @@
-import { applyPreset, serializeLayoutSettings, type DevPanelState, type LayoutPreset, type LayoutSettings, type WarmupMode } from "./layoutSettings.js";
+import { LAYOUT_LIMITS, applyPreset, serializeLayoutSettings, type DevPanelState, type LayoutPreset, type LayoutSettings, type WarmupMode } from "./layoutSettings.js";
 
 type LayoutPanelCallbacks = {
   onSettingsChange: (next: LayoutSettings) => void;
@@ -59,10 +59,10 @@ export class LayoutPanel {
       this.renderControls();
     }));
 
-    this.panelBody.appendChild(this.buildSlider("Repulsion", this.settings.repulsion, 20, 140, 1, (value) => this.updateSettings({ repulsion: value })));
-    this.panelBody.appendChild(this.buildSlider("Edge length", this.settings.edgeLength, 20, 160, 1, (value) => this.updateSettings({ edgeLength: value })));
-    this.panelBody.appendChild(this.buildSlider("Reactivity", this.settings.reactivity, 0, 1, 0.01, (value) => this.updateSettings({ reactivity: value })));
-    this.panelBody.appendChild(this.buildSlider("Collision", this.settings.collision, 8, 56, 1, (value) => this.updateSettings({ collision: value })));
+    this.panelBody.appendChild(this.buildSlider("Repulsion", this.settings.repulsion, LAYOUT_LIMITS.repulsion.min, LAYOUT_LIMITS.repulsion.max, 1, (value) => this.updateSettings({ repulsion: value })));
+    this.panelBody.appendChild(this.buildSlider("Edge length", this.settings.edgeLength, LAYOUT_LIMITS.edgeLength.min, LAYOUT_LIMITS.edgeLength.max, 1, (value) => this.updateSettings({ edgeLength: value })));
+    this.panelBody.appendChild(this.buildSlider("Reactivity", this.settings.reactivity, LAYOUT_LIMITS.reactivity.min, LAYOUT_LIMITS.reactivity.max, 0.01, (value) => this.updateSettings({ reactivity: value })));
+    this.panelBody.appendChild(this.buildSlider("Collision", this.settings.collision, LAYOUT_LIMITS.collision.min, LAYOUT_LIMITS.collision.max, 1, (value) => this.updateSettings({ collision: value })));
     this.panelBody.appendChild(this.buildSelect("Warmup", ["OFF", "SOFT", "HARD"], this.settings.warmupMode, (value) => this.updateSettings({ warmupMode: value as WarmupMode })));
 
     const actions = document.createElement("div");

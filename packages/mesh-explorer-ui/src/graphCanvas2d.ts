@@ -81,6 +81,7 @@ type ForceLayoutOptions = {
   requestFrame?: (callback: FrameRequestCallback) => number;
   cancelFrame?: (frameId: number) => void;
   onSoftWarmupFrame?: () => void;
+  onTick?: () => void;
 };
 
 export function worldToScreen(world: Vec2, camera: CameraState): Vec2 {
@@ -250,13 +251,25 @@ export class ForceLayout2D {
   private readonly requestFrame: (callback: FrameRequestCallback) => number;
   private readonly cancelFrame: (frameId: number) => void;
   private readonly onSoftWarmupFrame?: () => void;
+  private readonly onTick?: () => void;
+  private simulationFrame = 0;
 
   constructor(options: ForceLayoutOptions = {}) {
     this.params = { ...DEFAULT_LAYOUT_PARAMS, ...options.layoutParams };
     this.warmupMode = options.warmupMode ?? "HARD";
-    this.requestFrame = options.requestFrame ?? ((callback) => requestAnimationFrame(callback));
-    this.cancelFrame = options.cancelFrame ?? ((frameId) => cancelAnimationFrame(frameId));
+    this.requestFrame = options.requestFrame ?? ((callback) => {
+      if (typeof requestAnimationFrame === "function") return requestAnimationFrame(callback);
+      return setTimeout(() => callback(Date.now()), 16) as unknown as number;
+    });
+    this.cancelFrame = options.cancelFrame ?? ((frameId) => {
+      if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(frameId);
+        return;
+      }
+      clearTimeout(frameId);
+    });
     this.onSoftWarmupFrame = options.onSoftWarmupFrame;
+    this.onTick = options.onTick;
   }
 
   setLayoutParams(next: Partial<LayoutParams>): void {
@@ -289,10 +302,16 @@ export class ForceLayout2D {
     if (this.warmupMode === "SOFT") {
       this.scheduleSoftWarmup(WARMUP_TICKS);
     }
+    this.ensureSimulationLoop();
   }
 
   reheat(amount = 0.25): void {
     this.alpha = Math.max(this.alpha, amount);
+    this.ensureSimulationLoop();
+  }
+
+  restart(): void {
+    this.ensureSimulationLoop();
   }
 
   setPin(nodeId: string, position: Vec2): void {
@@ -329,6 +348,7 @@ export class ForceLayout2D {
 
   destroy(): void {
     this.cancelSoftWarmup();
+    this.cancelSimulationLoop();
   }
 
   getPositions(): Map<string, Vec2> {
@@ -412,6 +432,7 @@ export class ForceLayout2D {
     this.softWarmupFrame = this.requestFrame(() => {
       this.softWarmupFrame = 0;
       this.tick(Math.min(SOFT_WARMUP_TICKS_PER_FRAME, remainingTicks));
+      this.onTick?.();
       this.onSoftWarmupFrame?.();
       this.scheduleSoftWarmup(remainingTicks - SOFT_WARMUP_TICKS_PER_FRAME);
     });
@@ -421,6 +442,23 @@ export class ForceLayout2D {
     if (!this.softWarmupFrame) return;
     this.cancelFrame(this.softWarmupFrame);
     this.softWarmupFrame = 0;
+  }
+
+  private ensureSimulationLoop(): void {
+    if (this.simulationFrame) return;
+    if (!this.hasEnergy()) return;
+    this.simulationFrame = this.requestFrame(() => {
+      this.simulationFrame = 0;
+      this.tick(1);
+      this.onTick?.();
+      if (this.hasEnergy()) this.ensureSimulationLoop();
+    });
+  }
+
+  private cancelSimulationLoop(): void {
+    if (!this.simulationFrame) return;
+    this.cancelFrame(this.simulationFrame);
+    this.simulationFrame = 0;
   }
 }
 
@@ -432,8 +470,7 @@ export type GraphCanvasOptions = {
 export class GraphCanvas2D {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly layout: ForceLayout2D;
-  private raf = 0;
-  private running = false;
+  private renderRaf = 0;
   private pointer = { x: 0, y: 0 };
   private panning = false;
   private draggingNodeIds: string[] = [];
@@ -453,10 +490,10 @@ export class GraphCanvas2D {
     this.layout = new ForceLayout2D({
       layoutParams: options.layoutParams,
       warmupMode: options.warmupMode,
-      onSoftWarmupFrame: () => this.startLoop()
+      onSoftWarmupFrame: () => this.requestRender(),
+      onTick: () => this.requestRender()
     });
     this.syncLayoutGraph();
-    this.layout.tick(40);
     this.bindEvents();
     this.resize();
     this.render();
@@ -466,12 +503,11 @@ export class GraphCanvas2D {
     this.readModel = readModel;
     this.ui = ui;
     this.syncLayoutGraph();
-    this.startLoop();
-    this.render();
+    this.requestRender();
   }
 
   destroy(): void {
-    cancelAnimationFrame(this.raf);
+    if (this.renderRaf) cancelAnimationFrame(this.renderRaf);
     this.layout.destroy();
   }
 
@@ -482,7 +518,8 @@ export class GraphCanvas2D {
   setLayoutParams(params: Partial<LayoutParams>): void {
     this.layout.setLayoutParams(params);
     this.layout.reheat(0.3);
-    this.startLoop();
+    this.layout.restart();
+    this.requestRender();
   }
 
   setWarmupMode(mode: WarmupMode): void {
@@ -491,7 +528,8 @@ export class GraphCanvas2D {
 
   reheatLayout(): void {
     this.layout.reheat(0.42);
-    this.startLoop();
+    this.layout.restart();
+    this.requestRender();
   }
 
   resize(): void {
@@ -519,7 +557,7 @@ export class GraphCanvas2D {
         this.panning = true;
         this.callbacks.onCameraChange?.(this.ui.camera);
         this.canvas.setPointerCapture(event.pointerId);
-        this.startLoop();
+        this.requestRender();
         return;
       }
       if (hit) {
@@ -537,7 +575,7 @@ export class GraphCanvas2D {
           for (const id of this.draggingNodeIds) {
             this.layout.setPin(id, pointerWorld);
           }
-          this.startLoop();
+          this.requestRender();
         }
       } else {
         this.callbacks.onSelectionClear();
@@ -556,7 +594,7 @@ export class GraphCanvas2D {
           y: this.ui.camera.y - event.movementY / this.ui.camera.zoom
         };
         this.callbacks.onCameraChange?.(this.ui.camera);
-        this.startLoop();
+        this.requestRender();
         return;
       }
       if (this.draggingNodeIds.length === 0) {
@@ -564,7 +602,7 @@ export class GraphCanvas2D {
         this.hoveredEdgeId = this.ui.hoveredNodeId
           ? null
           : hitTestEdges(this.readModel.links, this.nodePositions(), this.ui.camera, this.pointer);
-        this.render();
+        this.requestRender();
         return;
       }
 
@@ -572,7 +610,8 @@ export class GraphCanvas2D {
         this.layout.setPin(id, pointerWorld);
       }
       this.layout.reheat(0.3);
-      this.startLoop();
+      this.layout.restart();
+      this.requestRender();
     };
 
     const onPointerUp = (event: PointerEvent) => {
@@ -606,8 +645,7 @@ export class GraphCanvas2D {
           this.callbacks.onEdgeDraftChange(null);
         }
       }
-      this.startLoop();
-      this.render();
+      this.requestRender();
     };
 
     this.canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
@@ -628,7 +666,7 @@ export class GraphCanvas2D {
       const ratio = Math.exp(-event.deltaY * 0.0015);
       this.ui.camera = zoomAtPoint(this.ui.camera, { x: event.offsetX, y: event.offsetY }, this.ui.camera.zoom * ratio);
       this.callbacks.onCameraChange?.(this.ui.camera);
-      this.startLoop();
+      this.requestRender();
     }, { passive: false });
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") this.callbacks.onEdgeDraftChange(null);
@@ -637,20 +675,12 @@ export class GraphCanvas2D {
     window.addEventListener("resize", () => this.resize());
   }
 
-  private startLoop(): void {
-    if (this.running) return;
-    this.running = true;
-    const tick = () => {
-      this.layout.tick(1);
+  private requestRender(): void {
+    if (this.renderRaf) return;
+    this.renderRaf = requestAnimationFrame(() => {
+      this.renderRaf = 0;
       this.render();
-      const shouldContinue = this.panning || this.draggingNodeIds.length > 0 || this.layout.hasEnergy();
-      if (this.running && shouldContinue) {
-        this.raf = requestAnimationFrame(tick);
-        return;
-      }
-      this.running = false;
-    };
-    this.raf = requestAnimationFrame(tick);
+    });
   }
 
   private render(): void {

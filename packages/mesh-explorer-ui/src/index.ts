@@ -119,11 +119,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       nodes: Array.from(snapshot.nodesById.values()),
       links: Array.from(snapshot.linksById.values()).filter((link: GraphLink) => snapshot.nodesById.has(link.source) && snapshot.nodesById.has(link.target))
     };
-    if (!hasUserMovedCamera && !autoFitApplied && data.nodes.length > 0) {
-      fitCameraToCurrentGraph();
-      autoFitApplied = true;
-    }
     canvasRenderer?.update({ nodes: data.nodes, links: data.links, selectedNodeIds: snapshot.selectedNodeIds }, uiState);
+    if (!hasUserMovedCamera && !autoFitApplied && data.nodes.length > 0) {
+      const applied = fitCameraToCurrentGraph();
+      if (applied) autoFitApplied = true;
+    }
     updateSelectionUi(snapshot);
     renderStatus(snapshot, data.nodes.length, data.links.length);
   });
@@ -354,10 +354,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     });
   }
 
-  function fitCameraToCurrentGraph(): void {
+  function fitCameraToCurrentGraph(): boolean {
     const positioned = Array.from((canvasRenderer?.getNodePositions() ?? new Map()).values()).map((position) => ({ position }));
     const bounds = computeGraphBounds(positioned);
-    if (!bounds) return;
+    if (!bounds) return false;
     const rect = el.graphCanvas.getBoundingClientRect();
     uiState.camera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12, store.getState().nodesById.size);
     cameraInfo = uiState.camera;
@@ -367,6 +367,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       links: Array.from(store.getState().linksById.values()),
       selectedNodeIds: store.getState().selectedNodeIds
     }, uiState);
+    return true;
   }
 
   function updateSelectionUi(snapshot: GraphState): void {
