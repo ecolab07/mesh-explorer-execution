@@ -21,8 +21,7 @@ import {
   fitCameraToBounds,
   GraphCanvas2D,
   type CameraState,
-  type CanvasUiState,
-  type Vec2
+  type CanvasUiState
 } from "./graphCanvas2d.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
@@ -39,8 +38,6 @@ type SyncPollPayload = {
   graph?: Array<{ payload?: unknown }>;
   cursorAfter?: Cursor;
 };
-
-type PositionedNode = GraphNode & { position: Vec2 };
 
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
@@ -81,8 +78,6 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let syncSession = 0;
   let rendererMode: "canvas-2d" | "fallback-json" = "canvas-2d";
   let activeAbort: AbortController | null = null;
-  const localPositions = new Map<string, Vec2>();
-  const pendingMoveCommits = new Map<string, Vec2>();
   let hasUserMovedCamera = false;
   let autoFitApplied = false;
   let cameraInfo: CameraState = { x: -280, y: -180, zoom: 1, minZoom: 0.2, maxZoom: 3.5 };
@@ -93,7 +88,6 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     camera: cameraInfo,
     hoveredNodeId: null,
     edgeDraft: null,
-    overlayPositions: new Map(),
     dragSelectionRect: null
   };
 
@@ -113,15 +107,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       nodes: Array.from(snapshot.nodesById.values()),
       links: Array.from(snapshot.linksById.values()).filter((link: GraphLink) => snapshot.nodesById.has(link.source) && snapshot.nodesById.has(link.target))
     };
-    const positionedNodes = materializeNodePositions(data.nodes);
-    resolvePendingMoveCommit(positionedNodes);
-    if (!hasUserMovedCamera && !autoFitApplied && positionedNodes.length > 0) {
-      fitCameraToCurrentGraph(positionedNodes);
+    if (!hasUserMovedCamera && !autoFitApplied && data.nodes.length > 0) {
+      fitCameraToCurrentGraph();
       autoFitApplied = true;
     }
-    canvasRenderer?.update({ nodes: positionedNodes, links: data.links, selectedNodeIds: snapshot.selectedNodeIds }, uiState);
+    canvasRenderer?.update({ nodes: data.nodes, links: data.links, selectedNodeIds: snapshot.selectedNodeIds }, uiState);
     updateSelectionUi(snapshot);
-    renderStatus(snapshot, positionedNodes.length, data.links.length);
+    renderStatus(snapshot, data.nodes.length, data.links.length);
   });
 
   el.connect.onclick = () => {
@@ -133,10 +125,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const label = prompt("Node label", "new node") ?? "";
     if (!label) return;
     dbg("add-node:submit", { label });
-    void addNode(label, cameraCenter(uiState.camera));
+    void addNode(label);
   };
 
-  el.fitGraph.onclick = () => fitCameraToCurrentGraph(materializeNodePositions(Array.from(store.getState().nodesById.values())));
+  el.fitGraph.onclick = () => fitCameraToCurrentGraph();
 
   installTestHook(store);
   syncSession += 1;
@@ -254,12 +246,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   }
 
-  async function addNode(label: string, position: Vec2): Promise<void> {
+  async function addNode(label: string): Promise<void> {
     try {
       const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
         method: "POST",
         headers: headers(el.principal.value),
-        body: JSON.stringify({ label, metadata: { position }, idempotencyKey: crypto.randomUUID() })
+        body: JSON.stringify({ label, idempotencyKey: crypto.randomUUID() })
       }, { principal: el.principal.value, transport: "fetch", debugAuth });
       if (!response.ok) reportDevError(el, `add node failed: ${response.status}`);
     } catch (error) {
@@ -281,47 +273,6 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   }
 
-  async function commitNodeMove(overlays: Map<string, Vec2>): Promise<boolean> {
-    for (const [id, position] of overlays) {
-      localPositions.set(id, position);
-      pendingMoveCommits.set(id, position);
-    }
-    canvasRenderer?.update({
-      nodes: materializeNodePositions(Array.from(store.getState().nodesById.values())),
-      links: Array.from(store.getState().linksById.values()),
-      selectedNodeIds: store.getState().selectedNodeIds
-    }, uiState);
-
-    try {
-      const targets = Array.from(overlays.entries());
-      for (const [id, position] of targets) {
-        const canonical = store.getState().nodesById.get(id);
-        if (!canonical) continue;
-        const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
-          method: "POST",
-          headers: headers(el.principal.value),
-          body: JSON.stringify({
-            id,
-            label: canonical.label,
-            level: canonical.level,
-            metadata: { ...(canonical.metadata ?? {}), position },
-            idempotencyKey: crypto.randomUUID()
-          })
-        }, { principal: el.principal.value, transport: "fetch", debugAuth });
-        if (!response.ok) {
-          rollbackPending(overlays);
-          reportDevError(el, `move rejected: ${response.status}`);
-          return false;
-        }
-      }
-      return true;
-    } catch (error) {
-      rollbackPending(overlays);
-      reportDevError(el, `move failed: ${String(error)}`, error);
-      return false;
-    }
-  }
-
   function setupRenderer(): void {
     try {
       canvasRenderer = new GraphCanvas2D(el.graphCanvas, { nodes: [], links: [], selectedNodeIds: new Set() }, uiState, {
@@ -332,7 +283,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           uiState.edgeDraft = edgeDraft;
           updateSelectionUi(store.getState());
           canvasRenderer?.update({
-            nodes: materializeNodePositions(Array.from(store.getState().nodesById.values())),
+            nodes: Array.from(store.getState().nodesById.values()),
             links: Array.from(store.getState().linksById.values()),
             selectedNodeIds: store.getState().selectedNodeIds
           }, uiState);
@@ -340,14 +291,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         onCreateEdge: (source, target) => {
           void createLinkFromDraft(source, target);
         },
-        onMoveCommit: commitNodeMove,
         onCameraChange: (camera) => {
           hasUserMovedCamera = true;
           cameraInfo = camera;
           queueBadgeRender();
         },
         onFitRequest: () => {
-          fitCameraToCurrentGraph(materializeNodePositions(Array.from(store.getState().nodesById.values())));
+          fitCameraToCurrentGraph();
         }
       });
       setRendererMode("canvas-2d");
@@ -357,57 +307,16 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   }
 
-  function materializeNodePositions(nodes: GraphNode[]): PositionedNode[] {
-    const output: PositionedNode[] = [];
-    let index = 0;
-    for (const node of nodes) {
-      const metadataPos = readMetadataPosition(node);
-      const fromLocal = localPositions.get(node.id);
-      const pendingPos = pendingMoveCommits.get(node.id);
-      const position = pendingPos ?? metadataPos ?? fromLocal ?? defaultPosition(index);
-      localPositions.set(node.id, position);
-      output.push({ ...node, position });
-      index += 1;
-    }
-    return output;
-  }
-
-  function rollbackPending(overlays: Map<string, Vec2>): void {
-    for (const [id] of overlays) {
-      pendingMoveCommits.delete(id);
-      const canonical = store.getState().nodesById.get(id);
-      const canonicalPos = canonical ? readMetadataPosition(canonical) : null;
-      if (canonicalPos) {
-        localPositions.set(id, canonicalPos);
-      } else {
-        localPositions.delete(id);
-      }
-      uiState.overlayPositions.delete(id);
-    }
-  }
-
-  function resolvePendingMoveCommit(positionedNodes: PositionedNode[]): void {
-    for (const node of positionedNodes) {
-      const pending = pendingMoveCommits.get(node.id);
-      const canonical = readMetadataPosition(node);
-      if (!pending || !canonical) continue;
-      if (canonical.x === pending.x && canonical.y === pending.y) {
-        pendingMoveCommits.delete(node.id);
-        uiState.overlayPositions.delete(node.id);
-        localPositions.set(node.id, canonical);
-      }
-    }
-  }
-
-  function fitCameraToCurrentGraph(nodes: PositionedNode[]): void {
-    const bounds = computeGraphBounds(nodes);
+  function fitCameraToCurrentGraph(): void {
+    const positioned = Array.from((canvasRenderer?.getNodePositions() ?? new Map()).values()).map((position) => ({ position }));
+    const bounds = computeGraphBounds(positioned);
     if (!bounds) return;
     const rect = el.graphCanvas.getBoundingClientRect();
     uiState.camera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12);
     cameraInfo = uiState.camera;
     queueBadgeRender();
     canvasRenderer?.update({
-      nodes,
+      nodes: Array.from(store.getState().nodesById.values()),
       links: Array.from(store.getState().linksById.values()),
       selectedNodeIds: store.getState().selectedNodeIds
     }, uiState);
@@ -616,24 +525,6 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
-function readMetadataPosition(node: GraphNode): Vec2 | null {
-  const pos = node.metadata?.position;
-  if (!pos || typeof pos !== "object") return null;
-  const x = (pos as Record<string, unknown>).x;
-  const y = (pos as Record<string, unknown>).y;
-  if (typeof x !== "number" || typeof y !== "number") return null;
-  return { x, y };
-}
-
-function defaultPosition(index: number): Vec2 {
-  const col = index % 6;
-  const row = Math.floor(index / 6);
-  return { x: col * 120, y: row * 100 };
-}
-
-function cameraCenter(camera: CameraState): Vec2 {
-  return { x: camera.x + 420 / camera.zoom, y: camera.y + 280 / camera.zoom };
-}
 
 function readCursor(storageKey: string): Cursor | null {
   try {

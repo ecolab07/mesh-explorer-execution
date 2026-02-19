@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { computeEdgeHitSlopWorld, computeGraphBounds, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { ForceLayout2D, computeEdgeHitSlopWorld, computeGraphBounds, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
 
 describe("graphCanvas2d transforms", () => {
   it("keeps world point stable under cursor while zooming", () => {
@@ -134,3 +135,49 @@ describe("graph fit helpers", () => {
     expect(next.y).toBeCloseTo(-5.555555, 5);
   });
 });
+
+
+describe("layout engine", () => {
+  it("uses deterministic seeded initial positions", () => {
+    expect(seededNodePosition("node-a")).toEqual(seededNodePosition("node-a"));
+    expect(seededNodePosition("node-a")).not.toEqual(seededNodePosition("node-b"));
+  });
+
+  it("keeps initial layout deterministic for same topology", () => {
+    const mk = () => {
+      const layout = new ForceLayout2D();
+      layout.syncGraph([{ id: "a" }, { id: "b" }, { id: "c" }], [{ source: "a", target: "b" }, { source: "b", target: "c" }]);
+      return layout.getPositions();
+    };
+    expect(mk()).toEqual(mk());
+  });
+
+  it("reheats and slightly moves neighbors after dragging one node", () => {
+    const layout = new ForceLayout2D();
+    layout.syncGraph([{ id: "a" }, { id: "b" }, { id: "c" }], [{ source: "a", target: "b" }, { source: "b", target: "c" }]);
+    layout.tick(20);
+    const before = layout.getPositions();
+
+    layout.setPin("a", { x: 320, y: 60 });
+    layout.tick(12);
+    layout.clearPin("a");
+    layout.reheat(0.35);
+    layout.tick(16);
+
+    const after = layout.getPositions();
+    const b0 = before.get("b")!;
+    const b1 = after.get("b")!;
+    const delta = Math.hypot(b1.x - b0.x, b1.y - b0.y);
+    expect(delta).toBeGreaterThan(0.01);
+  });
+});
+
+describe("move command removal", () => {
+  it("does not keep drag move commit hooks in UI command flow", () => {
+    const indexSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+    const canvasSource = readFileSync(new URL("../src/graphCanvas2d.ts", import.meta.url), "utf8");
+    expect(indexSource.includes("commitNodeMove")).toBe(false);
+    expect(canvasSource.includes("onMoveCommit")).toBe(false);
+  });
+});
+
