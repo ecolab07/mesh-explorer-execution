@@ -4,8 +4,12 @@ export type Vec2 = { x: number; y: number };
 export type CameraState = { x: number; y: number; zoom: number; minZoom: number; maxZoom: number };
 export type EdgeDraft = { startNodeId: string; cursorWorldPos: Vec2 };
 
+type LayoutNode = { id: string; x: number; y: number; vx: number; vy: number; fx?: number; fy?: number };
+
+type LayoutLink = { source: string; target: string };
+
 export type GraphCanvasReadModel = {
-  nodes: Array<GraphNode & { position: Vec2 }>;
+  nodes: GraphNode[];
   links: GraphLink[];
   selectedNodeIds: Set<string>;
 };
@@ -14,7 +18,6 @@ export type CanvasUiState = {
   camera: CameraState;
   hoveredNodeId: string | null;
   edgeDraft: EdgeDraft | null;
-  overlayPositions: Map<string, Vec2>;
   dragSelectionRect: { start: Vec2; end: Vec2 } | null;
 };
 
@@ -24,7 +27,6 @@ export type GraphCanvasCallbacks = {
   onSelectionClear: () => void;
   onEdgeDraftChange: (edgeDraft: EdgeDraft | null) => void;
   onCreateEdge: (source: string, target: string) => void;
-  onMoveCommit: (positions: Map<string, Vec2>) => Promise<boolean>;
   onCameraChange?: (camera: CameraState) => void;
   onFitRequest?: () => void;
 };
@@ -32,6 +34,13 @@ export type GraphCanvasCallbacks = {
 const NODE_RADIUS = 22;
 const NODE_HIT_SLOP_PX = 0;
 const EDGE_HIT_SLOP_PX = 8;
+const LAYOUT_LINK_DISTANCE = 130;
+const LAYOUT_LINK_STRENGTH = 0.02;
+const LAYOUT_CHARGE_STRENGTH = 3000;
+const LAYOUT_CENTERING = 0.01;
+const LAYOUT_DAMPING = 0.82;
+const LAYOUT_MIN_ALPHA = 0.0005;
+const LAYOUT_ALPHA_DECAY = 0.04;
 export const ENABLE_EDGE_HIT_TEST = true;
 
 export function worldToScreen(world: Vec2, camera: CameraState): Vec2 {
@@ -166,13 +175,155 @@ export function nextSelectedEdgeIds(
   return new Set();
 }
 
+export function seededNodePosition(nodeId: string): Vec2 {
+  const seedA = fnv1a32(nodeId);
+  const seedB = fnv1a32(`${nodeId}:y`);
+  const radius = 120 + (seedA % 60);
+  const angle = ((seedB % 3600) / 3600) * Math.PI * 2;
+  return {
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius
+  };
+}
+
+export class ForceLayout2D {
+  private readonly nodeById = new Map<string, LayoutNode>();
+  private links: LayoutLink[] = [];
+  private alpha = 0;
+
+  syncGraph(nodes: Array<{ id: string }>, links: LayoutLink[]): void {
+    const nextIds = new Set(nodes.map((node) => node.id));
+    for (const id of this.nodeById.keys()) {
+      if (!nextIds.has(id)) this.nodeById.delete(id);
+    }
+
+    for (const node of nodes) {
+      if (this.nodeById.has(node.id)) continue;
+      const seeded = seededNodePosition(node.id);
+      this.nodeById.set(node.id, { id: node.id, x: seeded.x, y: seeded.y, vx: 0, vy: 0 });
+    }
+
+    this.links = links.filter((link) => this.nodeById.has(link.source) && this.nodeById.has(link.target));
+    this.reheat(0.45);
+  }
+
+  reheat(amount = 0.25): void {
+    this.alpha = Math.max(this.alpha, amount);
+  }
+
+  setPin(nodeId: string, position: Vec2): void {
+    const node = this.nodeById.get(nodeId);
+    if (!node) return;
+    node.fx = position.x;
+    node.fy = position.y;
+    node.x = position.x;
+    node.y = position.y;
+    node.vx = 0;
+    node.vy = 0;
+    this.reheat(0.35);
+  }
+
+  clearPin(nodeId: string): void {
+    const node = this.nodeById.get(nodeId);
+    if (!node) return;
+    delete node.fx;
+    delete node.fy;
+  }
+
+  tick(iterations = 1): void {
+    for (let i = 0; i < iterations; i += 1) {
+      if (this.alpha <= LAYOUT_MIN_ALPHA) continue;
+      this.tickOnce();
+      this.alpha *= 1 - LAYOUT_ALPHA_DECAY;
+    }
+  }
+
+  hasEnergy(): boolean {
+    return this.alpha > LAYOUT_MIN_ALPHA;
+  }
+
+  getPositions(): Map<string, Vec2> {
+    const output = new Map<string, Vec2>();
+    for (const [id, node] of this.nodeById) {
+      output.set(id, { x: node.x, y: node.y });
+    }
+    return output;
+  }
+
+  private tickOnce(): void {
+    const alpha = this.alpha;
+    const nodes = Array.from(this.nodeById.values());
+
+    for (const node of nodes) {
+      if (node.fx !== undefined && node.fy !== undefined) {
+        node.x = node.fx;
+        node.y = node.fy;
+        node.vx = 0;
+        node.vy = 0;
+      }
+    }
+
+    for (let i = 0; i < nodes.length; i += 1) {
+      const a = nodes[i]!;
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const b = nodes[j]!;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const distSq = dx * dx + dy * dy + 0.01;
+        const force = (LAYOUT_CHARGE_STRENGTH * alpha) / distSq;
+        const fx = dx * force;
+        const fy = dy * force;
+        if (a.fx === undefined) {
+          a.vx += fx;
+          a.vy += fy;
+        }
+        if (b.fx === undefined) {
+          b.vx -= fx;
+          b.vy -= fy;
+        }
+      }
+    }
+
+    for (const link of this.links) {
+      const source = this.nodeById.get(link.source);
+      const target = this.nodeById.get(link.target);
+      if (!source || !target) continue;
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const dist = Math.hypot(dx, dy) || 0.001;
+      const delta = (dist - LAYOUT_LINK_DISTANCE) * LAYOUT_LINK_STRENGTH * alpha;
+      const fx = (dx / dist) * delta;
+      const fy = (dy / dist) * delta;
+      if (source.fx === undefined) {
+        source.vx += fx;
+        source.vy += fy;
+      }
+      if (target.fx === undefined) {
+        target.vx -= fx;
+        target.vy -= fy;
+      }
+    }
+
+    for (const node of nodes) {
+      if (node.fx !== undefined && node.fy !== undefined) continue;
+      node.vx += (0 - node.x) * LAYOUT_CENTERING * alpha;
+      node.vy += (0 - node.y) * LAYOUT_CENTERING * alpha;
+      node.vx *= LAYOUT_DAMPING;
+      node.vy *= LAYOUT_DAMPING;
+      node.x += node.vx;
+      node.y += node.vy;
+    }
+  }
+}
+
 export class GraphCanvas2D {
   private readonly ctx: CanvasRenderingContext2D;
+  private readonly layout = new ForceLayout2D();
   private raf = 0;
   private running = false;
   private pointer = { x: 0, y: 0 };
   private panning = false;
-  private dragging: { pointerStart: Vec2; original: Map<string, Vec2> } | null = null;
+  private draggingNodeIds: string[] = [];
   private hoveredEdgeId: string | null = null;
   private selectedEdgeIds = new Set<string>();
 
@@ -185,6 +336,8 @@ export class GraphCanvas2D {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context unavailable");
     this.ctx = ctx;
+    this.syncLayoutGraph();
+    this.layout.tick(40);
     this.bindEvents();
     this.resize();
     this.render();
@@ -193,11 +346,17 @@ export class GraphCanvas2D {
   update(readModel: GraphCanvasReadModel, ui: CanvasUiState): void {
     this.readModel = readModel;
     this.ui = ui;
+    this.syncLayoutGraph();
+    this.startLoop();
     this.render();
   }
 
   destroy(): void {
     cancelAnimationFrame(this.raf);
+  }
+
+  getNodePositions(): Map<string, Vec2> {
+    return this.layout.getPositions();
   }
 
   resize(): void {
@@ -209,6 +368,10 @@ export class GraphCanvas2D {
     this.render();
   }
 
+  private syncLayoutGraph(): void {
+    this.layout.syncGraph(this.readModel.nodes.map((node) => ({ id: node.id })), this.readModel.links.map((link) => ({ source: link.source, target: link.target })));
+  }
+
   private bindEvents(): void {
     const onPointerDown = (event: PointerEvent) => {
       if (event.button === 1) {
@@ -216,7 +379,7 @@ export class GraphCanvas2D {
         event.stopPropagation();
       }
       this.pointer = { x: event.offsetX, y: event.offsetY };
-      const hit = hitTestNode(this.readModel.nodes, this.ui.camera, this.pointer);
+      const hit = hitTestNode(this.positionedNodes(), this.ui.camera, this.pointer);
       if (event.button === 1 || event.ctrlKey || event.metaKey || event.altKey) {
         this.panning = true;
         this.callbacks.onCameraChange?.(this.ui.camera);
@@ -231,14 +394,14 @@ export class GraphCanvas2D {
         } else if (!this.readModel.selectedNodeIds.has(hit)) {
           this.callbacks.onSelectionReplace([hit]);
         }
+
         if (this.readModel.selectedNodeIds.has(hit) || !event.shiftKey) {
-          const original = new Map<string, Vec2>();
           const selected = this.readModel.selectedNodeIds.has(hit) ? this.readModel.selectedNodeIds : new Set([hit]);
-          for (const id of selected) {
-            const node = this.readModel.nodes.find((item) => item.id === id);
-            if (node) original.set(id, node.position);
+          this.draggingNodeIds = Array.from(selected);
+          const pointerWorld = screenToWorld(this.pointer, this.ui.camera);
+          for (const id of this.draggingNodeIds) {
+            this.layout.setPin(id, pointerWorld);
           }
-          this.dragging = { pointerStart: screenToWorld(this.pointer, this.ui.camera), original };
           this.startLoop();
         }
       } else {
@@ -261,35 +424,30 @@ export class GraphCanvas2D {
         this.startLoop();
         return;
       }
-      if (!this.dragging) {
-        this.ui.hoveredNodeId = hitTestNode(this.readModel.nodes, this.ui.camera, this.pointer);
+      if (this.draggingNodeIds.length === 0) {
+        this.ui.hoveredNodeId = hitTestNode(this.positionedNodes(), this.ui.camera, this.pointer);
         this.hoveredEdgeId = this.ui.hoveredNodeId
           ? null
           : hitTestEdges(this.readModel.links, this.nodePositions(), this.ui.camera, this.pointer);
         this.render();
         return;
       }
-      const delta = {
-        x: pointerWorld.x - this.dragging.pointerStart.x,
-        y: pointerWorld.y - this.dragging.pointerStart.y
-      };
-      this.ui.overlayPositions.clear();
-      for (const [id, start] of this.dragging.original) {
-        this.ui.overlayPositions.set(id, { x: start.x + delta.x, y: start.y + delta.y });
+
+      for (const id of this.draggingNodeIds) {
+        this.layout.setPin(id, pointerWorld);
       }
+      this.layout.reheat(0.3);
       this.startLoop();
     };
 
-    const onPointerUp = async (event: PointerEvent) => {
-      const wasDragging = Boolean(this.dragging);
-      if (this.dragging) {
-        const commitMap = new Map(this.ui.overlayPositions);
-        this.dragging = null;
-        this.running = false;
-        if (commitMap.size > 0) {
-          const accepted = await this.callbacks.onMoveCommit(commitMap);
-          if (!accepted) this.ui.overlayPositions.clear();
+    const onPointerUp = (event: PointerEvent) => {
+      const wasDragging = this.draggingNodeIds.length > 0;
+      if (wasDragging) {
+        for (const id of this.draggingNodeIds) {
+          this.layout.clearPin(id);
         }
+        this.draggingNodeIds = [];
+        this.layout.reheat(0.22);
       }
       if (this.panning) {
         this.panning = false;
@@ -299,7 +457,8 @@ export class GraphCanvas2D {
       }
       const pointerWorld = screenToWorld({ x: event.offsetX, y: event.offsetY }, this.ui.camera);
       if (!wasDragging) {
-        const hit = hitTestNode(this.readModel.nodes, this.ui.camera, { x: event.offsetX, y: event.offsetY });
+        const positionedNodes = this.positionedNodes();
+        const hit = hitTestNode(positionedNodes, this.ui.camera, { x: event.offsetX, y: event.offsetY });
         const edgeHit = hit
           ? null
           : hitTestEdges(this.readModel.links, this.nodePositions(), this.ui.camera, { x: event.offsetX, y: event.offsetY });
@@ -312,17 +471,14 @@ export class GraphCanvas2D {
           this.callbacks.onEdgeDraftChange(null);
         }
       }
+      this.startLoop();
       this.render();
     };
 
     this.canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
     this.canvas.addEventListener("pointermove", onPointerMove);
-    this.canvas.addEventListener("pointerup", (event) => {
-      void onPointerUp(event);
-    });
-    this.canvas.addEventListener("pointercancel", (event) => {
-      void onPointerUp(event);
-    });
+    this.canvas.addEventListener("pointerup", onPointerUp);
+    this.canvas.addEventListener("pointercancel", onPointerUp);
     this.canvas.addEventListener("mousedown", (event) => {
       if (event.button === 1) {
         event.preventDefault();
@@ -350,12 +506,14 @@ export class GraphCanvas2D {
     if (this.running) return;
     this.running = true;
     const tick = () => {
+      this.layout.tick(1);
       this.render();
-      if (this.running && (this.dragging || this.panning)) {
+      const shouldContinue = this.panning || this.draggingNodeIds.length > 0 || this.layout.hasEnergy();
+      if (this.running && shouldContinue) {
         this.raf = requestAnimationFrame(tick);
-      } else {
-        this.running = false;
+        return;
       }
+      this.running = false;
     };
     this.raf = requestAnimationFrame(tick);
   }
@@ -378,9 +536,10 @@ export class GraphCanvas2D {
       -this.ui.camera.y * dpr * this.ui.camera.zoom
     );
 
+    const positions = this.nodePositions();
     for (const link of this.readModel.links) {
-      const source = this.nodePos(link.source);
-      const target = this.nodePos(link.target);
+      const source = positions.get(link.source);
+      const target = positions.get(link.target);
       if (!source || !target) continue;
       const selected = this.selectedEdgeIds.has(link.id);
       const hovered = !selected && this.hoveredEdgeId === link.id;
@@ -393,7 +552,8 @@ export class GraphCanvas2D {
     }
 
     for (const node of this.readModel.nodes) {
-      const pos = this.nodePos(node.id) ?? node.position;
+      const pos = positions.get(node.id);
+      if (!pos) continue;
       const selected = this.readModel.selectedNodeIds.has(node.id);
       this.ctx.fillStyle = selected ? "#1d4ed8" : "#0f172a";
       this.ctx.beginPath();
@@ -411,7 +571,7 @@ export class GraphCanvas2D {
     }
 
     if (this.ui.edgeDraft) {
-      const start = this.nodePos(this.ui.edgeDraft.startNodeId);
+      const start = positions.get(this.ui.edgeDraft.startNodeId);
       if (start) {
         this.ctx.setLineDash([6 / this.ui.camera.zoom, 6 / this.ui.camera.zoom]);
         this.ctx.strokeStyle = "#f59e0b";
@@ -425,22 +585,30 @@ export class GraphCanvas2D {
     }
   }
 
-  private nodePos(id: string): Vec2 | null {
-    const overlay = this.ui.overlayPositions.get(id);
-    if (overlay) return overlay;
-    const node = this.readModel.nodes.find((item) => item.id === id);
-    return node?.position ?? null;
+  private positionedNodes(): Array<{ id: string; position: Vec2 }> {
+    const positions = this.layout.getPositions();
+    return this.readModel.nodes
+      .map((node) => {
+        const position = positions.get(node.id);
+        return position ? { id: node.id, position } : null;
+      })
+      .filter((entry): entry is { id: string; position: Vec2 } => entry !== null);
   }
 
   private nodePositions(): Map<string, Vec2> {
-    const output = new Map<string, Vec2>();
-    for (const node of this.readModel.nodes) {
-      output.set(node.id, this.nodePos(node.id) ?? node.position);
-    }
-    return output;
+    return this.layout.getPositions();
   }
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function fnv1a32(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
 }
