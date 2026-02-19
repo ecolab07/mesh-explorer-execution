@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeEdgeHitSlopWorld, computeGraphBounds, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, screenToWorld, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { computeEdgeHitSlopWorld, computeGraphBounds, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
 
 describe("graphCanvas2d transforms", () => {
   it("keeps world point stable under cursor while zooming", () => {
@@ -95,6 +95,24 @@ describe("edge draft state machine", () => {
     const start = nextEdgeDraft(null, "n1", { x: 0, y: 0 }).edgeDraft;
     expect(nextEdgeDraft(start ?? null, "n1", { x: 0, y: 0 }).edgeDraft).toBeNull();
     expect(nextEdgeDraft(start ?? null, null, { x: 0, y: 0 }).edgeDraft).toBeNull();
+  });
+});
+
+describe("edge selection state machine", () => {
+  it("clears selected edges when a node is clicked", () => {
+    const selected = new Set(["edge-1"]);
+    expect(nextSelectedEdgeIds(selected, { nodeHit: "n1", edgeHit: null, shiftKey: false })).toEqual(new Set());
+  });
+
+  it("supports shift toggle for multi-edge selection", () => {
+    const selectedA = nextSelectedEdgeIds(new Set(), { nodeHit: null, edgeHit: "edge-a", shiftKey: false });
+    expect(selectedA).toEqual(new Set(["edge-a"]));
+
+    const selectedAB = nextSelectedEdgeIds(selectedA, { nodeHit: null, edgeHit: "edge-b", shiftKey: true });
+    expect(selectedAB).toEqual(new Set(["edge-a", "edge-b"]));
+
+    const selectedB = nextSelectedEdgeIds(selectedAB, { nodeHit: null, edgeHit: "edge-a", shiftKey: true });
+    expect(selectedB).toEqual(new Set(["edge-b"]));
   });
 });
 

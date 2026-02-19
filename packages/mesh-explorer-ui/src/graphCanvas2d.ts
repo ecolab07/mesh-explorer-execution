@@ -151,6 +151,21 @@ export function nextEdgeDraft(current: EdgeDraft | null, clickedNodeId: string |
   return { edgeDraft: null, commit: { source: current.startNodeId, target: clickedNodeId } };
 }
 
+export function nextSelectedEdgeIds(
+  current: ReadonlySet<string>,
+  params: { nodeHit: string | null; edgeHit: string | null; shiftKey: boolean }
+): Set<string> {
+  if (params.nodeHit) return new Set();
+  if (params.edgeHit) {
+    if (!params.shiftKey) return new Set([params.edgeHit]);
+    const next = new Set(current);
+    if (next.has(params.edgeHit)) next.delete(params.edgeHit);
+    else next.add(params.edgeHit);
+    return next;
+  }
+  return new Set();
+}
+
 export class GraphCanvas2D {
   private readonly ctx: CanvasRenderingContext2D;
   private raf = 0;
@@ -159,7 +174,7 @@ export class GraphCanvas2D {
   private panning = false;
   private dragging: { pointerStart: Vec2; original: Map<string, Vec2> } | null = null;
   private hoveredEdgeId: string | null = null;
-  private selectedEdgeId: string | null = null;
+  private selectedEdgeIds = new Set<string>();
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -210,6 +225,7 @@ export class GraphCanvas2D {
         return;
       }
       if (hit) {
+        this.selectedEdgeIds.clear();
         if (event.shiftKey) {
           this.callbacks.onSelectionToggle(hit);
         } else if (!this.readModel.selectedNodeIds.has(hit)) {
@@ -284,19 +300,16 @@ export class GraphCanvas2D {
       const pointerWorld = screenToWorld({ x: event.offsetX, y: event.offsetY }, this.ui.camera);
       if (!wasDragging) {
         const hit = hitTestNode(this.readModel.nodes, this.ui.camera, { x: event.offsetX, y: event.offsetY });
+        const edgeHit = hit
+          ? null
+          : hitTestEdges(this.readModel.links, this.nodePositions(), this.ui.camera, { x: event.offsetX, y: event.offsetY });
+        this.selectedEdgeIds = nextSelectedEdgeIds(this.selectedEdgeIds, { nodeHit: hit, edgeHit, shiftKey: event.shiftKey });
         if (hit) {
-          this.selectedEdgeId = null;
           const next = nextEdgeDraft(this.ui.edgeDraft, hit, pointerWorld);
           this.callbacks.onEdgeDraftChange(next.edgeDraft);
           if (next.commit) this.callbacks.onCreateEdge(next.commit.source, next.commit.target);
-        } else {
-          const edgeHit = hitTestEdges(this.readModel.links, this.nodePositions(), this.ui.camera, { x: event.offsetX, y: event.offsetY });
-          if (edgeHit) {
-            this.selectedEdgeId = edgeHit;
-            this.callbacks.onEdgeDraftChange(null);
-          } else if (this.readModel.selectedNodeIds.size === 0) {
-            this.selectedEdgeId = null;
-          }
+        } else if (edgeHit) {
+          this.callbacks.onEdgeDraftChange(null);
         }
       }
       this.render();
@@ -369,7 +382,7 @@ export class GraphCanvas2D {
       const source = this.nodePos(link.source);
       const target = this.nodePos(link.target);
       if (!source || !target) continue;
-      const selected = this.selectedEdgeId === link.id;
+      const selected = this.selectedEdgeIds.has(link.id);
       const hovered = !selected && this.hoveredEdgeId === link.id;
       this.ctx.strokeStyle = selected ? "#2563eb" : hovered ? "#0ea5e9" : "#94a3b8";
       this.ctx.lineWidth = 2 / this.ui.camera.zoom;
