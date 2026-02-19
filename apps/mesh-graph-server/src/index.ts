@@ -11,6 +11,7 @@ import type { Command, CommandOutcome, Cursor, PrincipalContext } from "@mesh/sh
 
 const GRAPH_SPACE_ID = "mesh-explorer-graph-v1";
 const PRINCIPAL_HEADER = "x-mesh-principal";
+const IDEMPOTENCY_HEADER = "x-idempotency-key";
 const DEBUG_AUTH_ENABLED = process.env.MESH_DEBUG_AUTH === "1";
 const STORE_CACHE = new Map<string, FileBackedLocalEventStore>();
 
@@ -169,7 +170,7 @@ async function handleRequest(
       level: typeof body.level === "number" ? body.level : undefined,
       metadata: typeof body.metadata === "object" && body.metadata !== null ? body.metadata as Record<string, unknown> : undefined
     };
-    const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey.trim() ? body.idempotencyKey : randomUUID();
+    const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
     const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
       type: "graph.node.created",
       node
@@ -191,12 +192,51 @@ async function handleRequest(
       type: typeof body.type === "string" && body.type.trim() ? body.type : "related",
       label: typeof body.label === "string" ? body.label : undefined
     };
-    const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey.trim() ? body.idempotencyKey : randomUUID();
+    const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
     const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
       type: "graph.link.created",
       link
     });
     writeJson(res, 200, { link, outcome });
+    return;
+  }
+
+  if (req.method === "PATCH" && /^\/graph\/nodes\/[^/]+$/.test(requestUrl.pathname)) {
+    const body = (await readJsonBody(req)) as { label?: unknown; idempotencyKey?: string };
+    if (typeof body.label !== "string") {
+      writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "TRANSPORT.INVALID_REQUEST" });
+      return;
+    }
+    const nodeId = decodeURIComponent(requestUrl.pathname.slice("/graph/nodes/".length));
+    const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
+    const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
+      type: "graph.node.label.updated",
+      nodeId,
+      label: body.label
+    });
+    writeJson(res, 200, { outcome, nodeId, label: body.label });
+    return;
+  }
+
+  if (req.method === "DELETE" && /^\/graph\/links\/[^/]+$/.test(requestUrl.pathname)) {
+    const linkId = decodeURIComponent(requestUrl.pathname.slice("/graph/links/".length));
+    const idempotencyKey = readIdempotencyKey(req);
+    const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
+      type: "graph.link.deleted",
+      linkId
+    });
+    writeJson(res, 200, { outcome, linkId });
+    return;
+  }
+
+  if (req.method === "DELETE" && /^\/graph\/nodes\/[^/]+$/.test(requestUrl.pathname)) {
+    const nodeId = decodeURIComponent(requestUrl.pathname.slice("/graph/nodes/".length));
+    const idempotencyKey = readIdempotencyKey(req);
+    const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
+      type: "graph.node.deleted",
+      nodeId
+    });
+    writeJson(res, 200, { outcome, nodeId });
     return;
   }
 
@@ -291,6 +331,15 @@ function applyGraphEvent(nodes: Map<string, GraphNode>, links: Map<string, Graph
   }
 }
 
+
+function readIdempotencyKey(req: IncomingMessage, bodyValue?: unknown): string {
+  if (typeof bodyValue === "string" && bodyValue.trim()) return bodyValue;
+  const header = req.headers[IDEMPOTENCY_HEADER];
+  const value = Array.isArray(header) ? header[0] : header;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return randomUUID();
+}
+
 function parsePrincipal(req: IncomingMessage): PrincipalContext | null {
   const raw = req.headers[PRINCIPAL_HEADER];
   const value = Array.isArray(raw) ? raw[0] : raw;
@@ -313,8 +362,8 @@ function debugAuthLog(req: IncomingMessage, requestUrl: URL): void {
 
 function applyCorsHeaders(res: ServerResponse): void {
   res.setHeader("access-control-allow-origin", "*");
-  res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
-  res.setHeader("access-control-allow-headers", "content-type,x-mesh-principal");
+  res.setHeader("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  res.setHeader("access-control-allow-headers", "content-type,x-mesh-principal,x-idempotency-key");
 }
 
 function maskForOtherPrincipal(principal: string): Record<string, "mask"> {

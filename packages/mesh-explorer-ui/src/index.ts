@@ -19,10 +19,12 @@ import {
 import {
   computeGraphBounds,
   fitCameraToBounds,
-  GraphCanvas2D,
   type CameraState,
   type CanvasUiState
 } from "./graphCanvas2d.js";
+import { CanvasGraphViewport2D } from "./viewport/CanvasGraphViewport2D.js";
+import type { GraphViewportActions, GraphViewportModel, Selection } from "./viewport/graphViewportContract.js";
+import { UndoRedoManager, getIncidentLinks } from "./undoRedo.js";
 import { LayoutPanel } from "./ui/LayoutPanel.js";
 import { deriveLayoutParams, loadLayoutUiState, saveLayoutUiState, type LayoutUiState } from "./ui/layoutSettings.js";
 
@@ -58,6 +60,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         <div id="lastSync">last sync: n/a</div>
         <hr/>
         <button id="addNode">Add node</button>
+        <button id="renameSelected" style="margin-left:8px;">Rename</button>
+        <button id="deleteSelected" style="margin-left:8px;">Delete</button>
+        <button id="undoAction" style="margin-left:8px;">Undo</button>
+        <button id="redoAction" style="margin-left:8px;">Redo</button>
         <button id="fitGraph" style="margin-left:8px;">Fit</button>
         <div id="layoutPanelHost"></div>
         <div style="margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:8px;">
@@ -98,7 +104,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     dragSelectionRect: null
   };
 
-  let canvasRenderer: GraphCanvas2D | null = null;
+  let canvasRenderer: CanvasGraphViewport2D | null = null;
+  let selectedLinkIds = new Set<string>();
+  const undoRedo = new UndoRedoManager();
   let layoutUiState: LayoutUiState = loadLayoutUiState();
   const debugThrottleByEvent = new Map<string, number>();
 
@@ -141,6 +149,31 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   };
 
   el.fitGraph.onclick = () => fitCameraToCurrentGraph();
+  el.deleteSelected.onclick = () => {
+    void requestDelete(currentSelection());
+  };
+  el.renameSelected.onclick = () => {
+    const selection = currentSelection();
+    if (selection.kind !== "node") return;
+    void requestRename(selection.nodeId);
+  };
+  el.undoAction.onclick = () => {
+    void undoRedo.undo().catch((error) => reportDevError(el, `undo failed: ${String(error)}`, error));
+  };
+  el.redoAction.onclick = () => {
+    void undoRedo.redo().catch((error) => reportDevError(el, `redo failed: ${String(error)}`, error));
+  };
+  window.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
+      event.preventDefault();
+      void undoRedo.undo().catch((error) => reportDevError(el, `undo failed: ${String(error)}`, error));
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "y" || (event.key.toLowerCase() === "z" && event.shiftKey))) {
+      event.preventDefault();
+      void undoRedo.redo().catch((error) => reportDevError(el, `redo failed: ${String(error)}`, error));
+    }
+  });
 
   installTestHook(store);
   syncSession += 1;
@@ -270,12 +303,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function addNode(label: string): Promise<void> {
     try {
+      const idempotencyKey = crypto.randomUUID();
       const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
         method: "POST",
-        headers: headers(el.principal.value),
-        body: JSON.stringify({ label, idempotencyKey: crypto.randomUUID() })
+        headers: headers(el.principal.value, idempotencyKey),
+        body: JSON.stringify({ label, idempotencyKey })
       }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "add-node") });
       if (!response.ok) reportDevError(el, `add node failed: ${response.status}`);
+      if (response.ok) undoRedo.clearRedo();
     } catch (error) {
       reportDevError(el, `add node failed: ${String(error)}`, error);
     }
@@ -284,23 +319,133 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   async function createLinkFromDraft(source: string, target: string): Promise<void> {
     const type = el.linkType.value.trim() || "related";
     try {
+      const idempotencyKey = crypto.randomUUID();
       const response = await meshFetch(`${el.baseUrl.value}/graph/links`, {
         method: "POST",
-        headers: headers(el.principal.value),
-        body: JSON.stringify({ source, target, type, idempotencyKey: crypto.randomUUID() })
+        headers: headers(el.principal.value, idempotencyKey),
+        body: JSON.stringify({ source, target, type, idempotencyKey })
       }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "create-link") });
       if (!response.ok) reportDevError(el, `create link rejected: ${response.status}`);
+      if (response.ok) undoRedo.clearRedo();
     } catch (error) {
       reportDevError(el, `add link failed: ${String(error)}`, error);
     }
   }
 
+  async function createNodeFromSnapshot(node: GraphNode): Promise<void> {
+    const idempotencyKey = crypto.randomUUID();
+    const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
+      method: "POST",
+      headers: headers(el.principal.value, idempotencyKey),
+      body: JSON.stringify({ ...node, idempotencyKey })
+    }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "create-node-snapshot") });
+    if (!response.ok) throw new Error(`create node failed: ${response.status}`);
+  }
+
+  async function createLinkFromSnapshot(link: GraphLink): Promise<void> {
+    const idempotencyKey = crypto.randomUUID();
+    const response = await meshFetch(`${el.baseUrl.value}/graph/links`, {
+      method: "POST",
+      headers: headers(el.principal.value, idempotencyKey),
+      body: JSON.stringify({ ...link, idempotencyKey })
+    }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "create-link-snapshot") });
+    if (!response.ok) throw new Error(`create link failed: ${response.status}`);
+  }
+
+  async function deleteLink(linkId: string): Promise<void> {
+    const idempotencyKey = crypto.randomUUID();
+    const response = await meshFetch(`${el.baseUrl.value}/graph/links/${encodeURIComponent(linkId)}`, {
+      method: "DELETE",
+      headers: headers(el.principal.value, idempotencyKey)
+    }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "delete-link") });
+    if (!response.ok) throw new Error(`delete link failed: ${response.status}`);
+  }
+
+  async function deleteNode(nodeId: string): Promise<void> {
+    const idempotencyKey = crypto.randomUUID();
+    const response = await meshFetch(`${el.baseUrl.value}/graph/nodes/${encodeURIComponent(nodeId)}`, {
+      method: "DELETE",
+      headers: headers(el.principal.value, idempotencyKey)
+    }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "delete-node") });
+    if (!response.ok) throw new Error(`delete node failed: ${response.status}`);
+  }
+
+  async function renameNode(nodeId: string, label: string): Promise<void> {
+    const idempotencyKey = crypto.randomUUID();
+    const response = await meshFetch(`${el.baseUrl.value}/graph/nodes/${encodeURIComponent(nodeId)}`, {
+      method: "PATCH",
+      headers: headers(el.principal.value, idempotencyKey),
+      body: JSON.stringify({ label, idempotencyKey })
+    }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "rename-node") });
+    if (!response.ok) throw new Error(`rename node failed: ${response.status}`);
+  }
+
+  function currentSelection(): Selection {
+    const selectedNodeId = store.getState().selectedNodeIds.values().next().value as string | undefined;
+    const selectedLinkId = selectedLinkIds.values().next().value as string | undefined;
+    if (selectedNodeId) return { kind: "node", nodeId: selectedNodeId };
+    if (selectedLinkId) return { kind: "link", linkId: selectedLinkId };
+    return { kind: "none" };
+  }
+
+  async function requestDelete(selection: Selection): Promise<void> {
+    try {
+      if (selection.kind === "link") {
+        const link = store.getState().linksById.get(selection.linkId);
+        if (!link) return;
+        await undoRedo.recordDeleteLink(link, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
+        return;
+      }
+      if (selection.kind === "node") {
+        const node = store.getState().nodesById.get(selection.nodeId);
+        if (!node) return;
+        const incidentLinks = getIncidentLinks(store.getState(), selection.nodeId);
+        await undoRedo.recordDeleteNode(node, incidentLinks, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
+      }
+    } catch (error) {
+      reportDevError(el, `delete failed: ${String(error)}`, error);
+    }
+  }
+
+  async function requestRename(nodeId: string): Promise<void> {
+    const node = store.getState().nodesById.get(nodeId);
+    if (!node) return;
+    const nextLabel = prompt("Node label", node.label)?.trim();
+    if (!nextLabel || nextLabel === node.label) return;
+    try {
+      await undoRedo.recordRename(nodeId, node.label, nextLabel, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
+    } catch (error) {
+      reportDevError(el, `rename failed: ${String(error)}`, error);
+    }
+  }
+
   function setupRenderer(): void {
     try {
-      canvasRenderer = new GraphCanvas2D(el.graphCanvas, { nodes: [], links: [], selectedNodeIds: new Set() }, uiState, {
-        onSelectionReplace: (ids) => store.replaceSelection(ids),
-        onSelectionToggle: (id) => store.toggleSelectNode(id),
+      const viewportActions: GraphViewportActions = {
+        onSelect: () => undefined,
+        onRequestDelete: (selection) => {
+          void requestDelete(selection);
+        },
+        onRequestRename: (nodeId) => {
+          void requestRename(nodeId);
+        },
+        onCreateLink: (source, target) => {
+          void createLinkFromDraft(source, target);
+        }
+      };
+      const initialModel: GraphViewportModel = { nodes: [], links: [], selectedNodeIds: new Set() };
+      canvasRenderer = new CanvasGraphViewport2D(el.graphCanvas, {
+        model: initialModel,
+        actions: viewportActions,
+        options: { connectivity: "degraded", debug: layoutUiState.settings.debugLogs },
+        uiState,
+        camera: cameraInfo,
+        onSelectionReplaceNodeIds: (ids) => store.replaceSelection(ids),
+        onSelectionToggleNodeId: (id) => store.toggleSelectNode(id),
         onSelectionClear: () => store.clearSelection(),
+        onSelectedLinkIdsChange: (ids) => {
+          selectedLinkIds = new Set(ids);
+        },
         onEdgeDraftChange: (edgeDraft) => {
           uiState.edgeDraft = edgeDraft;
           updateSelectionUi(store.getState());
@@ -310,9 +455,6 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             selectedNodeIds: store.getState().selectedNodeIds
           }, uiState);
         },
-        onCreateEdge: (source, target) => {
-          void createLinkFromDraft(source, target);
-        },
         onCameraChange: (camera) => {
           hasUserMovedCamera = true;
           cameraInfo = camera;
@@ -320,8 +462,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         },
         onFitRequest: () => {
           fitCameraToCurrentGraph();
-        }
-      }, {
+        },
         layoutParams: deriveLayoutParams(layoutUiState.settings),
         warmupMode: layoutUiState.settings.warmupMode,
         debugLogsEnabled: layoutUiState.settings.debugLogs,
@@ -356,7 +497,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       },
       onReheat: () => {
         emitUiDebugLog("ui.keydown", { key: "Reheat" });
-        canvasRenderer?.reheatLayout();
+        canvasRenderer?.reheat();
       },
       onFit: () => {
         emitUiDebugLog("ui.keydown", { key: "Fit" });
@@ -504,6 +645,10 @@ type UiElements = {
   connect: HTMLButtonElement;
   addNode: HTMLButtonElement;
   fitGraph: HTMLButtonElement;
+  renameSelected: HTMLButtonElement;
+  deleteSelected: HTMLButtonElement;
+  undoAction: HTMLButtonElement;
+  redoAction: HTMLButtonElement;
   linkType: HTMLInputElement;
   linkSelectionHint: HTMLDivElement;
   status: HTMLDivElement;
@@ -524,6 +669,10 @@ function byId(container: HTMLElement): UiElements {
     connect: container.querySelector("#connect") as HTMLButtonElement,
     addNode: container.querySelector("#addNode") as HTMLButtonElement,
     fitGraph: container.querySelector("#fitGraph") as HTMLButtonElement,
+    renameSelected: container.querySelector("#renameSelected") as HTMLButtonElement,
+    deleteSelected: container.querySelector("#deleteSelected") as HTMLButtonElement,
+    undoAction: container.querySelector("#undoAction") as HTMLButtonElement,
+    redoAction: container.querySelector("#redoAction") as HTMLButtonElement,
     linkType: container.querySelector("#linkType") as HTMLInputElement,
     linkSelectionHint: container.querySelector("#linkSelectionHint") as HTMLDivElement,
     status: container.querySelector("#status") as HTMLDivElement,
@@ -537,11 +686,13 @@ function byId(container: HTMLElement): UiElements {
   };
 }
 
-function headers(principal: string): HeadersInit {
-  return {
+function headers(principal: string, idempotencyKey?: string): HeadersInit {
+  const next: Record<string, string> = {
     "content-type": "application/json",
     "x-mesh-principal": normalizePrincipal(principal)
   };
+  if (idempotencyKey) next["x-idempotency-key"] = idempotencyKey;
+  return next;
 }
 
 type MeshFetchMeta = {

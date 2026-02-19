@@ -28,6 +28,9 @@ export type GraphCanvasCallbacks = {
   onSelectionClear: () => void;
   onEdgeDraftChange: (edgeDraft: EdgeDraft | null) => void;
   onCreateEdge: (source: string, target: string) => void;
+  onSelectedEdgeIdsChange?: (ids: string[]) => void;
+  onRequestDelete?: (selection: { kind: "none" } | { kind: "node"; nodeId: string } | { kind: "link"; linkId: string }) => void;
+  onRequestRename?: (nodeId: string) => void;
   onCameraChange?: (camera: CameraState) => void;
   onFitRequest?: () => void;
 };
@@ -669,6 +672,7 @@ export class GraphCanvas2D {
           ? null
           : hitTestEdges(this.readModel.links, this.nodePositions(), this.ui.camera, { x: event.offsetX, y: event.offsetY });
         this.selectedEdgeIds = nextSelectedEdgeIds(this.selectedEdgeIds, { nodeHit: hit, edgeHit, shiftKey: event.shiftKey });
+        this.callbacks.onSelectedEdgeIdsChange?.(Array.from(this.selectedEdgeIds));
         if (hit) {
           const next = nextEdgeDraft(this.ui.edgeDraft, hit, pointerWorld);
           this.edgeDraftCursorWorldPos = next.edgeDraft ? pointerWorld : null;
@@ -707,6 +711,22 @@ export class GraphCanvas2D {
       if (event.key === "Escape") {
         this.edgeDraftCursorWorldPos = null;
         this.callbacks.onEdgeDraftChange(null);
+      }
+      if ((event.key === "Delete" || event.key === "Backspace") && !isTextInputTarget(event.target)) {
+        const selectedNodeId = this.readModel.selectedNodeIds.values().next().value as string | undefined;
+        const selectedLinkId = this.selectedEdgeIds.values().next().value as string | undefined;
+        if (selectedNodeId) {
+          this.callbacks.onRequestDelete?.({ kind: "node", nodeId: selectedNodeId });
+          return;
+        }
+        if (selectedLinkId) {
+          this.callbacks.onRequestDelete?.({ kind: "link", linkId: selectedLinkId });
+          return;
+        }
+      }
+      if (event.key.toLowerCase() === "r" && !isTextInputTarget(event.target)) {
+        const selectedNodeId = this.readModel.selectedNodeIds.values().next().value as string | undefined;
+        if (selectedNodeId) this.callbacks.onRequestRename?.(selectedNodeId);
       }
       if (event.key.toLowerCase() === "f") this.callbacks.onFitRequest?.();
     });
@@ -819,6 +839,12 @@ export class GraphCanvas2D {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function isTextInputTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || target.isContentEditable;
 }
 
 function fnv1a32(value: string): number {
