@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { ForceLayout2D, computeEdgeHitSlopWorld, computeGraphBounds, computeMinZoomEffective, computeSeedRadius, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { LAYOUT_LIMITS, deriveLayoutParams } from "../src/ui/layoutSettings.js";
 
 describe("graphCanvas2d transforms", () => {
   it("keeps world point stable under cursor while zooming", () => {
@@ -201,7 +202,7 @@ describe("layout warmup modes", () => {
     expect(safety).toBeGreaterThan(1);
   });
 
-  it("does not warmup when OFF", () => {
+  it("does not run soft-warmup when OFF", () => {
     const queue: FrameRequestCallback[] = [];
     const layout = new ForceLayout2D({
       warmupMode: "OFF",
@@ -213,7 +214,7 @@ describe("layout warmup modes", () => {
     });
 
     layout.syncGraph([{ id: "a" }, { id: "b" }], [{ source: "a", target: "b" }]);
-    expect(queue).toHaveLength(0);
+    expect(queue).toHaveLength(1);
   });
 });
 describe("layout engine", () => {
@@ -270,3 +271,37 @@ describe("move command removal", () => {
   });
 });
 
+
+
+describe("simulation scheduling", () => {
+  it("does not run a hybrid manual render loop that ticks layout from GraphCanvas2D", () => {
+    const canvasSource = readFileSync(new URL("../src/graphCanvas2d.ts", import.meta.url), "utf8");
+    expect(canvasSource.includes("this.layout.tick(1)")).toBe(false);
+  });
+
+  it("keeps pointermove free from simulation stop-side effects", () => {
+    const canvasSource = readFileSync(new URL("../src/graphCanvas2d.ts", import.meta.url), "utf8");
+    expect(canvasSource.includes("simulation.stop")).toBe(false);
+    expect(canvasSource.includes("alpha(0)")).toBe(false);
+    expect(canvasSource.includes("alphaTarget(0)")).toBe(false);
+  });
+});
+
+describe("layout settings bounds", () => {
+  it("clamps extreme slider values to safe engine bounds", () => {
+    const params = deriveLayoutParams({
+      preset: "Balanced",
+      repulsion: -2000,
+      edgeLength: 5000,
+      reactivity: 4,
+      collision: 0,
+      warmupMode: "HARD"
+    });
+
+    expect(params.chargeStrength).toBe(Math.abs(LAYOUT_LIMITS.repulsion.min));
+    expect(params.linkDistance).toBe(LAYOUT_LIMITS.edgeLength.max);
+    expect(params.collisionRadius).toBe(LAYOUT_LIMITS.collision.min);
+    expect(params.alphaTarget).toBeLessThanOrEqual(0.28);
+    expect(params.velocityDecay).toBeGreaterThanOrEqual(0.12);
+  });
+});

@@ -21,11 +21,18 @@ export type LayoutUiState = {
 
 const STORAGE_KEY = "mesh-explorer:layout-ui-state";
 
+export const LAYOUT_LIMITS = {
+  repulsion: { min: -800, max: -5 },
+  edgeLength: { min: 10, max: 420 },
+  reactivity: { min: 0.05, max: 2 },
+  collision: { min: 2, max: 120 }
+} as const;
+
 const PRESETS: Record<LayoutPreset, Omit<LayoutSettings, "preset">> = {
-  Compact: { repulsion: 48, edgeLength: 48, reactivity: 0.8, collision: 20, warmupMode: "SOFT" },
-  Balanced: { repulsion: 58, edgeLength: 64, reactivity: 0.55, collision: 23, warmupMode: "HARD" },
-  Spread: { repulsion: 82, edgeLength: 92, reactivity: 0.38, collision: 26, warmupMode: "SOFT" },
-  Snappy: { repulsion: 52, edgeLength: 58, reactivity: 0.92, collision: 22, warmupMode: "OFF" }
+  Compact: { repulsion: -48, edgeLength: 48, reactivity: 0.8, collision: 20, warmupMode: "SOFT" },
+  Balanced: { repulsion: -58, edgeLength: 64, reactivity: 0.55, collision: 23, warmupMode: "HARD" },
+  Spread: { repulsion: -82, edgeLength: 92, reactivity: 0.38, collision: 26, warmupMode: "SOFT" },
+  Snappy: { repulsion: -52, edgeLength: 58, reactivity: 0.92, collision: 22, warmupMode: "OFF" }
 };
 
 export function defaultLayoutSettings(): LayoutSettings {
@@ -42,16 +49,20 @@ export function applyPreset(preset: LayoutPreset, base: LayoutSettings): LayoutS
 }
 
 export function deriveLayoutParams(settings: LayoutSettings): LayoutParams {
-  const reactivity = clamp(settings.reactivity, 0, 1);
+  const reactivity = clamp(settings.reactivity, LAYOUT_LIMITS.reactivity.min, LAYOUT_LIMITS.reactivity.max);
+  const chargeStrength = clamp(Math.abs(settings.repulsion), Math.abs(LAYOUT_LIMITS.repulsion.max), Math.abs(LAYOUT_LIMITS.repulsion.min));
+  const linkDistance = clamp(settings.edgeLength, LAYOUT_LIMITS.edgeLength.min, LAYOUT_LIMITS.edgeLength.max);
+  const collisionRadius = clamp(settings.collision, LAYOUT_LIMITS.collision.min, LAYOUT_LIMITS.collision.max);
+  const reactivityNormalized = (reactivity - LAYOUT_LIMITS.reactivity.min) / (LAYOUT_LIMITS.reactivity.max - LAYOUT_LIMITS.reactivity.min);
   return {
-    chargeStrength: settings.repulsion,
-    linkDistance: settings.edgeLength,
+    chargeStrength,
+    linkDistance,
     linkStrength: 0.18,
-    collisionRadius: settings.collision,
+    collisionRadius,
     centering: 0.03,
-    alphaTarget: 0.22 * reactivity,
-    alphaDecay: 0.02 + (1 - reactivity) * 0.08,
-    velocityDecay: 0.15 + (1 - reactivity) * 0.25,
+    alphaTarget: 0.04 + reactivityNormalized * 0.24,
+    alphaDecay: 0.095 - reactivityNormalized * 0.075,
+    velocityDecay: 0.36 - reactivityNormalized * 0.24,
     minAlpha: 0.0005
   };
 }
@@ -77,10 +88,10 @@ export function loadLayoutUiState(): LayoutUiState {
     return {
       settings: {
         preset: asPreset(settings.preset) ?? base.settings.preset,
-        repulsion: asNumber(settings.repulsion) ?? base.settings.repulsion,
-        edgeLength: asNumber(settings.edgeLength) ?? base.settings.edgeLength,
-        reactivity: clamp(asNumber(settings.reactivity) ?? base.settings.reactivity, 0, 1),
-        collision: asNumber(settings.collision) ?? base.settings.collision,
+        repulsion: clamp(asNumber(settings.repulsion) ?? base.settings.repulsion, LAYOUT_LIMITS.repulsion.min, LAYOUT_LIMITS.repulsion.max),
+        edgeLength: clamp(asNumber(settings.edgeLength) ?? base.settings.edgeLength, LAYOUT_LIMITS.edgeLength.min, LAYOUT_LIMITS.edgeLength.max),
+        reactivity: clamp(asNumber(settings.reactivity) ?? base.settings.reactivity, LAYOUT_LIMITS.reactivity.min, LAYOUT_LIMITS.reactivity.max),
+        collision: clamp(asNumber(settings.collision) ?? base.settings.collision, LAYOUT_LIMITS.collision.min, LAYOUT_LIMITS.collision.max),
         warmupMode: asWarmupMode(settings.warmupMode) ?? base.settings.warmupMode
       },
       panel: { open: Boolean(parsed.panel?.open) }
