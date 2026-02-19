@@ -51,6 +51,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         <button id="connect">Connect</button>
         <hr/>
         <div id="status">disconnected</div>
+        <div id="connectivity">connectivity: unknown</div>
         <div id="lastCursor">cursor: n/a</div>
         <div id="lastSync">last sync: n/a</div>
         <hr/>
@@ -80,7 +81,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let activeAbort: AbortController | null = null;
   let hasUserMovedCamera = false;
   let autoFitApplied = false;
-  let cameraInfo: CameraState = { x: -280, y: -180, zoom: 1, minZoom: 0.2, maxZoom: 3.5 };
+  let cameraInfo: CameraState = { x: -280, y: -180, zoom: 1, minZoom: 0.08, maxZoom: 3.5 };
+  let browserConnectivityHint: ConnectivityStatus = navigator.onLine ? "online" : "offline";
+  let networkConnectivityHint: ConnectivityStatus = "degraded";
+  let connectivityState: ConnectivityStatus = "degraded";
   let badgeStats = { nodes: 0, links: 0 };
   let badgeRaf = 0;
 
@@ -94,6 +98,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let canvasRenderer: GraphCanvas2D | null = null;
 
   setConnectionStatus("disconnected");
+  installConnectivityListeners();
+  updateConnectivity("init");
   setupRenderer();
   persistPrincipal(el.principal.value);
   el.principal.onchange = () => {
@@ -168,13 +174,16 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           const response = await meshFetch(url, { headers: headers(normalizedPrincipal), signal }, {
             principal: normalizedPrincipal,
             transport: "fetch-sse",
-            debugAuth
+            debugAuth,
+            onNetworkResult: (status) => markNetworkConnectivity(status, "sse-subscribe")
           });
           if (!response.body) {
+            markNetworkConnectivity("degraded", "sse-empty-body");
             setConnectionStatus("reconnecting");
             await wait(retryDelayMs);
             continue;
           }
+          markNetworkConnectivity("online", "sse-connected");
           setConnectionStatus("connected");
           retryDelayMs = SUBSCRIBE_RETRY_DELAY_MS;
           for await (const data of parseSse(response.body)) {
@@ -196,9 +205,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
               setLastSyncNow();
             }
           }
-          if (activeSessionId === syncSession) setConnectionStatus("reconnecting");
+          if (activeSessionId === syncSession) {
+            markNetworkConnectivity("degraded", "sse-ended");
+            setConnectionStatus("reconnecting");
+          }
         } catch (error) {
           if (signal.aborted) return;
+          markNetworkConnectivity("offline", "sse-error");
           setConnectionStatus("reconnecting");
           const now = Date.now();
           const shouldLog = verboseSyncErrors || now - lastSubscribeErrorLogAt >= SUBSCRIBE_ERROR_LOG_THROTTLE_MS;
@@ -219,13 +232,15 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           const response = await meshFetch(
             buildSyncPollUrl(el.baseUrl.value, el.graphSpaceId.value, cursor, { graph: 128, meta: 32 }),
             { headers: headers(normalizedPrincipal), signal },
-            { principal: normalizedPrincipal, transport: "fetch", debugAuth }
+            { principal: normalizedPrincipal, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "poll") }
           );
           if (!response.ok) {
+            markNetworkConnectivity(response.status === 0 ? "offline" : "degraded", "poll-non-ok");
             reportDevError(el, `sync poll non-ok: ${response.status}`);
             return { cursor, graphEventsApplied };
           }
           const payload = (await response.json()) as SyncPollPayload;
+          markNetworkConnectivity("online", "poll-success");
           const graphEvents = (payload.graph ?? []).map((entry) => asGraphEvent(entry.payload)).filter((event): event is GraphEvent => event !== null);
           const nextCursor = payload.cursorAfter ?? cursor;
           graphEventsApplied += graphEvents.length;
@@ -240,6 +255,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         return { cursor, graphEventsApplied };
       } catch (error) {
         if (signal.aborted) return { cursor, graphEventsApplied };
+        markNetworkConnectivity("offline", "poll-error");
         reportDevError(el, `sync poll failed: ${String(error)}`, error);
         return { cursor, graphEventsApplied };
       }
@@ -252,7 +268,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         method: "POST",
         headers: headers(el.principal.value),
         body: JSON.stringify({ label, idempotencyKey: crypto.randomUUID() })
-      }, { principal: el.principal.value, transport: "fetch", debugAuth });
+      }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "add-node") });
       if (!response.ok) reportDevError(el, `add node failed: ${response.status}`);
     } catch (error) {
       reportDevError(el, `add node failed: ${String(error)}`, error);
@@ -266,7 +282,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         method: "POST",
         headers: headers(el.principal.value),
         body: JSON.stringify({ source, target, type, idempotencyKey: crypto.randomUUID() })
-      }, { principal: el.principal.value, transport: "fetch", debugAuth });
+      }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "create-link") });
       if (!response.ok) reportDevError(el, `create link rejected: ${response.status}`);
     } catch (error) {
       reportDevError(el, `add link failed: ${String(error)}`, error);
@@ -312,7 +328,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const bounds = computeGraphBounds(positioned);
     if (!bounds) return;
     const rect = el.graphCanvas.getBoundingClientRect();
-    uiState.camera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12);
+    uiState.camera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12, store.getState().nodesById.size);
     cameraInfo = uiState.camera;
     queueBadgeRender();
     canvasRenderer?.update({
@@ -338,6 +354,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   function renderStatus(snapshot: GraphState, nodes: number, links: number): void {
     el.status.textContent = snapshot.connectionStatus;
+    el.connectivity.textContent = `connectivity: ${connectivityState}`;
     el.lastCursor.textContent = `cursor: ${JSON.stringify(snapshot.cursor)}`;
     el.lastSync.textContent = `last sync: ${snapshot.lastSync}`;
     badgeStats = { nodes, links };
@@ -349,6 +366,31 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   function setConnectionStatus(next: ConnectionStatus): void {
     store.setConnectionStatus(next);
+  }
+
+  function markNetworkConnectivity(next: ConnectivityStatus, source: string): void {
+    networkConnectivityHint = next;
+    updateConnectivity(source);
+  }
+
+  function updateConnectivity(source: string): void {
+    const next = resolveConnectivityState(browserConnectivityHint, networkConnectivityHint);
+    if (next !== connectivityState) {
+      connectivityState = next;
+      renderStatus(store.getState(), store.getState().nodesById.size, store.getState().linksById.size);
+    }
+    dbg(`connectivity:${source}`, { browserConnectivityHint, networkConnectivityHint, connectivityState });
+  }
+
+  function installConnectivityListeners(): void {
+    window.addEventListener("online", () => {
+      browserConnectivityHint = "online";
+      updateConnectivity("browser-online");
+    });
+    window.addEventListener("offline", () => {
+      browserConnectivityHint = "offline";
+      updateConnectivity("browser-offline");
+    });
   }
 
   function setLastSyncNow(): void {
@@ -410,6 +452,7 @@ type UiElements = {
   linkType: HTMLInputElement;
   linkSelectionHint: HTMLDivElement;
   status: HTMLDivElement;
+  connectivity: HTMLDivElement;
   lastCursor: HTMLDivElement;
   lastSync: HTMLDivElement;
   graphCanvas: HTMLCanvasElement;
@@ -428,6 +471,7 @@ function byId(container: HTMLElement): UiElements {
     linkType: container.querySelector("#linkType") as HTMLInputElement,
     linkSelectionHint: container.querySelector("#linkSelectionHint") as HTMLDivElement,
     status: container.querySelector("#status") as HTMLDivElement,
+    connectivity: container.querySelector("#connectivity") as HTMLDivElement,
     lastCursor: container.querySelector("#lastCursor") as HTMLDivElement,
     lastSync: container.querySelector("#lastSync") as HTMLDivElement,
     graphCanvas: container.querySelector("#graphCanvas") as HTMLCanvasElement,
@@ -447,7 +491,10 @@ type MeshFetchMeta = {
   principal: string;
   transport: "fetch" | "fetch-sse";
   debugAuth: boolean;
+  onNetworkResult?: (status: ConnectivityStatus) => void;
 };
+
+type ConnectivityStatus = "online" | "degraded" | "offline";
 
 async function meshFetch(input: string, init: RequestInit, meta: MeshFetchMeta): Promise<Response> {
   if (meta.debugAuth) {
@@ -459,7 +506,24 @@ async function meshFetch(input: string, init: RequestInit, meta: MeshFetchMeta):
       principal: resolvedPrincipal
     });
   }
-  return fetch(input, init);
+  try {
+    const response = await fetch(input, init);
+    if (response.ok) {
+      meta.onNetworkResult?.("online");
+    } else if (response.status === 0) {
+      meta.onNetworkResult?.("offline");
+    } else {
+      meta.onNetworkResult?.("degraded");
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof TypeError) {
+      meta.onNetworkResult?.("offline");
+    } else {
+      meta.onNetworkResult?.("degraded");
+    }
+    throw error;
+  }
 }
 
 function isDebugAuthEnabled(): boolean {
@@ -644,4 +708,10 @@ async function wait(ms: number): Promise<void> {
 function emitMeshDebugLog(message: string, detail?: unknown): void {
   const dbgObj = (window as Window & { __meshDebug?: { log?: (message: string, detail?: unknown) => void } }).__meshDebug;
   dbgObj?.log?.(message, detail);
+}
+
+function resolveConnectivityState(browserHint: ConnectivityStatus, networkHint: ConnectivityStatus): ConnectivityStatus {
+  if (networkHint === "offline" || browserHint === "offline") return "offline";
+  if (networkHint === "degraded") return "degraded";
+  return "online";
 }
