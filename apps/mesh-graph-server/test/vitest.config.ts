@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: [resolve(__dirname, "root-route-auth.test.ts")]
+    include: [resolve(__dirname, "root-route-auth.test.ts"), resolve(__dirname, "graph-mutations.test.ts")]
   },
   resolve: {
     alias: {

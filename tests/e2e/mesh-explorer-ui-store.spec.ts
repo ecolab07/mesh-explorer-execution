@@ -16,4 +16,28 @@ describe("mesh explorer ui store", () => {
     unsubscribe();
     expect(observed).toBeGreaterThanOrEqual(3);
   });
+
+  it("applies rename, deleteLink and deleteNode cascade", () => {
+    const store = createGraphStore();
+    store.applyGraphEvents([
+      { type: "graph.node.created", node: { id: "A", label: "A" } },
+      { type: "graph.node.created", node: { id: "B", label: "B" } },
+      { type: "graph.link.created", link: { id: "L", source: "A", target: "B", type: "related" } }
+    ]);
+
+    store.applyGraphEvents([{ type: "graph.node.label.updated", nodeId: "A", label: "A2" }]);
+    expect(store.getState().nodesById.get("A")?.label).toBe("A2");
+
+    store.applyGraphEvents([{ type: "graph.link.deleted", linkId: "L" }]);
+    expect(store.getState().linksById.has("L")).toBe(false);
+
+    store.applyGraphEvents([
+      { type: "graph.link.created", link: { id: "L2", source: "A", target: "B", type: "related" } },
+      { type: "graph.node.deleted", nodeId: "A" }
+    ]);
+
+    expect(store.getState().nodesById.has("A")).toBe(false);
+    expect(store.getState().linksById.has("L2")).toBe(false);
+  });
+
 });
