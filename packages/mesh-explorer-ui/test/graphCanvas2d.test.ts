@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ForceLayout2D, computeEdgeHitSlopWorld, computeGraphBounds, computeMinZoomEffective, computeSeedRadius, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { ForceLayout2D, GraphCanvas2D, computeEdgeHitSlopWorld, computeGraphBounds, computeMinZoomEffective, computeSeedRadius, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
 import { LAYOUT_LIMITS, deriveLayoutParams } from "../src/ui/layoutSettings.js";
 
 describe("graphCanvas2d transforms", () => {
@@ -295,7 +295,8 @@ describe("layout settings bounds", () => {
       edgeLength: 5000,
       reactivity: 4,
       collision: 0,
-      warmupMode: "HARD"
+      warmupMode: "HARD",
+      debugLogs: false
     });
 
     expect(params.chargeStrength).toBe(Math.abs(LAYOUT_LIMITS.repulsion.min));
@@ -303,5 +304,150 @@ describe("layout settings bounds", () => {
     expect(params.collisionRadius).toBe(LAYOUT_LIMITS.collision.min);
     expect(params.alphaTarget).toBeLessThanOrEqual(0.28);
     expect(params.velocityDecay).toBeGreaterThanOrEqual(0.12);
+  });
+});
+
+
+describe("GraphCanvas2D topology guards and reheat", () => {
+  const raf = (cb: FrameRequestCallback) => {
+    cb(16);
+    return 1;
+  };
+
+  function createCanvasHarness() {
+    const events = new Map<string, EventListener>();
+    const ctx = {
+      setTransform: () => undefined,
+      clearRect: () => undefined,
+      fillRect: () => undefined,
+      beginPath: () => undefined,
+      moveTo: () => undefined,
+      lineTo: () => undefined,
+      stroke: () => undefined,
+      arc: () => undefined,
+      fill: () => undefined,
+      fillText: () => undefined,
+      setLineDash: () => undefined
+    } as unknown as CanvasRenderingContext2D;
+
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ctx,
+      getBoundingClientRect: () => ({ width: 640, height: 480 }),
+      addEventListener: (name: string, listener: EventListener) => events.set(name, listener),
+      setPointerCapture: () => undefined,
+      hasPointerCapture: () => false,
+      releasePointerCapture: () => undefined
+    } as unknown as HTMLCanvasElement;
+
+    return {
+      canvas,
+      fire(name: string, event: unknown) {
+        events.get(name)?.(event as Event);
+      }
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("pointermove does not sync or reheat on ui-only hover", () => {
+    vi.stubGlobal("window", {
+      devicePixelRatio: 1,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined
+    });
+    vi.stubGlobal("requestAnimationFrame", raf);
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+
+    const syncSpy = vi.spyOn(ForceLayout2D.prototype, "syncGraph");
+    const reheatSpy = vi.spyOn(ForceLayout2D.prototype, "reheat");
+    const { canvas, fire } = createCanvasHarness();
+
+    const renderer = new GraphCanvas2D(canvas, {
+      nodes: [{ id: "n1", label: "N1" }],
+      links: [],
+      selectedNodeIds: new Set()
+    }, {
+      camera: { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 },
+      hoveredNodeId: null,
+      edgeDraft: null,
+      dragSelectionRect: null
+    }, {
+      onSelectionReplace: () => undefined,
+      onSelectionToggle: () => undefined,
+      onSelectionClear: () => undefined,
+      onEdgeDraftChange: () => undefined,
+      onCreateEdge: () => undefined
+    });
+
+    syncSpy.mockClear();
+    reheatSpy.mockClear();
+    fire("pointermove", { offsetX: 30, offsetY: 20, movementX: 1, movementY: 1 });
+
+    expect(syncSpy).toHaveBeenCalledTimes(0);
+    expect(reheatSpy).toHaveBeenCalledTimes(0);
+    renderer.destroy();
+  });
+
+  it("topology change triggers syncGraph while ui-only update does not", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1, addEventListener: () => undefined, removeEventListener: () => undefined });
+    vi.stubGlobal("requestAnimationFrame", raf);
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    const syncSpy = vi.spyOn(ForceLayout2D.prototype, "syncGraph");
+    const { canvas } = createCanvasHarness();
+
+    const ui = { camera: { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 }, hoveredNodeId: null, edgeDraft: null, dragSelectionRect: null };
+    const renderer = new GraphCanvas2D(canvas, { nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set() }, ui, {
+      onSelectionReplace: () => undefined,
+      onSelectionToggle: () => undefined,
+      onSelectionClear: () => undefined,
+      onEdgeDraftChange: () => undefined,
+      onCreateEdge: () => undefined
+    });
+
+    syncSpy.mockClear();
+    renderer.update({ nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set() }, { ...ui, hoveredNodeId: "n1" });
+    expect(syncSpy).toHaveBeenCalledTimes(0);
+
+    renderer.update({
+      nodes: [{ id: "n1", label: "N1" }, { id: "n2", label: "N2" }],
+      links: [{ id: "l1", source: "n1", target: "n2", type: "related" }],
+      selectedNodeIds: new Set()
+    }, ui);
+    expect(syncSpy).toHaveBeenCalledTimes(1);
+    renderer.destroy();
+  });
+
+  it("reheatLayout reheats and restarts simulation", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1, addEventListener: () => undefined, removeEventListener: () => undefined });
+    vi.stubGlobal("requestAnimationFrame", raf);
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    const reheatSpy = vi.spyOn(ForceLayout2D.prototype, "reheat");
+    const restartSpy = vi.spyOn(ForceLayout2D.prototype, "restart");
+    const { canvas } = createCanvasHarness();
+
+    const renderer = new GraphCanvas2D(canvas, { nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set() }, {
+      camera: { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 },
+      hoveredNodeId: null,
+      edgeDraft: null,
+      dragSelectionRect: null
+    }, {
+      onSelectionReplace: () => undefined,
+      onSelectionToggle: () => undefined,
+      onSelectionClear: () => undefined,
+      onEdgeDraftChange: () => undefined,
+      onCreateEdge: () => undefined
+    });
+
+    reheatSpy.mockClear();
+    restartSpy.mockClear();
+    renderer.reheatLayout();
+
+    expect(reheatSpy).toHaveBeenCalledWith(0.9);
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+    renderer.destroy();
   });
 });
