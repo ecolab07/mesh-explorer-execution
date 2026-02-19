@@ -1,4 +1,5 @@
 import type { GraphLink, GraphNode } from "./graphStore.js";
+import type { WarmupMode } from "./ui/layoutSettings.js";
 
 export type Vec2 = { x: number; y: number };
 export type CameraState = { x: number; y: number; zoom: number; minZoom: number; maxZoom: number };
@@ -47,7 +48,40 @@ const SEED_JITTER_RATIO = 0.35;
 const MIN_ZOOM_DENSITY_THRESHOLD = 50;
 const MIN_ZOOM_DENSITY_FLOOR = 0.05;
 const WARMUP_TICKS = 64;
+const SOFT_WARMUP_TICKS_PER_FRAME = 6;
 export const ENABLE_EDGE_HIT_TEST = true;
+
+export type LayoutParams = {
+  chargeStrength: number;
+  linkDistance: number;
+  linkStrength: number;
+  collisionRadius: number;
+  centering: number;
+  alphaTarget: number;
+  alphaDecay: number;
+  velocityDecay: number;
+  minAlpha: number;
+};
+
+export const DEFAULT_LAYOUT_PARAMS: LayoutParams = {
+  chargeStrength: LAYOUT_CHARGE_STRENGTH,
+  linkDistance: LAYOUT_LINK_DISTANCE,
+  linkStrength: LAYOUT_LINK_STRENGTH,
+  collisionRadius: LAYOUT_COLLISION_RADIUS,
+  centering: LAYOUT_CENTERING,
+  alphaTarget: 0,
+  alphaDecay: LAYOUT_ALPHA_DECAY,
+  velocityDecay: 1 - LAYOUT_DAMPING,
+  minAlpha: LAYOUT_MIN_ALPHA
+};
+
+type ForceLayoutOptions = {
+  layoutParams?: Partial<LayoutParams>;
+  warmupMode?: WarmupMode;
+  requestFrame?: (callback: FrameRequestCallback) => number;
+  cancelFrame?: (frameId: number) => void;
+  onSoftWarmupFrame?: () => void;
+};
 
 export function worldToScreen(world: Vec2, camera: CameraState): Vec2 {
   return { x: (world.x - camera.x) * camera.zoom, y: (world.y - camera.y) * camera.zoom };
@@ -210,8 +244,31 @@ export class ForceLayout2D {
   private readonly nodeById = new Map<string, LayoutNode>();
   private links: LayoutLink[] = [];
   private alpha = 0;
+  private params: LayoutParams;
+  private warmupMode: WarmupMode;
+  private softWarmupFrame = 0;
+  private readonly requestFrame: (callback: FrameRequestCallback) => number;
+  private readonly cancelFrame: (frameId: number) => void;
+  private readonly onSoftWarmupFrame?: () => void;
+
+  constructor(options: ForceLayoutOptions = {}) {
+    this.params = { ...DEFAULT_LAYOUT_PARAMS, ...options.layoutParams };
+    this.warmupMode = options.warmupMode ?? "HARD";
+    this.requestFrame = options.requestFrame ?? ((callback) => requestAnimationFrame(callback));
+    this.cancelFrame = options.cancelFrame ?? ((frameId) => cancelAnimationFrame(frameId));
+    this.onSoftWarmupFrame = options.onSoftWarmupFrame;
+  }
+
+  setLayoutParams(next: Partial<LayoutParams>): void {
+    this.params = { ...this.params, ...next };
+  }
+
+  setWarmupMode(mode: WarmupMode): void {
+    this.warmupMode = mode;
+  }
 
   syncGraph(nodes: Array<{ id: string }>, links: LayoutLink[]): void {
+    this.cancelSoftWarmup();
     const nextIds = new Set(nodes.map((node) => node.id));
     for (const id of this.nodeById.keys()) {
       if (!nextIds.has(id)) this.nodeById.delete(id);
@@ -226,7 +283,12 @@ export class ForceLayout2D {
 
     this.links = links.filter((link) => this.nodeById.has(link.source) && this.nodeById.has(link.target));
     this.reheat(0.45);
-    this.tick(WARMUP_TICKS);
+    if (this.warmupMode === "HARD") {
+      this.tick(WARMUP_TICKS);
+    }
+    if (this.warmupMode === "SOFT") {
+      this.scheduleSoftWarmup(WARMUP_TICKS);
+    }
   }
 
   reheat(amount = 0.25): void {
@@ -254,14 +316,19 @@ export class ForceLayout2D {
 
   tick(iterations = 1): void {
     for (let i = 0; i < iterations; i += 1) {
-      if (this.alpha <= LAYOUT_MIN_ALPHA) continue;
+      if (this.alpha <= this.params.minAlpha) continue;
       this.tickOnce();
-      this.alpha *= 1 - LAYOUT_ALPHA_DECAY;
+      this.alpha += (this.params.alphaTarget - this.alpha) * 0.08;
+      this.alpha *= 1 - this.params.alphaDecay;
     }
   }
 
   hasEnergy(): boolean {
-    return this.alpha > LAYOUT_MIN_ALPHA;
+    return this.alpha > this.params.minAlpha;
+  }
+
+  destroy(): void {
+    this.cancelSoftWarmup();
   }
 
   getPositions(): Map<string, Vec2> {
@@ -293,8 +360,8 @@ export class ForceLayout2D {
         const dy = a.y - b.y;
         const distSq = dx * dx + dy * dy + 0.01;
         const dist = Math.sqrt(distSq);
-        const collisionOverlap = LAYOUT_COLLISION_RADIUS * 2 - dist;
-        const force = (LAYOUT_CHARGE_STRENGTH * alpha) / distSq;
+        const collisionOverlap = this.params.collisionRadius * 2 - dist;
+        const force = (this.params.chargeStrength * alpha) / distSq;
         const collisionForce = collisionOverlap > 0 ? (collisionOverlap * 0.35 + 0.001) * alpha : 0;
         const fx = dx * force + (dx / dist) * collisionForce;
         const fy = dy * force + (dy / dist) * collisionForce;
@@ -316,7 +383,7 @@ export class ForceLayout2D {
       const dx = target.x - source.x;
       const dy = target.y - source.y;
       const dist = Math.hypot(dx, dy) || 0.001;
-      const delta = (dist - LAYOUT_LINK_DISTANCE) * LAYOUT_LINK_STRENGTH * alpha;
+      const delta = (dist - this.params.linkDistance) * this.params.linkStrength * alpha;
       const fx = (dx / dist) * delta;
       const fy = (dy / dist) * delta;
       if (source.fx === undefined) {
@@ -331,19 +398,40 @@ export class ForceLayout2D {
 
     for (const node of nodes) {
       if (node.fx !== undefined && node.fy !== undefined) continue;
-      node.vx += (0 - node.x) * LAYOUT_CENTERING * alpha;
-      node.vy += (0 - node.y) * LAYOUT_CENTERING * alpha;
-      node.vx *= LAYOUT_DAMPING;
-      node.vy *= LAYOUT_DAMPING;
+      node.vx += (0 - node.x) * this.params.centering * alpha;
+      node.vy += (0 - node.y) * this.params.centering * alpha;
+      node.vx *= 1 - this.params.velocityDecay;
+      node.vy *= 1 - this.params.velocityDecay;
       node.x += node.vx;
       node.y += node.vy;
     }
   }
+
+  private scheduleSoftWarmup(remainingTicks: number): void {
+    if (remainingTicks <= 0) return;
+    this.softWarmupFrame = this.requestFrame(() => {
+      this.softWarmupFrame = 0;
+      this.tick(Math.min(SOFT_WARMUP_TICKS_PER_FRAME, remainingTicks));
+      this.onSoftWarmupFrame?.();
+      this.scheduleSoftWarmup(remainingTicks - SOFT_WARMUP_TICKS_PER_FRAME);
+    });
+  }
+
+  private cancelSoftWarmup(): void {
+    if (!this.softWarmupFrame) return;
+    this.cancelFrame(this.softWarmupFrame);
+    this.softWarmupFrame = 0;
+  }
 }
+
+export type GraphCanvasOptions = {
+  layoutParams?: Partial<LayoutParams>;
+  warmupMode?: WarmupMode;
+};
 
 export class GraphCanvas2D {
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly layout = new ForceLayout2D();
+  private readonly layout: ForceLayout2D;
   private raf = 0;
   private running = false;
   private pointer = { x: 0, y: 0 };
@@ -356,11 +444,17 @@ export class GraphCanvas2D {
     private readonly canvas: HTMLCanvasElement,
     private readModel: GraphCanvasReadModel,
     private ui: CanvasUiState,
-    private readonly callbacks: GraphCanvasCallbacks
+    private readonly callbacks: GraphCanvasCallbacks,
+    options: GraphCanvasOptions = {}
   ) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context unavailable");
     this.ctx = ctx;
+    this.layout = new ForceLayout2D({
+      layoutParams: options.layoutParams,
+      warmupMode: options.warmupMode,
+      onSoftWarmupFrame: () => this.startLoop()
+    });
     this.syncLayoutGraph();
     this.layout.tick(40);
     this.bindEvents();
@@ -378,10 +472,26 @@ export class GraphCanvas2D {
 
   destroy(): void {
     cancelAnimationFrame(this.raf);
+    this.layout.destroy();
   }
 
   getNodePositions(): Map<string, Vec2> {
     return this.layout.getPositions();
+  }
+
+  setLayoutParams(params: Partial<LayoutParams>): void {
+    this.layout.setLayoutParams(params);
+    this.layout.reheat(0.3);
+    this.startLoop();
+  }
+
+  setWarmupMode(mode: WarmupMode): void {
+    this.layout.setWarmupMode(mode);
+  }
+
+  reheatLayout(): void {
+    this.layout.reheat(0.42);
+    this.startLoop();
   }
 
   resize(): void {
