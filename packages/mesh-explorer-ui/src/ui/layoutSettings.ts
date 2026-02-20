@@ -11,6 +11,8 @@ export type LayoutSettings = {
   collision: number;
   warmupMode: WarmupMode;
   debugLogs: boolean;
+  cinematicFitOnImport: boolean;
+  cinematicFitRate: number;
 };
 
 export type DevPanelState = { open: boolean };
@@ -27,13 +29,15 @@ export const LAYOUT_LIMITS = {
   edgeLength: { min: 10, max: 420 },
   reactivity: { min: 0.05, max: 2 },
   collision: { min: 2, max: 120 }
+  ,
+  cinematicFitRate: { min: 1, max: 20 }
 } as const;
 
 const PRESETS: Record<LayoutPreset, Omit<LayoutSettings, "preset">> = {
-  Compact: { repulsion: -48, edgeLength: 48, reactivity: 0.8, collision: 20, warmupMode: "SOFT", debugLogs: false },
-  Balanced: { repulsion: -58, edgeLength: 64, reactivity: 0.55, collision: 23, warmupMode: "HARD", debugLogs: false },
-  Spread: { repulsion: -82, edgeLength: 92, reactivity: 0.38, collision: 26, warmupMode: "SOFT", debugLogs: false },
-  Snappy: { repulsion: -52, edgeLength: 58, reactivity: 0.92, collision: 22, warmupMode: "OFF", debugLogs: false }
+  Compact: { repulsion: -48, edgeLength: 48, reactivity: 0.8, collision: 20, warmupMode: "SOFT", debugLogs: false, cinematicFitOnImport: true, cinematicFitRate: 8 },
+  Balanced: { repulsion: -58, edgeLength: 64, reactivity: 0.55, collision: 23, warmupMode: "HARD", debugLogs: false, cinematicFitOnImport: true, cinematicFitRate: 8 },
+  Spread: { repulsion: -82, edgeLength: 92, reactivity: 0.38, collision: 26, warmupMode: "SOFT", debugLogs: false, cinematicFitOnImport: true, cinematicFitRate: 8 },
+  Snappy: { repulsion: -52, edgeLength: 58, reactivity: 0.92, collision: 22, warmupMode: "OFF", debugLogs: false, cinematicFitOnImport: true, cinematicFitRate: 8 }
 };
 
 export function defaultLayoutSettings(): LayoutSettings {
@@ -77,6 +81,9 @@ export function serializeLayoutSettings(settings: LayoutSettings): LayoutSetting
     collision: settings.collision,
     warmupMode: settings.warmupMode,
     debugLogs: settings.debugLogs
+    ,
+    cinematicFitOnImport: settings.cinematicFitOnImport,
+    cinematicFitRate: settings.cinematicFitRate
   };
 }
 
@@ -95,7 +102,9 @@ export function loadLayoutUiState(): LayoutUiState {
         reactivity: clamp(asNumber(settings.reactivity) ?? base.settings.reactivity, LAYOUT_LIMITS.reactivity.min, LAYOUT_LIMITS.reactivity.max),
         collision: clamp(asNumber(settings.collision) ?? base.settings.collision, LAYOUT_LIMITS.collision.min, LAYOUT_LIMITS.collision.max),
         warmupMode: asWarmupMode(settings.warmupMode) ?? base.settings.warmupMode,
-        debugLogs: typeof settings.debugLogs === "boolean" ? settings.debugLogs : base.settings.debugLogs
+        debugLogs: typeof settings.debugLogs === "boolean" ? settings.debugLogs : base.settings.debugLogs,
+        cinematicFitOnImport: typeof settings.cinematicFitOnImport === "boolean" ? settings.cinematicFitOnImport : base.settings.cinematicFitOnImport,
+        cinematicFitRate: clamp(asNumber(settings.cinematicFitRate) ?? base.settings.cinematicFitRate, LAYOUT_LIMITS.cinematicFitRate.min, LAYOUT_LIMITS.cinematicFitRate.max)
       },
       panel: { open: Boolean(parsed.panel?.open) }
     };

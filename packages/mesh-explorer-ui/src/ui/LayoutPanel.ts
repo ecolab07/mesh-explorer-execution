@@ -6,7 +6,7 @@ type LayoutPanelCallbacks = {
   onReheat: () => void;
   onFit: () => void;
   onExportGraph: () => void;
-  onImportGraph: (file: File) => void;
+  onImportGraph: (file: File, mode: "merge" | "import" | "add") => void;
   onClearGraph: () => void;
 };
 
@@ -68,6 +68,11 @@ export class LayoutPanel {
     this.panelBody.appendChild(this.buildSlider("Collision", this.settings.collision, LAYOUT_LIMITS.collision.min, LAYOUT_LIMITS.collision.max, 1, (value) => this.updateSettings({ collision: value })));
     this.panelBody.appendChild(this.buildSelect("Warmup", ["OFF", "SOFT", "HARD"], this.settings.warmupMode, (value) => this.updateSettings({ warmupMode: value as WarmupMode })));
     this.panelBody.appendChild(this.buildToggle("Debug logs", this.settings.debugLogs, (checked) => this.updateSettings({ debugLogs: checked })));
+    this.panelBody.appendChild(this.buildToggle("Cinematic auto-fit during import", this.settings.cinematicFitOnImport, (checked) => this.updateSettings({ cinematicFitOnImport: checked })));
+    this.panelBody.appendChild(this.buildSlider("Cinematic fit rate", this.settings.cinematicFitRate, LAYOUT_LIMITS.cinematicFitRate.min, LAYOUT_LIMITS.cinematicFitRate.max, 1, (value) => this.updateSettings({ cinematicFitRate: value }), {
+      valueFormatter: (value) => `${value.toFixed(0)} fits/sec`,
+      disabled: !this.settings.cinematicFitOnImport
+    }));
 
     const actions = document.createElement("div");
     actions.style.display = "flex";
@@ -85,7 +90,7 @@ export class LayoutPanel {
     actions.appendChild(fit);
 
     const exportJson = document.createElement("button");
-    exportJson.textContent = "Export JSON";
+    exportJson.textContent = "Export settings";
     exportJson.onclick = () => this.exportJson();
     actions.appendChild(exportJson);
 
@@ -104,6 +109,17 @@ export class LayoutPanel {
 
     const importGraph = document.createElement("button");
     importGraph.textContent = "Import Graph";
+    const importMode = document.createElement("select");
+    for (const mode of [
+      { value: "merge", label: "Merge Graph" },
+      { value: "import", label: "Import Graph" },
+      { value: "add", label: "Add Graph" }
+    ]) {
+      const option = document.createElement("option");
+      option.value = mode.value;
+      option.textContent = mode.label;
+      importMode.appendChild(option);
+    }
     const importInput = document.createElement("input");
     importInput.type = "file";
     importInput.accept = "application/json";
@@ -111,10 +127,11 @@ export class LayoutPanel {
     importInput.onchange = () => {
       const [file] = Array.from(importInput.files ?? []);
       if (!file) return;
-      this.callbacks.onImportGraph(file);
+      this.callbacks.onImportGraph(file, importMode.value as "merge" | "import" | "add");
       importInput.value = "";
     };
     importGraph.onclick = () => importInput.click();
+    graphActions.appendChild(importMode);
     graphActions.appendChild(importGraph);
     graphActions.appendChild(importInput);
 
@@ -141,7 +158,8 @@ export class LayoutPanel {
     min: number,
     max: number,
     step: number,
-    onChange: (next: number) => void
+    onChange: (next: number) => void,
+    opts: { valueFormatter?: (value: number) => string; disabled?: boolean } = {}
   ): HTMLElement {
     const row = document.createElement("label");
     row.style.display = "block";
@@ -150,7 +168,7 @@ export class LayoutPanel {
 
     const valueLabel = document.createElement("span");
     valueLabel.style.float = "right";
-    valueLabel.textContent = value.toFixed(step < 1 ? 2 : 0);
+    valueLabel.textContent = opts.valueFormatter ? opts.valueFormatter(value) : value.toFixed(step < 1 ? 2 : 0);
 
     const title = document.createElement("span");
     title.textContent = label;
@@ -163,10 +181,11 @@ export class LayoutPanel {
     input.max = String(max);
     input.step = String(step);
     input.value = String(value);
+    input.disabled = Boolean(opts.disabled);
     input.style.width = "100%";
     input.oninput = () => {
       const next = Number(input.value);
-      valueLabel.textContent = next.toFixed(step < 1 ? 2 : 0);
+      valueLabel.textContent = opts.valueFormatter ? opts.valueFormatter(next) : next.toFixed(step < 1 ? 2 : 0);
       onChange(next);
     };
     row.appendChild(input);

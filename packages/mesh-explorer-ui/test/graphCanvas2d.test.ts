@@ -103,17 +103,17 @@ describe("edge draft state machine", () => {
 describe("edge selection state machine", () => {
   it("clears selected edges when a node is clicked", () => {
     const selected = new Set(["edge-1"]);
-    expect(nextSelectedEdgeIds(selected, { nodeHit: "n1", edgeHit: null, shiftKey: false })).toEqual(new Set());
+    expect(nextSelectedEdgeIds(selected, { nodeHit: "n1", edgeHit: null, shiftKey: false, toggleKey: false })).toEqual(new Set());
   });
 
   it("supports shift toggle for multi-edge selection", () => {
-    const selectedA = nextSelectedEdgeIds(new Set(), { nodeHit: null, edgeHit: "edge-a", shiftKey: false });
+    const selectedA = nextSelectedEdgeIds(new Set(), { nodeHit: null, edgeHit: "edge-a", shiftKey: false, toggleKey: false });
     expect(selectedA).toEqual(new Set(["edge-a"]));
 
-    const selectedAB = nextSelectedEdgeIds(selectedA, { nodeHit: null, edgeHit: "edge-b", shiftKey: true });
+    const selectedAB = nextSelectedEdgeIds(selectedA, { nodeHit: null, edgeHit: "edge-b", shiftKey: true, toggleKey: false });
     expect(selectedAB).toEqual(new Set(["edge-a", "edge-b"]));
 
-    const selectedB = nextSelectedEdgeIds(selectedAB, { nodeHit: null, edgeHit: "edge-a", shiftKey: true });
+    const selectedB = nextSelectedEdgeIds(selectedAB, { nodeHit: null, edgeHit: "edge-a", shiftKey: true, toggleKey: false });
     expect(selectedB).toEqual(new Set(["edge-b"]));
   });
 });
@@ -296,7 +296,9 @@ describe("layout settings bounds", () => {
       reactivity: 4,
       collision: 0,
       warmupMode: "HARD",
-      debugLogs: false
+      debugLogs: false,
+      cinematicFitOnImport: true,
+      cinematicFitRate: 8
     });
 
     expect(params.chargeStrength).toBe(Math.abs(LAYOUT_LIMITS.repulsion.min));
@@ -369,7 +371,7 @@ describe("GraphCanvas2D topology guards and reheat", () => {
     const renderer = new GraphCanvas2D(canvas, {
       nodes: [{ id: "n1", label: "N1" }],
       links: [],
-      selectedNodeIds: new Set()
+      selectedNodeIds: new Set(), selectedLinkIds: new Set()
     }, {
       camera: { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 },
       hoveredNodeId: null,
@@ -400,7 +402,7 @@ describe("GraphCanvas2D topology guards and reheat", () => {
     const { canvas } = createCanvasHarness();
 
     const ui = { camera: { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 }, hoveredNodeId: null, edgeDraft: null, dragSelectionRect: null };
-    const renderer = new GraphCanvas2D(canvas, { nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set() }, ui, {
+    const renderer = new GraphCanvas2D(canvas, { nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set(), selectedLinkIds: new Set() }, ui, {
       onSelectionReplace: () => undefined,
       onSelectionToggle: () => undefined,
       onSelectionClear: () => undefined,
@@ -409,13 +411,13 @@ describe("GraphCanvas2D topology guards and reheat", () => {
     });
 
     syncSpy.mockClear();
-    renderer.update({ nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set() }, { ...ui, hoveredNodeId: "n1" });
+    renderer.update({ nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set(), selectedLinkIds: new Set() }, { ...ui, hoveredNodeId: "n1" });
     expect(syncSpy).toHaveBeenCalledTimes(0);
 
     renderer.update({
       nodes: [{ id: "n1", label: "N1" }, { id: "n2", label: "N2" }],
       links: [{ id: "l1", source: "n1", target: "n2", type: "related" }],
-      selectedNodeIds: new Set()
+      selectedNodeIds: new Set(), selectedLinkIds: new Set()
     }, ui);
     expect(syncSpy).toHaveBeenCalledTimes(1);
     renderer.destroy();
@@ -429,7 +431,7 @@ describe("GraphCanvas2D topology guards and reheat", () => {
     const restartSpy = vi.spyOn(ForceLayout2D.prototype, "restart");
     const { canvas } = createCanvasHarness();
 
-    const renderer = new GraphCanvas2D(canvas, { nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set() }, {
+    const renderer = new GraphCanvas2D(canvas, { nodes: [{ id: "n1", label: "N1" }], links: [], selectedNodeIds: new Set(), selectedLinkIds: new Set() }, {
       camera: { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 },
       hoveredNodeId: null,
       edgeDraft: null,

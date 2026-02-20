@@ -63,4 +63,38 @@ describe("undo redo manager", () => {
 
     expect(manager.debugStackSizes()).toEqual({ undo: 0, redo: 0 });
   });
+
+  it("supports create node undo/redo", async () => {
+    const manager = new UndoRedoManager();
+    const actions = makeActions();
+    const node = { id: "n1", label: "Node 1" };
+
+    await manager.recordCreateNode(node, actions);
+    await manager.undo();
+    await manager.redo();
+
+    expect(actions.createNodeFromSnapshot).toHaveBeenNthCalledWith(1, node);
+    expect(actions.deleteNode).toHaveBeenNthCalledWith(1, "n1");
+    expect(actions.createNodeFromSnapshot).toHaveBeenNthCalledWith(2, node);
+  });
+
+  it("supports composite multi-delete undo/redo", async () => {
+    const manager = new UndoRedoManager();
+    const actions = makeActions();
+    const nodes = [{ id: "n2", label: "N2" }, { id: "n1", label: "N1" }];
+    const links = [
+      { id: "l2", source: "n1", target: "n2", type: "related" },
+      { id: "l1", source: "x", target: "y", type: "related" }
+    ];
+
+    await manager.recordMultiDelete(nodes, links, actions);
+    await manager.undo();
+    await manager.redo();
+
+    expect(actions.deleteNode).toHaveBeenNthCalledWith(1, "n1");
+    expect(actions.deleteNode).toHaveBeenNthCalledWith(2, "n2");
+    expect(actions.deleteLink).toHaveBeenNthCalledWith(1, "l1");
+    expect(actions.createNodeFromSnapshot).toHaveBeenCalledTimes(2);
+    expect(actions.createLinkFromSnapshot).toHaveBeenCalledTimes(2);
+  });
 });

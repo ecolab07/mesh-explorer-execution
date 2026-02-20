@@ -28,6 +28,7 @@ export type GraphViewportModel = {
   nodes: ViewNode[];
   links: ViewLink[];
   selectedNodeIds?: Set<GraphId>;
+  selectedLinkIds?: Set<GraphId>;
 };
 
 export type GraphViewportActions = {

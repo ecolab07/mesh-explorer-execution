@@ -124,7 +124,8 @@ function toReadModel(model: GraphViewportModel): GraphCanvasReadModel {
   return {
     nodes: model.nodes,
     links: model.links,
-    selectedNodeIds: model.selectedNodeIds ?? new Set()
+    selectedNodeIds: model.selectedNodeIds ?? new Set(),
+    selectedLinkIds: model.selectedLinkIds ?? new Set()
   };
 }
 

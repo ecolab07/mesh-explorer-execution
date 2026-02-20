@@ -14,6 +14,7 @@ export type GraphState = {
   nodesById: Map<string, GraphNode>;
   linksById: Map<string, GraphLink>;
   selectedNodeIds: Set<string>;
+  selectedLinkIds: Set<string>;
   cursor: Cursor;
   connectionStatus: ConnectionStatus;
   lastSync: string;
@@ -27,7 +28,9 @@ export type GraphStore = {
   setConnectionStatus: (status: ConnectionStatus) => void;
   setLastSync: (value: string) => void;
   toggleSelectNode: (id: string) => void;
+  toggleSelectLink: (id: string) => void;
   replaceSelection: (ids: string[]) => void;
+  replaceLinkSelection: (ids: string[]) => void;
   clearSelection: () => void;
 };
 
@@ -36,6 +39,7 @@ export function createGraphStore(): GraphStore {
     nodesById: new Map(),
     linksById: new Map(),
     selectedNodeIds: new Set(),
+    selectedLinkIds: new Set(),
     cursor: { metaSeq: 0, graphSeq: 0 },
     connectionStatus: "disconnected",
     lastSync: "n/a"
@@ -63,6 +67,7 @@ export function createGraphStore(): GraphStore {
       const nodesById = new Map(state.nodesById);
       const linksById = new Map(state.linksById);
       const selectedNodeIds = new Set(state.selectedNodeIds);
+      const selectedLinkIds = new Set(state.selectedLinkIds);
 
       for (const event of events) {
         if (event.type === "graph.node.created") {
@@ -78,7 +83,10 @@ export function createGraphStore(): GraphStore {
           nodesById.delete(event.nodeId);
           selectedNodeIds.delete(event.nodeId);
           for (const [id, link] of linksById) {
-            if (link.source === event.nodeId || link.target === event.nodeId) linksById.delete(id);
+            if (link.source === event.nodeId || link.target === event.nodeId) {
+              linksById.delete(id);
+              selectedLinkIds.delete(id);
+            }
           }
           continue;
         }
@@ -88,6 +96,7 @@ export function createGraphStore(): GraphStore {
         }
         if (event.type === "graph.link.deleted") {
           linksById.delete(event.linkId);
+          selectedLinkIds.delete(event.linkId);
         }
       }
 
@@ -95,7 +104,8 @@ export function createGraphStore(): GraphStore {
         ...state,
         nodesById,
         linksById,
-        selectedNodeIds
+        selectedNodeIds,
+        selectedLinkIds
       });
     },
     setCursor(cursor) {
@@ -116,11 +126,23 @@ export function createGraphStore(): GraphStore {
       }
       emit({ ...state, selectedNodeIds: next });
     },
+    toggleSelectLink(id) {
+      const next = new Set(state.selectedLinkIds);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      emit({ ...state, selectedLinkIds: next });
+    },
     replaceSelection(ids) {
       emit({ ...state, selectedNodeIds: new Set(ids) });
     },
+    replaceLinkSelection(ids) {
+      emit({ ...state, selectedLinkIds: new Set(ids) });
+    },
     clearSelection() {
-      emit({ ...state, selectedNodeIds: new Set() });
+      emit({ ...state, selectedNodeIds: new Set(), selectedLinkIds: new Set() });
     }
   };
 }
