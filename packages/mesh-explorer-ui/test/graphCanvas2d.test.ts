@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ForceLayout2D, GraphCanvas2D, computeEdgeHitSlopWorld, computeGraphBounds, computeMinZoomEffective, computeSeedRadius, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { ForceLayout2D, GraphCanvas2D, computeEdgeHitSlopWorld, computeGraphBounds, computeMinZoomEffective, computeParallelLinkCurvatures, computeSeedRadius, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
 import { LAYOUT_LIMITS, deriveLayoutParams } from "../src/ui/layoutSettings.js";
 
 describe("graphCanvas2d transforms", () => {
@@ -449,5 +449,20 @@ describe("GraphCanvas2D topology guards and reheat", () => {
     expect(reheatSpy).toHaveBeenCalledWith(0.9);
     expect(restartSpy).toHaveBeenCalledTimes(1);
     renderer.destroy();
+  });
+});
+
+
+describe("parallel link curvature", () => {
+  it("assigns distinct curvature values for parallel links", () => {
+    const curvatureById = computeParallelLinkCurvatures([
+      { id: "l1", source: "a", target: "b", type: "related" },
+      { id: "l2", source: "a", target: "b", type: "related" },
+      { id: "l3", source: "a", target: "b", type: "related" }
+    ]);
+
+    const values = ["l1", "l2", "l3"].map((id) => curvatureById.get(id));
+    expect(new Set(values).size).toBe(3);
+    expect(values.some((value) => Math.abs(value ?? 0) > 0)).toBe(true);
   });
 });
