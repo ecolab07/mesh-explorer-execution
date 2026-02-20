@@ -15,6 +15,7 @@ export type GraphCanvasReadModel = {
   nodes: GraphNode[];
   links: CanvasLink[];
   selectedNodeIds: Set<string>;
+  selectedLinkIds: Set<string>;
 };
 
 export type CanvasUiState = {
@@ -283,11 +284,11 @@ export function nextEdgeDraft(current: EdgeDraft | null, clickedNodeId: string |
 
 export function nextSelectedEdgeIds(
   current: ReadonlySet<string>,
-  params: { nodeHit: string | null; edgeHit: string | null; shiftKey: boolean }
+  params: { nodeHit: string | null; edgeHit: string | null; shiftKey: boolean; toggleKey: boolean }
 ): Set<string> {
-  if (params.nodeHit) return new Set();
+  if (params.nodeHit) return params.toggleKey ? new Set(current) : new Set();
   if (params.edgeHit) {
-    if (!params.shiftKey) return new Set([params.edgeHit]);
+    if (!params.shiftKey && !params.toggleKey) return new Set([params.edgeHit]);
     const next = new Set(current);
     if (next.has(params.edgeHit)) next.delete(params.edgeHit);
     else next.add(params.edgeHit);
@@ -565,11 +566,11 @@ export class GraphCanvas2D {
   private panning = false;
   private draggingNodeIds: string[] = [];
   private hoveredEdgeId: string | null = null;
-  private selectedEdgeIds = new Set<string>();
   private edgeDraftCursorWorldPos: Vec2 | null = null;
   private topologySignature = "";
   private debugLogsEnabled = false;
   private readonly debugLog?: GraphCanvasDebugLog;
+  private resizeObserver: ResizeObserver | null = null;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -608,6 +609,7 @@ export class GraphCanvas2D {
 
   destroy(): void {
     if (this.renderRaf) cancelAnimationFrame(this.renderRaf);
+    this.resizeObserver?.disconnect();
     this.layout.destroy();
   }
 
@@ -695,7 +697,7 @@ export class GraphCanvas2D {
       this.pointerInsideCanvas = true;
       this.lastPointerScreenPos = { ...this.pointer };
       const hit = hitTestNode(this.positionedNodes(), this.ui.camera, this.pointer);
-      if (event.button === 1 || event.ctrlKey || event.metaKey || event.altKey) {
+      if (event.button === 1 || event.altKey) {
         this.panning = true;
         this.callbacks.onCameraChange?.(this.ui.camera);
         this.canvas.setPointerCapture(event.pointerId);
@@ -703,8 +705,8 @@ export class GraphCanvas2D {
         return;
       }
       if (hit) {
-        this.selectedEdgeIds.clear();
-        if (event.shiftKey) {
+        if (!event.ctrlKey && !event.metaKey) this.callbacks.onSelectedEdgeIdsChange?.([]);
+        if (event.shiftKey || event.ctrlKey || event.metaKey) {
           this.callbacks.onSelectionToggle(hit);
         } else if (!this.readModel.selectedNodeIds.has(hit)) {
           this.callbacks.onSelectionReplace([hit]);
@@ -786,13 +788,27 @@ export class GraphCanvas2D {
         const edgeHit = hit
           ? null
           : hitTestEdges(this.readModel.links, this.nodePositions(), this.ui.camera, { x: event.offsetX, y: event.offsetY });
-        this.selectedEdgeIds = nextSelectedEdgeIds(this.selectedEdgeIds, { nodeHit: hit, edgeHit, shiftKey: event.shiftKey });
-        this.callbacks.onSelectedEdgeIdsChange?.(Array.from(this.selectedEdgeIds));
+        const nextSelected = nextSelectedEdgeIds(this.readModel.selectedLinkIds, {
+          nodeHit: hit,
+          edgeHit,
+          shiftKey: event.shiftKey,
+          toggleKey: event.ctrlKey || event.metaKey
+        });
+        if (edgeHit && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+          this.callbacks.onSelectionReplace([]);
+        }
+        this.callbacks.onSelectedEdgeIdsChange?.(Array.from(nextSelected));
         if (hit) {
-          const next = nextEdgeDraft(this.ui.edgeDraft, hit, pointerWorld);
-          this.edgeDraftCursorWorldPos = next.edgeDraft ? pointerWorld : null;
-          this.callbacks.onEdgeDraftChange(next.edgeDraft);
-          if (next.commit) this.callbacks.onCreateEdge(next.commit.source, next.commit.target);
+          const canDraft = event.ctrlKey || event.metaKey;
+          if (canDraft) {
+            const next = nextEdgeDraft(this.ui.edgeDraft, hit, pointerWorld);
+            this.edgeDraftCursorWorldPos = next.edgeDraft ? pointerWorld : null;
+            this.callbacks.onEdgeDraftChange(next.edgeDraft);
+            if (next.commit) this.callbacks.onCreateEdge(next.commit.source, next.commit.target);
+          } else if (this.ui.edgeDraft) {
+            this.edgeDraftCursorWorldPos = null;
+            this.callbacks.onEdgeDraftChange(null);
+          }
         } else if (edgeHit) {
           this.edgeDraftCursorWorldPos = null;
           this.callbacks.onEdgeDraftChange(null);
@@ -832,7 +848,7 @@ export class GraphCanvas2D {
       }
       if ((event.key === "Delete" || event.key === "Backspace") && !isTextInputTarget(event.target)) {
         const selectedNodeId = this.readModel.selectedNodeIds.values().next().value as string | undefined;
-        const selectedLinkId = this.selectedEdgeIds.values().next().value as string | undefined;
+        const selectedLinkId = this.readModel.selectedLinkIds.values().next().value as string | undefined;
         if (selectedNodeId) {
           this.callbacks.onRequestDelete?.({ kind: "node", nodeId: selectedNodeId });
           return;
@@ -848,7 +864,13 @@ export class GraphCanvas2D {
       }
       if (event.key.toLowerCase() === "f") this.callbacks.onFitRequest?.();
     });
-    window.addEventListener("resize", () => this.resize());
+    const host = this.canvas.parentElement;
+    if (host && typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(host);
+    } else {
+      window.addEventListener("resize", () => this.resize());
+    }
   }
 
   private requestRender(): void {
@@ -882,7 +904,7 @@ export class GraphCanvas2D {
       const source = positions.get(link.source);
       const target = positions.get(link.target);
       if (!source || !target) continue;
-      const selected = this.selectedEdgeIds.has(link.id);
+      const selected = this.readModel.selectedLinkIds.has(link.id);
       const hovered = !selected && this.hoveredEdgeId === link.id;
       this.ctx.strokeStyle = selected ? "#2563eb" : hovered ? "#0ea5e9" : "#94a3b8";
       this.ctx.lineWidth = 2 / this.ui.camera.zoom;

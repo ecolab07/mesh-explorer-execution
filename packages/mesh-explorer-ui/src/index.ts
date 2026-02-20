@@ -25,7 +25,7 @@ import {
 } from "./graphCanvas2d.js";
 import { CanvasGraphViewport2D } from "./viewport/CanvasGraphViewport2D.js";
 import type { GraphViewportActions, GraphViewportModel, Selection } from "./viewport/graphViewportContract.js";
-import { UndoRedoManager, getIncidentLinks } from "./undoRedo.js";
+import { UndoRedoManager } from "./undoRedo.js";
 import { LayoutPanel } from "./ui/LayoutPanel.js";
 import { deriveLayoutParams, loadLayoutUiState, saveLayoutUiState, type LayoutUiState } from "./ui/layoutSettings.js";
 import { exportGraphFromState, parseExportedGraph, type ExportedGraphV1 } from "./devtools/graphIo.js";
@@ -49,7 +49,7 @@ type SyncPollPayload = {
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
   container.innerHTML = `
-    <section style="display:grid;grid-template-columns:320px 1fr;gap:12px;height:100vh;font-family:sans-serif;">
+    <section style="display:grid;grid-template-columns:320px 1fr;gap:12px;height:100vh;overflow:hidden;font-family:sans-serif;">
       <aside style="padding:12px;border-right:1px solid #ddd;overflow:auto;">
         <h3>Mesh Explorer</h3>
         <label>baseUrl <input id="baseUrl" style="width:100%" value="http://127.0.0.1:8090"/></label><br/>
@@ -76,7 +76,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         </div>
         <div id="devBanner" style="display:none;margin-top:8px;padding:6px;border:1px solid #f59e0b;background:#fffbeb;border-radius:6px;font-size:12px;"></div>
       </aside>
-      <main style="position:relative;display:grid;grid-template-rows:1fr;gap:8px;padding:8px;">
+      <main style="position:relative;display:flex;flex-direction:column;flex:1;min-height:0;gap:8px;padding:8px;">
         <canvas id="graphCanvas" style="border:1px solid #ddd;width:100%;height:100%;touch-action:none;"></canvas>
         <div id="rendererBadge" style="position:absolute;top:16px;right:16px;padding:4px 8px;border-radius:999px;background:#111827;color:white;font-size:12px;opacity:0.85;"></div>
       </main>
@@ -94,6 +94,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let hasUserMovedCamera = false;
   let autoFitApplied = false;
   let autoFitRaf = 0;
+  let isImporting = false;
+  let importExpectedNodes = 0;
+  let importExpectedLinks = 0;
+  let importLastProgressiveFitAt = 0;
   let previousNodeCount = 0;
   let cameraInfo: CameraState = { x: -280, y: -180, zoom: 1, minZoom: 0.08, maxZoom: 3.5 };
   let browserConnectivityHint: ConnectivityStatus = navigator.onLine ? "online" : "offline";
@@ -110,7 +114,6 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   };
 
   let canvasRenderer: CanvasGraphViewport2D | null = null;
-  let selectedLinkIds = new Set<string>();
   let previousNodeIds = new Set<string>();
   const pendingSpawnSeeds: Array<{ x: number; y: number }> = [];
   const undoRedo = new UndoRedoManager();
@@ -136,11 +139,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     };
     const curvatureByLinkId = computeParallelLinkCurvatures(data.links);
     const viewLinks = data.links.map((link) => ({ ...link, curvature: curvatureByLinkId.get(link.id) ?? 0 }));
-    selectedLinkIds = new Set(Array.from(selectedLinkIds).filter((id) => snapshot.linksById.has(id)));
     applyPendingSpawnSeeds(snapshot.nodesById);
-    canvasRenderer?.update({ nodes: data.nodes, links: viewLinks, selectedNodeIds: snapshot.selectedNodeIds }, uiState);
+    canvasRenderer?.update({ nodes: data.nodes, links: viewLinks, selectedNodeIds: snapshot.selectedNodeIds, selectedLinkIds: snapshot.selectedLinkIds }, uiState);
     const transitionedToNonEmpty = previousNodeCount === 0 && data.nodes.length > 0;
-    if (!hasUserMovedCamera && !autoFitApplied && (transitionedToNonEmpty || data.nodes.length > 0)) {
+    maybeRunImportProgressiveFit(data);
+    if (!isImporting && !hasUserMovedCamera && !autoFitApplied && (transitionedToNonEmpty || data.nodes.length > 0)) {
       scheduleAutoFit();
     }
     previousNodeCount = data.nodes.length;
@@ -186,14 +189,16 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     if (isTextInputTarget(event.target)) return;
     if (event.repeat) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === "n" && event.shiftKey) {
+    if (event.code === "KeyN" && event.shiftKey) {
       event.preventDefault();
       void addNode(nextAutoNodeLabel(), { seedPosition: preferredSpawnWorldPos(), zoomOutFactor: 0.96 });
+      emitUiDebugLog("ui.keydown", { code: event.code, mode: "auto-create" }, 50);
       return;
     }
-    if (event.key === "n" && !event.shiftKey) {
+    if (event.code === "KeyN" && !event.shiftKey) {
       event.preventDefault();
       void promptAndCreateNode(preferredSpawnWorldPos());
+      emitUiDebugLog("ui.keydown", { code: event.code, mode: "prompt-create" }, 50);
     }
   });
 
@@ -325,18 +330,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function addNode(label: string, opts: { seedPosition?: { x: number; y: number }; zoomOutFactor?: number } = {}): Promise<void> {
     try {
-      const idempotencyKey = crypto.randomUUID();
-      const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
-        method: "POST",
-        headers: headers(el.principal.value, idempotencyKey),
-        body: JSON.stringify({ label, idempotencyKey })
-      }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "add-node") });
-      if (!response.ok) reportDevError(el, `add node failed: ${response.status}`);
-      if (response.ok) {
-        if (opts.seedPosition) pendingSpawnSeeds.push(opts.seedPosition);
-        if (opts.zoomOutFactor) canvasRenderer?.nudgeZoomOut(opts.zoomOutFactor);
-        undoRedo.clearRedo();
-      }
+      const node: GraphNode = { id: crypto.randomUUID(), label };
+      await undoRedo.recordCreateNode(node, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
+      if (opts.seedPosition) pendingSpawnSeeds.push(opts.seedPosition);
+      if (opts.zoomOutFactor) canvasRenderer?.nudgeZoomOut(opts.zoomOutFactor);
     } catch (error) {
       reportDevError(el, `add node failed: ${String(error)}`, error);
     }
@@ -404,17 +401,21 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   }
 
+  function maybeRunImportProgressiveFit(data: GraphData): void {
+    if (!isImporting) return;
+    if (!layoutUiState.settings.cinematicFitOnImport) return;
+    const now = performance.now();
+    const minIntervalMs = 1000 / Math.max(1, layoutUiState.settings.cinematicFitRate);
+    if (now - importLastProgressiveFitAt < minIntervalMs) return;
+    importLastProgressiveFitAt = now;
+    fitCameraToCurrentGraph({ markAutoFitApplied: false });
+  }
+
   async function createLinkFromDraft(source: string, target: string): Promise<void> {
     const type = el.linkType.value.trim() || "related";
     try {
-      const idempotencyKey = crypto.randomUUID();
-      const response = await meshFetch(`${el.baseUrl.value}/graph/links`, {
-        method: "POST",
-        headers: headers(el.principal.value, idempotencyKey),
-        body: JSON.stringify({ source, target, type, idempotencyKey })
-      }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "create-link") });
-      if (!response.ok) reportDevError(el, `create link rejected: ${response.status}`);
-      if (response.ok) undoRedo.clearRedo();
+      const link: GraphLink = { id: crypto.randomUUID(), source, target, type };
+      await undoRedo.recordCreateLink(link, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
     } catch (error) {
       reportDevError(el, `add link failed: ${String(error)}`, error);
     }
@@ -472,24 +473,68 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     return exportGraphFromState(store.getState());
   }
 
-  async function importGraph(data: ExportedGraphV1): Promise<void> {
-    undoRedo.reset();
+  async function importGraph(data: ExportedGraphV1, mode: "merge" | "import" | "add" = "merge"): Promise<void> {
+    const report = { mode, createdNodes: 0, createdLinks: 0, ignoredNodes: 0, ignoredLinks: 0, renamedNodes: 0, renamedLinks: 0 };
+    if (mode === "import") {
+      await clearGraph(true);
+      undoRedo.reset();
+    }
     resetAutoFitState();
+    isImporting = true;
+    importExpectedNodes = data.nodes.length;
+    importExpectedLinks = data.links.length;
+    importLastProgressiveFitAt = 0;
+
+    const existingNodeIds = new Set(store.getState().nodesById.keys());
+    const existingLinkIds = new Set(store.getState().linksById.keys());
+    const nodeIdMap = new Map<string, string>();
+
     for (let index = 0; index < data.nodes.length; index += 1) {
-      const node = data.nodes[index];
+      const node = data.nodes[index]!;
       reportDevInfo(el, `importing nodes ${index + 1}/${data.nodes.length}`);
-      await createNodeFromSnapshot(node);
+      if (mode === "merge" && existingNodeIds.has(node.id)) {
+        report.ignoredNodes += 1;
+        continue;
+      }
+      const nextNode = mode === "add" && existingNodeIds.has(node.id)
+        ? { ...node, id: `${node.id}__imported_${index + 1}` }
+        : node;
+      if (nextNode.id !== node.id) report.renamedNodes += 1;
+      nodeIdMap.set(node.id, nextNode.id);
+      await createNodeFromSnapshot(nextNode);
+      report.createdNodes += 1;
+      existingNodeIds.add(nextNode.id);
     }
 
     for (let index = 0; index < data.links.length; index += 1) {
-      const link = data.links[index];
+      const link = data.links[index]!;
       reportDevInfo(el, `importing links ${index + 1}/${data.links.length}`);
-      await createLinkFromSnapshot(link);
+      const sourceId = nodeIdMap.get(link.source) ?? link.source;
+      const targetId = nodeIdMap.get(link.target) ?? link.target;
+      if (!existingNodeIds.has(sourceId) || !existingNodeIds.has(targetId)) {
+        report.ignoredLinks += 1;
+        continue;
+      }
+      if (mode === "merge" && existingLinkIds.has(link.id)) {
+        report.ignoredLinks += 1;
+        continue;
+      }
+      const nextLink = mode === "add" && existingLinkIds.has(link.id)
+        ? { ...link, id: `${link.id}__imported_${index + 1}`, source: sourceId, target: targetId }
+        : { ...link, source: sourceId, target: targetId };
+      if (nextLink.id !== link.id) report.renamedLinks += 1;
+      await createLinkFromSnapshot(nextLink);
+      report.createdLinks += 1;
+      existingLinkIds.add(nextLink.id);
     }
+    await waitForImportQuiescence();
+    isImporting = false;
+    fitCameraToCurrentGraph({ markAutoFitApplied: true });
+    reportDevInfo(el, `import report ${JSON.stringify(report)}`);
   }
 
-  async function clearGraph(): Promise<void> {
-    undoRedo.reset();
+  async function clearGraph(skipUndoReset = false): Promise<void> {
+    if (!skipUndoReset) undoRedo.reset();
     resetAutoFitState();
     const nodeIds = Array.from(store.getState().nodesById.keys());
     for (let index = 0; index < nodeIds.length; index += 1) {
@@ -500,7 +545,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   function currentSelection(): Selection {
     const selectedNodeId = store.getState().selectedNodeIds.values().next().value as string | undefined;
-    const selectedLinkId = selectedLinkIds.values().next().value as string | undefined;
+    const selectedLinkId = store.getState().selectedLinkIds.values().next().value as string | undefined;
     if (selectedNodeId) return { kind: "node", nodeId: selectedNodeId };
     if (selectedLinkId) return { kind: "link", linkId: selectedLinkId };
     return { kind: "none" };
@@ -509,26 +554,30 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   async function requestDelete(_selection?: Selection): Promise<void> {
     try {
       const state = store.getState();
-      const plan = buildMultiDeletePlan(state, selectedLinkIds);
+      const plan = buildMultiDeletePlan(state, state.selectedLinkIds);
       if (plan.nodeIds.length === 0 && plan.linkIds.length === 0) return;
 
-      for (const nodeId of plan.nodeIds) {
-        const currentNode = store.getState().nodesById.get(nodeId);
-        if (!currentNode) continue;
-        const incidentLinks = getIncidentLinks(store.getState(), nodeId);
-        await undoRedo.recordDeleteNode(currentNode, incidentLinks, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
-      }
+      const nodes = plan.nodeIds.map((nodeId) => state.nodesById.get(nodeId)).filter((node): node is GraphNode => Boolean(node));
+      const selectedNodeSet = new Set(plan.nodeIds);
+      const implicitLinks = Array.from(state.linksById.values()).filter((link) => selectedNodeSet.has(link.source) || selectedNodeSet.has(link.target));
+      const explicitLinks = plan.linkIds.map((linkId) => state.linksById.get(linkId)).filter((link): link is GraphLink => Boolean(link));
+      const linkById = new Map<string, GraphLink>();
+      for (const link of [...implicitLinks, ...explicitLinks]) linkById.set(link.id, link);
 
-      for (const linkId of plan.linkIds) {
-        const currentLink = store.getState().linksById.get(linkId);
-        if (!currentLink) continue;
-        await undoRedo.recordDeleteLink(currentLink, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
-      }
+      await undoRedo.recordMultiDelete(nodes, Array.from(linkById.values()), { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
 
       store.clearSelection();
-      selectedLinkIds = new Set();
     } catch (error) {
       reportDevError(el, `delete failed: ${String(error)}`, error);
+    }
+  }
+
+  async function waitForImportQuiescence(timeoutMs = 1200): Promise<void> {
+    const start = performance.now();
+    while (performance.now() - start < timeoutMs) {
+      const state = store.getState();
+      if (state.nodesById.size >= importExpectedNodes && state.linksById.size >= importExpectedLinks) return;
+      await wait(60);
     }
   }
 
@@ -558,7 +607,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           void createLinkFromDraft(source, target);
         }
       };
-      const initialModel: GraphViewportModel = { nodes: [], links: [], selectedNodeIds: new Set() };
+      const initialModel: GraphViewportModel = { nodes: [], links: [], selectedNodeIds: new Set(), selectedLinkIds: new Set() };
       canvasRenderer = new CanvasGraphViewport2D(el.graphCanvas, {
         model: initialModel,
         actions: viewportActions,
@@ -569,7 +618,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         onSelectionToggleNodeId: (id) => store.toggleSelectNode(id),
         onSelectionClear: () => store.clearSelection(),
         onSelectedLinkIdsChange: (ids) => {
-          selectedLinkIds = new Set(ids);
+          store.replaceLinkSelection(ids);
         },
         onEdgeDraftChange: (edgeDraft) => {
           uiState.edgeDraft = edgeDraft;
@@ -577,7 +626,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           canvasRenderer?.update({
             nodes: Array.from(store.getState().nodesById.values()),
             links: Array.from(store.getState().linksById.values()),
-            selectedNodeIds: store.getState().selectedNodeIds
+            selectedNodeIds: store.getState().selectedNodeIds,
+            selectedLinkIds: store.getState().selectedLinkIds
           }, uiState);
         },
         onCameraChange: (camera) => {
@@ -653,13 +703,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           reportDevError(el, `graph export failed: ${String(error)}`, error);
         }
       },
-      onImportGraph: (file) => {
+      onImportGraph: (file, importMode) => {
         void (async () => {
           try {
             reportDevInfo(el, `reading ${file.name}...`);
             const raw = await file.text();
             const parsed = parseExportedGraph(JSON.parse(raw));
-            await importGraph(parsed);
+            await importGraph(parsed, importMode);
             reportDevInfo(el, `graph imported (${parsed.nodes.length} nodes, ${parsed.links.length} links)`);
           } catch (error) {
             reportDevError(el, `graph import failed: ${String(error)}`, error);
@@ -675,34 +725,41 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     });
   }
 
-  function fitCameraToCurrentGraph(): boolean {
+  function fitCameraToCurrentGraph(options: { markAutoFitApplied?: boolean } = {}): boolean {
     const positioned = Array.from((canvasRenderer?.getNodePositions() ?? new Map()).values()).map((position) => ({ position }));
     const bounds = computeGraphBounds(positioned);
     if (!bounds) return false;
+    const boundsWidth = bounds.maxX - bounds.minX;
+    const boundsHeight = bounds.maxY - bounds.minY;
+    if (!Number.isFinite(boundsWidth) || !Number.isFinite(boundsHeight) || boundsWidth < 1 || boundsHeight < 1) return false;
     const rect = el.graphCanvas.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width < 2 || rect.height < 2) return false;
     uiState.camera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12, store.getState().nodesById.size);
+    if (options.markAutoFitApplied) autoFitApplied = true;
     cameraInfo = uiState.camera;
     queueBadgeRender();
     canvasRenderer?.update({
       nodes: Array.from(store.getState().nodesById.values()),
       links: Array.from(store.getState().linksById.values()),
-      selectedNodeIds: store.getState().selectedNodeIds
+      selectedNodeIds: store.getState().selectedNodeIds,
+      selectedLinkIds: store.getState().selectedLinkIds
     }, uiState);
     return true;
   }
 
   function updateSelectionUi(snapshot: GraphState): void {
-    const selected = Array.from(snapshot.selectedNodeIds);
+    const selectedNodes = Array.from(snapshot.selectedNodeIds);
+    const selectedLinks = Array.from(snapshot.selectedLinkIds);
     if (uiState.edgeDraft) {
       const from = snapshot.nodesById.get(uiState.edgeDraft.startNodeId)?.label ?? uiState.edgeDraft.startNodeId;
       el.linkSelectionHint.textContent = `Draft: ${from} → (click destination node, Escape to cancel)`;
       return;
     }
-    if (selected.length === 0) {
-      el.linkSelectionHint.textContent = "Click a node, then click another node to create a link. Shift+click toggles selection.";
+    if (selectedNodes.length === 0 && selectedLinks.length === 0) {
+      el.linkSelectionHint.textContent = "Click to select. Ctrl/Cmd+click starts link draft. Shift+click extends selection.";
       return;
     }
-    el.linkSelectionHint.textContent = `Selected: ${selected.join(", ")}`;
+    el.linkSelectionHint.textContent = `Selected nodes: ${selectedNodes.length} • links: ${selectedLinks.length}`;
   }
 
   function renderStatus(snapshot: GraphState, nodes: number, links: number): void {

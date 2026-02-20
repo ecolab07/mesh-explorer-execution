@@ -38,22 +38,27 @@ describe("canvas flow integration", () => {
   });
 
   it("clears selected edge when node is clicked", () => {
-    const selected = nextSelectedEdgeIds(new Set(), { nodeHit: null, edgeHit: "edge-1", shiftKey: false });
+    const selected = nextSelectedEdgeIds(new Set(), { nodeHit: null, edgeHit: "edge-1", shiftKey: false, toggleKey: false });
     expect(selected).toEqual(new Set(["edge-1"]));
 
-    const afterNodeClick = nextSelectedEdgeIds(selected, { nodeHit: "n1", edgeHit: null, shiftKey: false });
+    const afterNodeClick = nextSelectedEdgeIds(selected, { nodeHit: "n1", edgeHit: null, shiftKey: false, toggleKey: false });
     expect(afterNodeClick).toEqual(new Set());
   });
 
   it("supports SHIFT multi-edge toggles and clears on background", () => {
-    const selectedA = nextSelectedEdgeIds(new Set(), { nodeHit: null, edgeHit: "edge-a", shiftKey: false });
-    const selectedAB = nextSelectedEdgeIds(selectedA, { nodeHit: null, edgeHit: "edge-b", shiftKey: true });
-    const selectedB = nextSelectedEdgeIds(selectedAB, { nodeHit: null, edgeHit: "edge-a", shiftKey: true });
-    const cleared = nextSelectedEdgeIds(selectedB, { nodeHit: null, edgeHit: null, shiftKey: false });
+    const selectedA = nextSelectedEdgeIds(new Set(), { nodeHit: null, edgeHit: "edge-a", shiftKey: false, toggleKey: false });
+    const selectedAB = nextSelectedEdgeIds(selectedA, { nodeHit: null, edgeHit: "edge-b", shiftKey: true, toggleKey: false });
+    const selectedB = nextSelectedEdgeIds(selectedAB, { nodeHit: null, edgeHit: "edge-a", shiftKey: true, toggleKey: false });
+    const cleared = nextSelectedEdgeIds(selectedB, { nodeHit: null, edgeHit: null, shiftKey: false, toggleKey: false });
 
     expect(selectedAB).toEqual(new Set(["edge-a", "edge-b"]));
     expect(selectedB).toEqual(new Set(["edge-b"]));
     expect(cleared).toEqual(new Set());
+  });
+
+  it("keeps existing link selection when node is clicked with ctrl/cmd toggle", () => {
+    const selected = nextSelectedEdgeIds(new Set(["edge-a"]), { nodeHit: "n1", edgeHit: null, shiftKey: false, toggleKey: true });
+    expect(selected).toEqual(new Set(["edge-a"]));
   });
 
   it("fit includes all nodes for large graph with adaptive min zoom", () => {

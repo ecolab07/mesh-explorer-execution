@@ -1,6 +1,6 @@
 import type { GraphLink, GraphNode, GraphState } from "./graphStore.js";
 
-type UndoKind = "rename" | "deleteLink" | "deleteNode";
+type UndoKind = "rename" | "deleteLink" | "deleteNode" | "createNode" | "createLink" | "multiDelete";
 
 type UndoItem = {
   kind: UndoKind;
@@ -70,6 +70,58 @@ export class UndoRedoManager {
         }
       },
       redo: async () => actions.deleteNode(node.id)
+    });
+  }
+
+  async recordCreateNode(node: GraphNode, actions: UndoRedoActions): Promise<void> {
+    await actions.createNodeFromSnapshot(node);
+    this.push({
+      kind: "createNode",
+      undo: async () => actions.deleteNode(node.id),
+      redo: async () => actions.createNodeFromSnapshot(node)
+    });
+  }
+
+  async recordCreateLink(link: GraphLink, actions: UndoRedoActions): Promise<void> {
+    await actions.createLinkFromSnapshot(link);
+    this.push({
+      kind: "createLink",
+      undo: async () => actions.deleteLink(link.id),
+      redo: async () => actions.createLinkFromSnapshot(link)
+    });
+  }
+
+  async recordMultiDelete(nodes: GraphNode[], links: GraphLink[], actions: UndoRedoActions): Promise<void> {
+    const stableNodes = [...nodes].sort((left, right) => left.id.localeCompare(right.id));
+    const stableLinks = [...links].sort((left, right) => left.id.localeCompare(right.id));
+    const nodeIds = new Set(stableNodes.map((node) => node.id));
+    const explicitLinks = stableLinks.filter((link) => !nodeIds.has(link.source) && !nodeIds.has(link.target));
+
+    for (const node of stableNodes) {
+      await actions.deleteNode(node.id);
+    }
+    for (const link of explicitLinks) {
+      await actions.deleteLink(link.id);
+    }
+
+    this.push({
+      kind: "multiDelete",
+      undo: async () => {
+        for (const node of stableNodes) {
+          await actions.createNodeFromSnapshot(node);
+        }
+        for (const link of stableLinks) {
+          await actions.createLinkFromSnapshot(link);
+        }
+      },
+      redo: async () => {
+        for (const node of stableNodes) {
+          await actions.deleteNode(node.id);
+        }
+        for (const link of explicitLinks) {
+          await actions.deleteLink(link.id);
+        }
+      }
     });
   }
 
