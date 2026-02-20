@@ -5,6 +5,9 @@ type LayoutPanelCallbacks = {
   onPanelStateChange: (next: DevPanelState) => void;
   onReheat: () => void;
   onFit: () => void;
+  onExportGraph: () => void;
+  onImportGraph: (file: File) => void;
+  onClearGraph: () => void;
 };
 
 type LayoutPanelOptions = {
@@ -87,6 +90,40 @@ export class LayoutPanel {
     actions.appendChild(exportJson);
 
     this.panelBody.appendChild(actions);
+
+    const graphActions = document.createElement("div");
+    graphActions.style.display = "flex";
+    graphActions.style.gap = "6px";
+    graphActions.style.marginTop = "8px";
+    graphActions.style.flexWrap = "wrap";
+
+    const exportGraph = document.createElement("button");
+    exportGraph.textContent = "Export Graph";
+    exportGraph.onclick = () => this.callbacks.onExportGraph();
+    graphActions.appendChild(exportGraph);
+
+    const importGraph = document.createElement("button");
+    importGraph.textContent = "Import Graph";
+    const importInput = document.createElement("input");
+    importInput.type = "file";
+    importInput.accept = "application/json";
+    importInput.style.display = "none";
+    importInput.onchange = () => {
+      const [file] = Array.from(importInput.files ?? []);
+      if (!file) return;
+      this.callbacks.onImportGraph(file);
+      importInput.value = "";
+    };
+    importGraph.onclick = () => importInput.click();
+    graphActions.appendChild(importGraph);
+    graphActions.appendChild(importInput);
+
+    const clearGraph = document.createElement("button");
+    clearGraph.textContent = "Clear Graph";
+    clearGraph.onclick = () => this.callbacks.onClearGraph();
+    graphActions.appendChild(clearGraph);
+
+    this.panelBody.appendChild(graphActions);
   }
 
   private updateSettings(patch: Partial<LayoutSettings>): void {

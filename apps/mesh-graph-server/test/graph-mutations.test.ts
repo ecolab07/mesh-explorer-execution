@@ -52,4 +52,25 @@ describe("mesh graph server mutations", () => {
     expect(view.links.find((link) => link.id === "L1")).toBeUndefined();
     expect(view.links.find((link) => link.id === "L2")).toBeUndefined();
   });
+
+  it("keeps explicit ids for node/link create payloads", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-create-id-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    const headers = { "content-type": "application/json", "x-mesh-principal": "local-dev" };
+    await fetch(`${server.url}/graph/nodes`, { method: "POST", headers, body: JSON.stringify({ id: "Node-Explicit", label: "Node" }) });
+    await fetch(`${server.url}/graph/nodes`, { method: "POST", headers, body: JSON.stringify({ id: "Node-Target", label: "Target" }) });
+    await fetch(`${server.url}/graph/links`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ id: "Link-Explicit", source: "Node-Explicit", target: "Node-Target", type: "related" })
+    });
+
+    const viewResponse = await fetch(`${server.url}/graph/view`, { headers });
+    const view = (await viewResponse.json()) as { nodes: Array<{ id: string }>; links: Array<{ id: string }> };
+
+    expect(view.nodes.some((node) => node.id === "Node-Explicit")).toBe(true);
+    expect(view.links.some((link) => link.id === "Link-Explicit")).toBe(true);
+  });
 });

@@ -27,6 +27,7 @@ import type { GraphViewportActions, GraphViewportModel, Selection } from "./view
 import { UndoRedoManager, getIncidentLinks } from "./undoRedo.js";
 import { LayoutPanel } from "./ui/LayoutPanel.js";
 import { deriveLayoutParams, loadLayoutUiState, saveLayoutUiState, type LayoutUiState } from "./ui/layoutSettings.js";
+import { exportGraphFromState, parseExportedGraph, type ExportedGraphV1 } from "./devtools/graphIo.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -380,6 +381,32 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     if (!response.ok) throw new Error(`rename node failed: ${response.status}`);
   }
 
+  function exportGraph(): ExportedGraphV1 {
+    return exportGraphFromState(store.getState());
+  }
+
+  async function importGraph(data: ExportedGraphV1): Promise<void> {
+    for (let index = 0; index < data.nodes.length; index += 1) {
+      const node = data.nodes[index];
+      reportDevInfo(el, `importing nodes ${index + 1}/${data.nodes.length}`);
+      await createNodeFromSnapshot(node);
+    }
+
+    for (let index = 0; index < data.links.length; index += 1) {
+      const link = data.links[index];
+      reportDevInfo(el, `importing links ${index + 1}/${data.links.length}`);
+      await createLinkFromSnapshot(link);
+    }
+  }
+
+  async function clearGraph(): Promise<void> {
+    const nodeIds = Array.from(store.getState().nodesById.keys());
+    for (let index = 0; index < nodeIds.length; index += 1) {
+      reportDevInfo(el, `clearing ${index + 1}/${nodeIds.length}`);
+      await deleteNode(nodeIds[index]);
+    }
+  }
+
   function currentSelection(): Selection {
     const selectedNodeId = store.getState().selectedNodeIds.values().next().value as string | undefined;
     const selectedLinkId = selectedLinkIds.values().next().value as string | undefined;
@@ -502,6 +529,46 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       onFit: () => {
         emitUiDebugLog("ui.keydown", { key: "Fit" });
         fitCameraToCurrentGraph();
+      },
+      onExportGraph: async () => {
+        try {
+          const payload = exportGraph();
+          const json = JSON.stringify(payload, null, 2);
+          const blob = new Blob([json], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "mesh-graph.json";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(json);
+          }
+          reportDevInfo(el, `graph exported (${payload.nodes.length} nodes, ${payload.links.length} links)`);
+        } catch (error) {
+          reportDevError(el, `graph export failed: ${String(error)}`, error);
+        }
+      },
+      onImportGraph: (file) => {
+        void (async () => {
+          try {
+            reportDevInfo(el, `reading ${file.name}...`);
+            const raw = await file.text();
+            const parsed = parseExportedGraph(JSON.parse(raw));
+            await importGraph(parsed);
+            reportDevInfo(el, `graph imported (${parsed.nodes.length} nodes, ${parsed.links.length} links)`);
+          } catch (error) {
+            reportDevError(el, `graph import failed: ${String(error)}`, error);
+          }
+        })();
+      },
+      onClearGraph: () => {
+        if (!window.confirm("Are you sure you want to clear the graph?")) return;
+        void clearGraph()
+          .then(() => reportDevInfo(el, "graph cleared"))
+          .catch((error) => reportDevError(el, `graph clear failed: ${String(error)}`, error));
       }
     });
   }
@@ -877,6 +944,13 @@ function asGraphEvent(value: unknown): GraphEvent | null {
 
 function reportDevError(el: Pick<UiElements, "devBanner">, message: string, error?: unknown): void {
   console.error("[mesh-explorer]", message, error);
+  if (!isDebugEnabled()) return;
+  el.devBanner.style.display = "block";
+  el.devBanner.textContent = message;
+}
+
+function reportDevInfo(el: Pick<UiElements, "devBanner">, message: string): void {
+  console.info("[mesh-explorer]", message);
   if (!isDebugEnabled()) return;
   el.devBanner.style.display = "block";
   el.devBanner.textContent = message;
