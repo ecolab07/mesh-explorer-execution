@@ -18,6 +18,7 @@ import {
 } from "./syncConfig.js";
 import {
   computeGraphBounds,
+  computeParallelLinkCurvatures,
   fitCameraToBounds,
   type CameraState,
   type CanvasUiState
@@ -28,6 +29,7 @@ import { UndoRedoManager, getIncidentLinks } from "./undoRedo.js";
 import { LayoutPanel } from "./ui/LayoutPanel.js";
 import { deriveLayoutParams, loadLayoutUiState, saveLayoutUiState, type LayoutUiState } from "./ui/layoutSettings.js";
 import { exportGraphFromState, parseExportedGraph, type ExportedGraphV1 } from "./devtools/graphIo.js";
+import { buildMultiDeletePlan } from "./deleteSelection.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -91,6 +93,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let activeAbort: AbortController | null = null;
   let hasUserMovedCamera = false;
   let autoFitApplied = false;
+  let autoFitRaf = 0;
+  let previousNodeCount = 0;
   let cameraInfo: CameraState = { x: -280, y: -180, zoom: 1, minZoom: 0.08, maxZoom: 3.5 };
   let browserConnectivityHint: ConnectivityStatus = navigator.onLine ? "online" : "offline";
   let networkConnectivityHint: ConnectivityStatus = "degraded";
@@ -107,6 +111,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   let canvasRenderer: CanvasGraphViewport2D | null = null;
   let selectedLinkIds = new Set<string>();
+  let previousNodeIds = new Set<string>();
+  const pendingSpawnSeeds: Array<{ x: number; y: number }> = [];
   const undoRedo = new UndoRedoManager();
   let layoutUiState: LayoutUiState = loadLayoutUiState();
   const debugThrottleByEvent = new Map<string, number>();
@@ -128,11 +134,16 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       nodes: Array.from(snapshot.nodesById.values()),
       links: Array.from(snapshot.linksById.values()).filter((link: GraphLink) => snapshot.nodesById.has(link.source) && snapshot.nodesById.has(link.target))
     };
-    canvasRenderer?.update({ nodes: data.nodes, links: data.links, selectedNodeIds: snapshot.selectedNodeIds }, uiState);
-    if (!hasUserMovedCamera && !autoFitApplied && data.nodes.length > 0) {
-      const applied = fitCameraToCurrentGraph();
-      if (applied) autoFitApplied = true;
+    const curvatureByLinkId = computeParallelLinkCurvatures(data.links);
+    const viewLinks = data.links.map((link) => ({ ...link, curvature: curvatureByLinkId.get(link.id) ?? 0 }));
+    selectedLinkIds = new Set(Array.from(selectedLinkIds).filter((id) => snapshot.linksById.has(id)));
+    applyPendingSpawnSeeds(snapshot.nodesById);
+    canvasRenderer?.update({ nodes: data.nodes, links: viewLinks, selectedNodeIds: snapshot.selectedNodeIds }, uiState);
+    const transitionedToNonEmpty = previousNodeCount === 0 && data.nodes.length > 0;
+    if (!hasUserMovedCamera && !autoFitApplied && (transitionedToNonEmpty || data.nodes.length > 0)) {
+      scheduleAutoFit();
     }
+    previousNodeCount = data.nodes.length;
     updateSelectionUi(snapshot);
     renderStatus(snapshot, data.nodes.length, data.links.length);
   });
@@ -143,15 +154,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   };
 
   el.addNode.onclick = () => {
-    const label = prompt("Node label", "new node") ?? "";
-    if (!label) return;
-    dbg("add-node:submit", { label });
-    void addNode(label);
+    void promptAndCreateNode();
   };
 
   el.fitGraph.onclick = () => fitCameraToCurrentGraph();
   el.deleteSelected.onclick = () => {
-    void requestDelete(currentSelection());
+    void requestDelete();
   };
   el.renameSelected.onclick = () => {
     const selection = currentSelection();
@@ -173,6 +181,19 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     if ((event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "y" || (event.key.toLowerCase() === "z" && event.shiftKey))) {
       event.preventDefault();
       void undoRedo.redo().catch((error) => reportDevError(el, `redo failed: ${String(error)}`, error));
+      return;
+    }
+    if (isTextInputTarget(event.target)) return;
+    if (event.repeat) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === "n" && event.shiftKey) {
+      event.preventDefault();
+      void addNode(nextAutoNodeLabel(), { seedPosition: preferredSpawnWorldPos(), zoomOutFactor: 0.96 });
+      return;
+    }
+    if (event.key === "n" && !event.shiftKey) {
+      event.preventDefault();
+      void promptAndCreateNode(preferredSpawnWorldPos());
     }
   });
 
@@ -302,7 +323,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   }
 
-  async function addNode(label: string): Promise<void> {
+  async function addNode(label: string, opts: { seedPosition?: { x: number; y: number }; zoomOutFactor?: number } = {}): Promise<void> {
     try {
       const idempotencyKey = crypto.randomUUID();
       const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
@@ -311,9 +332,75 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         body: JSON.stringify({ label, idempotencyKey })
       }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "add-node") });
       if (!response.ok) reportDevError(el, `add node failed: ${response.status}`);
-      if (response.ok) undoRedo.clearRedo();
+      if (response.ok) {
+        if (opts.seedPosition) pendingSpawnSeeds.push(opts.seedPosition);
+        if (opts.zoomOutFactor) canvasRenderer?.nudgeZoomOut(opts.zoomOutFactor);
+        undoRedo.clearRedo();
+      }
     } catch (error) {
       reportDevError(el, `add node failed: ${String(error)}`, error);
+    }
+  }
+
+  async function promptAndCreateNode(seedPosition?: { x: number; y: number }): Promise<void> {
+    const label = prompt("Node label", "new node") ?? "";
+    if (!label) return;
+    dbg("add-node:submit", { label });
+    await addNode(label, { seedPosition });
+  }
+
+  function preferredSpawnWorldPos(): { x: number; y: number } {
+    if (canvasRenderer) return canvasRenderer.getPreferredSpawnWorldPos();
+    const rect = el.graphCanvas.getBoundingClientRect();
+    return {
+      x: cameraInfo.x + rect.width / (2 * cameraInfo.zoom),
+      y: cameraInfo.y + rect.height / (2 * cameraInfo.zoom)
+    };
+  }
+
+  function nextAutoNodeLabel(): string {
+    const used = new Set<number>();
+    for (const node of store.getState().nodesById.values()) {
+      const match = /^Node\s+(\d+)$/.exec(node.label.trim());
+      if (match) used.add(Number.parseInt(match[1]!, 10));
+    }
+    let index = 1;
+    while (used.has(index)) index += 1;
+    return `Node ${index}`;
+  }
+
+  function applyPendingSpawnSeeds(nodesById: Map<string, GraphNode>): void {
+    const nextNodeIds = new Set(nodesById.keys());
+    const addedNodeIds = Array.from(nextNodeIds).filter((id) => !previousNodeIds.has(id)).sort((left, right) => left.localeCompare(right));
+    for (const nodeId of addedNodeIds) {
+      const seed = pendingSpawnSeeds.shift();
+      if (!seed) break;
+      canvasRenderer?.seedNodePosition(nodeId, seed);
+    }
+    previousNodeIds = nextNodeIds;
+  }
+
+  function scheduleAutoFit(): void {
+    if (autoFitApplied || hasUserMovedCamera || autoFitRaf !== 0) return;
+    autoFitRaf = requestAnimationFrame(() => {
+      autoFitRaf = 0;
+      requestAnimationFrame(() => {
+        if (autoFitApplied || hasUserMovedCamera || store.getState().nodesById.size === 0) return;
+        const applied = fitCameraToCurrentGraph();
+        if (applied) autoFitApplied = true;
+      });
+    });
+  }
+
+  function resetAutoFitState(): void {
+    autoFitApplied = false;
+    hasUserMovedCamera = false;
+    previousNodeCount = 0;
+    pendingSpawnSeeds.length = 0;
+    previousNodeIds = new Set(store.getState().nodesById.keys());
+    if (autoFitRaf !== 0) {
+      cancelAnimationFrame(autoFitRaf);
+      autoFitRaf = 0;
     }
   }
 
@@ -386,6 +473,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   }
 
   async function importGraph(data: ExportedGraphV1): Promise<void> {
+    undoRedo.reset();
+    resetAutoFitState();
     for (let index = 0; index < data.nodes.length; index += 1) {
       const node = data.nodes[index];
       reportDevInfo(el, `importing nodes ${index + 1}/${data.nodes.length}`);
@@ -400,6 +489,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   }
 
   async function clearGraph(): Promise<void> {
+    undoRedo.reset();
+    resetAutoFitState();
     const nodeIds = Array.from(store.getState().nodesById.keys());
     for (let index = 0; index < nodeIds.length; index += 1) {
       reportDevInfo(el, `clearing ${index + 1}/${nodeIds.length}`);
@@ -415,20 +506,27 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     return { kind: "none" };
   }
 
-  async function requestDelete(selection: Selection): Promise<void> {
+  async function requestDelete(_selection?: Selection): Promise<void> {
     try {
-      if (selection.kind === "link") {
-        const link = store.getState().linksById.get(selection.linkId);
-        if (!link) return;
-        await undoRedo.recordDeleteLink(link, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
-        return;
+      const state = store.getState();
+      const plan = buildMultiDeletePlan(state, selectedLinkIds);
+      if (plan.nodeIds.length === 0 && plan.linkIds.length === 0) return;
+
+      for (const nodeId of plan.nodeIds) {
+        const currentNode = store.getState().nodesById.get(nodeId);
+        if (!currentNode) continue;
+        const incidentLinks = getIncidentLinks(store.getState(), nodeId);
+        await undoRedo.recordDeleteNode(currentNode, incidentLinks, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
       }
-      if (selection.kind === "node") {
-        const node = store.getState().nodesById.get(selection.nodeId);
-        if (!node) return;
-        const incidentLinks = getIncidentLinks(store.getState(), selection.nodeId);
-        await undoRedo.recordDeleteNode(node, incidentLinks, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
+
+      for (const linkId of plan.linkIds) {
+        const currentLink = store.getState().linksById.get(linkId);
+        if (!currentLink) continue;
+        await undoRedo.recordDeleteLink(currentLink, { renameNode, deleteLink, deleteNode, createNodeFromSnapshot, createLinkFromSnapshot });
       }
+
+      store.clearSelection();
+      selectedLinkIds = new Set();
     } catch (error) {
       reportDevError(el, `delete failed: ${String(error)}`, error);
     }
@@ -484,6 +582,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         },
         onCameraChange: (camera) => {
           hasUserMovedCamera = true;
+          if (autoFitRaf !== 0) {
+            cancelAnimationFrame(autoFitRaf);
+            autoFitRaf = 0;
+          }
           cameraInfo = camera;
           queueBadgeRender();
         },
@@ -997,6 +1099,13 @@ function readCursorFromTxBundles(txBundles: SyncTxBundle[]): number | null {
 
 function cursorEq(a: Cursor, b: Cursor): boolean {
   return a.metaSeq === b.metaSeq && a.graphSeq === b.graphSeq;
+}
+
+
+function isTextInputTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || target.isContentEditable;
 }
 
 async function wait(ms: number): Promise<void> {

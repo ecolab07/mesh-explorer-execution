@@ -32,6 +32,15 @@ export class UndoRedoManager {
     this.redoStack = [];
   }
 
+  reset(): void {
+    this.undoStack = [];
+    this.redoStack = [];
+  }
+
+  debugStackSizes(): { undo: number; redo: number } {
+    return { undo: this.undoStack.length, redo: this.redoStack.length };
+  }
+
   async recordRename(nodeId: string, labelBefore: string, labelAfter: string, actions: UndoRedoActions): Promise<void> {
     await actions.renameNode(nodeId, labelAfter);
     this.push({

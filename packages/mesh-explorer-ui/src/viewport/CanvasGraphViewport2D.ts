@@ -105,6 +105,19 @@ export class CanvasGraphViewport2D implements GraphViewportHandle {
     this.renderer.reheatLayout();
     if (alpha < 0.9) this.renderer.reheatLayout();
   }
+
+  getPreferredSpawnWorldPos(): Vec2 {
+    return this.renderer.getPreferredSpawnWorldPos();
+  }
+
+  seedNodePosition(nodeId: string, position: Vec2): void {
+    this.renderer.seedNodePosition(nodeId, position);
+  }
+
+  nudgeZoomOut(factor = 0.96): void {
+    this.renderer.nudgeZoomOut(factor);
+  }
+
 }
 
 function toReadModel(model: GraphViewportModel): GraphCanvasReadModel {

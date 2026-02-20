@@ -9,9 +9,11 @@ type LayoutNode = { id: string; x: number; y: number; vx: number; vy: number; fx
 
 type LayoutLink = { source: string; target: string };
 
+export type CanvasLink = { id: string; source: string; target: string; type?: string; curvature?: number };
+
 export type GraphCanvasReadModel = {
   nodes: GraphNode[];
-  links: GraphLink[];
+  links: CanvasLink[];
   selectedNodeIds: Set<string>;
 };
 
@@ -142,7 +144,7 @@ export function computeEdgeHitSlopWorld(camera: CameraState): number {
 }
 
 export function hitTestEdges(
-  links: Array<{ id: string; source: string; target: string }>,
+  links: Array<{ id: string; source: string; target: string; curvature?: number }>,
   nodePositions: Map<string, Vec2>,
   camera: CameraState,
   screenPoint: Vec2
@@ -155,11 +157,78 @@ export function hitTestEdges(
     const aWorld = nodePositions.get(link.source);
     const bWorld = nodePositions.get(link.target);
     if (!aWorld || !bWorld) continue;
+    if (Math.abs(link.curvature ?? 0) > 0.0001) {
+      const curvedHit = hitTestCurvedEdge(worldPoint, aWorld, bWorld, link.curvature ?? 0, edgeSlopWorld);
+      if (curvedHit) return link.id;
+      continue;
+    }
     if (hitTestEdge(worldPoint, { aWorld, bWorld }, edgeSlopWorld)) {
       return link.id;
     }
   }
   return null;
+}
+
+function hitTestCurvedEdge(worldPoint: Vec2, source: Vec2, target: Vec2, curvature: number, edgeSlopWorld: number): boolean {
+  const control = getCurvedControlPoint(source, target, curvature);
+  const segments = 12;
+  let prev = source;
+  for (let i = 1; i <= segments; i += 1) {
+    const t = i / segments;
+    const point = quadraticBezierPoint(source, control, target, t);
+    if (distancePointToSegment(worldPoint, prev, point) <= edgeSlopWorld) return true;
+    prev = point;
+  }
+  return false;
+}
+
+function quadraticBezierPoint(a: Vec2, c: Vec2, b: Vec2, t: number): Vec2 {
+  const mt = 1 - t;
+  const x = mt * mt * a.x + 2 * mt * t * c.x + t * t * b.x;
+  const y = mt * mt * a.y + 2 * mt * t * c.y + t * t * b.y;
+  return { x, y };
+}
+
+export function computeParallelLinkCurvatures(links: CanvasLink[], curvatureStep = 0.15): Map<string, number> {
+  const grouped = new Map<string, CanvasLink[]>();
+  for (const link of links) {
+    const a = link.source < link.target ? link.source : link.target;
+    const b = link.source < link.target ? link.target : link.source;
+    const key = `${a}|${b}|${link.type ?? ""}`;
+    const group = grouped.get(key);
+    if (group) {
+      group.push(link);
+    } else {
+      grouped.set(key, [link]);
+    }
+  }
+
+  const output = new Map<string, number>();
+  for (const group of grouped.values()) {
+    const sorted = [...group].sort((left, right) => left.id.localeCompare(right.id));
+    const center = (sorted.length - 1) / 2;
+    for (let index = 0; index < sorted.length; index += 1) {
+      const link = sorted[index]!;
+      const base = (index - center) * curvatureStep;
+      const directionSign = link.source.localeCompare(link.target) <= 0 ? 1 : -1;
+      output.set(link.id, base * directionSign);
+    }
+  }
+  return output;
+}
+
+function getCurvedControlPoint(source: Vec2, target: Vec2, curvature: number): Vec2 {
+  const midX = (source.x + target.x) / 2;
+  const midY = (source.y + target.y) / 2;
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const nx = -dy / length;
+  const ny = dx / length;
+  return {
+    x: midX + nx * length * curvature,
+    y: midY + ny * length * curvature
+  };
 }
 
 export function computeGraphBounds(nodes: Array<{ position: Vec2 }>): { minX: number; minY: number; maxX: number; maxY: number } | null {
@@ -336,6 +405,18 @@ export class ForceLayout2D {
     delete node.fy;
   }
 
+  seedNodePosition(nodeId: string, position: Vec2): void {
+    const node = this.nodeById.get(nodeId);
+    if (!node) return;
+    delete node.fx;
+    delete node.fy;
+    node.x = position.x;
+    node.y = position.y;
+    node.vx = 0;
+    node.vy = 0;
+    this.reheat(0.35);
+  }
+
   tick(iterations = 1): void {
     for (let i = 0; i < iterations; i += 1) {
       if (this.alpha <= this.params.minAlpha) continue;
@@ -479,6 +560,8 @@ export class GraphCanvas2D {
   private readonly layout: ForceLayout2D;
   private renderRaf = 0;
   private pointer = { x: 0, y: 0 };
+  private pointerInsideCanvas = false;
+  private lastPointerScreenPos: Vec2 | null = null;
   private panning = false;
   private draggingNodeIds: string[] = [];
   private hoveredEdgeId: string | null = null;
@@ -548,6 +631,34 @@ export class GraphCanvas2D {
     this.debugLogsEnabled = enabled;
   }
 
+  seedNodePosition(nodeId: string, position: Vec2): void {
+    this.layout.seedNodePosition(nodeId, position);
+    this.requestRender();
+  }
+
+  getPreferredSpawnWorldPos(): Vec2 {
+    const pointerPos = this.getLastPointerWorldPos();
+    return pointerPos ?? this.getViewCenterWorldPos();
+  }
+
+  getLastPointerWorldPos(): Vec2 | null {
+    if (!this.pointerInsideCanvas || !this.lastPointerScreenPos) return null;
+    return screenToWorld(this.lastPointerScreenPos, this.ui.camera);
+  }
+
+  getViewCenterWorldPos(): Vec2 {
+    const rect = this.canvas.getBoundingClientRect();
+    return screenToWorld({ x: rect.width / 2, y: rect.height / 2 }, this.ui.camera);
+  }
+
+  nudgeZoomOut(factor = 0.96): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const center = { x: rect.width / 2, y: rect.height / 2 };
+    this.ui.camera = zoomAtPoint(this.ui.camera, center, this.ui.camera.zoom * factor);
+    this.callbacks.onCameraChange?.(this.ui.camera);
+    this.requestRender();
+  }
+
   reheatLayout(): void {
     this.emitDebug("layout.reheat", { amount: 0.9, reason: "ui-reheat-button" });
     this.layout.reheat(0.9);
@@ -581,6 +692,8 @@ export class GraphCanvas2D {
         event.stopPropagation();
       }
       this.pointer = { x: event.offsetX, y: event.offsetY };
+      this.pointerInsideCanvas = true;
+      this.lastPointerScreenPos = { ...this.pointer };
       const hit = hitTestNode(this.positionedNodes(), this.ui.camera, this.pointer);
       if (event.button === 1 || event.ctrlKey || event.metaKey || event.altKey) {
         this.panning = true;
@@ -615,6 +728,8 @@ export class GraphCanvas2D {
 
     const onPointerMove = (event: PointerEvent) => {
       this.pointer = { x: event.offsetX, y: event.offsetY };
+      this.pointerInsideCanvas = true;
+      this.lastPointerScreenPos = { ...this.pointer };
       const pointerWorld = screenToWorld(this.pointer, this.ui.camera);
       if (this.ui.edgeDraft) this.edgeDraftCursorWorldPos = pointerWorld;
       if (this.panning) {
@@ -689,6 +804,9 @@ export class GraphCanvas2D {
     this.canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
     this.canvas.addEventListener("pointermove", onPointerMove);
     this.canvas.addEventListener("pointerup", onPointerUp);
+    this.canvas.addEventListener("pointerleave", () => {
+      this.pointerInsideCanvas = false;
+    });
     this.canvas.addEventListener("pointercancel", onPointerUp);
     this.canvas.addEventListener("mousedown", (event) => {
       if (event.button === 1) {
@@ -770,7 +888,12 @@ export class GraphCanvas2D {
       this.ctx.lineWidth = 2 / this.ui.camera.zoom;
       this.ctx.beginPath();
       this.ctx.moveTo(source.x, source.y);
-      this.ctx.lineTo(target.x, target.y);
+      if (Math.abs(link.curvature ?? 0) > 0.0001) {
+        const control = getCurvedControlPoint(source, target, link.curvature ?? 0);
+        this.ctx.quadraticCurveTo(control.x, control.y, target.x, target.y);
+      } else {
+        this.ctx.lineTo(target.x, target.y);
+      }
       this.ctx.stroke();
     }
 

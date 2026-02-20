@@ -52,4 +52,15 @@ describe("undo redo manager", () => {
     expect(actions.createLinkFromSnapshot).toHaveBeenNthCalledWith(1, links[0]);
     expect(actions.deleteNode).toHaveBeenNthCalledWith(2, "a");
   });
+
+  it("resets undo/redo stacks", async () => {
+    const manager = new UndoRedoManager();
+    const actions = makeActions();
+
+    await manager.recordRename("n1", "before", "after", actions);
+    await manager.undo();
+    manager.reset();
+
+    expect(manager.debugStackSizes()).toEqual({ undo: 0, redo: 0 });
+  });
 });

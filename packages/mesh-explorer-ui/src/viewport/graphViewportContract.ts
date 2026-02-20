@@ -14,6 +14,7 @@ export type ViewLink = {
   target: GraphId;
   type: string;
   label?: string;
+  curvature?: number;
 };
 
 export type Selection =
@@ -51,5 +52,8 @@ export type GraphViewportOptions = {
 export type GraphViewportHandle = {
   fit(): void;
   reheat(alpha?: number): void;
+  getPreferredSpawnWorldPos(): { x: number; y: number };
+  seedNodePosition(nodeId: GraphId, position: { x: number; y: number }): void;
+  nudgeZoomOut(factor?: number): void;
   exportLayoutJSON?(): unknown;
 };
