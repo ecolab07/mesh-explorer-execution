@@ -78,7 +78,7 @@ describe("graph app skeleton", { timeout: 30_000 }, () => {
 });
 
 async function createNode(baseUrl: string, principal: string, id: string, label: string): Promise<void> {
-  await fetch(`${baseUrl}/graph/nodes`, {
+  await fetch(`${baseUrl}/v1/mesh-explorer-graph-v1/graph:nodes`, {
     method: "POST",
     headers: headers(principal),
     body: JSON.stringify({ id, label, idempotencyKey: `node-${id}` })
@@ -86,7 +86,7 @@ async function createNode(baseUrl: string, principal: string, id: string, label:
 }
 
 async function createLink(baseUrl: string, principal: string, id: string, source: string, target: string, type: string): Promise<void> {
-  await fetch(`${baseUrl}/graph/links`, {
+  await fetch(`${baseUrl}/v1/mesh-explorer-graph-v1/graph:links`, {
     method: "POST",
     headers: headers(principal),
     body: JSON.stringify({ id, source, target, type, idempotencyKey: `link-${id}` })
@@ -94,7 +94,7 @@ async function createLink(baseUrl: string, principal: string, id: string, source
 }
 
 async function graphView(baseUrl: string, principal: string): Promise<{ nodes: Array<{ id: string; label: string }>; links: Array<{ id: string; source: string; target: string; type: string }> }> {
-  const response = await fetch(`${baseUrl}/graph/view`, { headers: headers(principal) });
+  const response = await fetch(`${baseUrl}/v1/mesh-explorer-graph-v1/graph:view`, { headers: headers(principal) });
   const payload = (await response.json()) as { nodes: Array<{ id: string; label: string }>; links: Array<{ id: string; source: string; target: string; type: string }> };
   return payload;
 }

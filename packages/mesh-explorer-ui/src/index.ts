@@ -57,7 +57,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         <label>principal <input id="principal" style="width:100%" value="${escapeHtml(initialPrincipal)}"/></label><br/>
         <button id="connect">Connect</button>
         <div style="margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:8px;">
-          <div><strong>Project</strong></div>
+          <div><strong>Server policy (per project)</strong></div>
           <button id="projectsRefresh">Refresh projects</button>
           <button id="projectCreate" style="margin-left:8px;">Create project</button>
           <div id="projectsList" style="margin-top:6px;font-size:12px;max-height:100px;overflow:auto;"></div>
@@ -72,6 +72,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           <button id="snapshotFork" style="margin-left:8px;">Fork latest</button>
           <button id="purgeNow" style="margin-left:8px;">Purge dry-run</button>
           <div id="projectReport" style="margin-top:6px;font-size:12px;color:#374151;"></div>
+          <div style="margin-top:6px;font-size:12px;color:#6b7280;"><strong>App preferences (local only)</strong>: layout and debug options in the panel below.</div>
         </div>
         <hr/>
         <div id="status">Connectivity: Degraded</div>
@@ -248,7 +249,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
   });
 
-  installTestHook(store);
+  installTestHook(store, () => ({
+    projectId: el.graphSpaceId.value,
+    graphSpaceId: el.graphSpaceId.value,
+    localCursorKey: cursorStorageKey(normalizePrincipal(el.principal.value), el.graphSpaceId.value)
+  }));
   void refreshProjects();
   syncSession += 1;
   void connectAndSync(syncSession);
@@ -297,7 +302,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       headers: headers(el.principal.value),
       body: JSON.stringify(body)
     });
-    el.projectReport.textContent = `policy save status=${response.status}`;
+    const payload = await response.json() as { retentionPolicy?: Record<string, unknown> };
+    el.projectReport.textContent = `effective policy projectId=${el.graphSpaceId.value} graphSpaceId=${el.graphSpaceId.value} => ${JSON.stringify(payload.retentionPolicy ?? {})}`;
   }
 
   async function createSnapshot(): Promise<void> {
@@ -311,8 +317,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function listSnapshots(): Promise<void> {
     const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/snapshots`, { headers: headers(el.principal.value) });
-    const payload = (await response.json()) as Array<{ snapshotId: string }>;
-    el.projectReport.textContent = `snapshots=${payload.map((entry) => entry.snapshotId).join(", ")}`;
+    const payload = (await response.json()) as Array<{ snapshotId: string; graphSpaceId?: string }>;
+    el.projectReport.textContent = `snapshots=${payload.map((entry) => `${entry.snapshotId}@${entry.graphSpaceId ?? "n/a"}`).join(", ")}`;
   }
 
   async function forkLatestSnapshot(): Promise<void> {
@@ -328,6 +334,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const fork = (await response.json()) as { newProjectId: string };
     el.projectReport.textContent = `forked => ${fork.newProjectId}`;
     await refreshProjects();
+    el.graphSpaceId.value = fork.newProjectId;
+    syncSession += 1;
+    void connectAndSync(syncSession);
   }
 
   async function purgeHistoryDryRun(): Promise<void> {
@@ -580,7 +589,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function createNodeFromSnapshot(node: GraphNode): Promise<void> {
     const idempotencyKey = crypto.randomUUID();
-    const response = await meshFetch(`${el.baseUrl.value}/graph/nodes`, {
+    const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:nodes`, {
       method: "POST",
       headers: headers(el.principal.value, idempotencyKey),
       body: JSON.stringify({ ...node, idempotencyKey })
@@ -590,7 +599,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function createLinkFromSnapshot(link: GraphLink): Promise<void> {
     const idempotencyKey = crypto.randomUUID();
-    const response = await meshFetch(`${el.baseUrl.value}/graph/links`, {
+    const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:links`, {
       method: "POST",
       headers: headers(el.principal.value, idempotencyKey),
       body: JSON.stringify({ ...link, idempotencyKey })
@@ -600,7 +609,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function deleteLink(linkId: string): Promise<void> {
     const idempotencyKey = crypto.randomUUID();
-    const response = await meshFetch(`${el.baseUrl.value}/graph/links/${encodeURIComponent(linkId)}`, {
+    const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:links/${encodeURIComponent(linkId)}`, {
       method: "DELETE",
       headers: headers(el.principal.value, idempotencyKey)
     }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "delete-link") });
@@ -609,7 +618,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function deleteNode(nodeId: string): Promise<void> {
     const idempotencyKey = crypto.randomUUID();
-    const response = await meshFetch(`${el.baseUrl.value}/graph/nodes/${encodeURIComponent(nodeId)}`, {
+    const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:nodes/${encodeURIComponent(nodeId)}`, {
       method: "DELETE",
       headers: headers(el.principal.value, idempotencyKey)
     }, { principal: el.principal.value, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "delete-node") });
@@ -618,7 +627,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function renameNode(nodeId: string, label: string): Promise<void> {
     const idempotencyKey = crypto.randomUUID();
-    const response = await meshFetch(`${el.baseUrl.value}/graph/nodes/${encodeURIComponent(nodeId)}`, {
+    const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:nodes/${encodeURIComponent(nodeId)}`, {
       method: "PATCH",
       headers: headers(el.principal.value, idempotencyKey),
       body: JSON.stringify({ label, idempotencyKey })
@@ -1308,12 +1317,12 @@ function reportDevInfo(el: Pick<UiElements, "devBanner">, message: string): void
 
 type MeshDebugApi = {
   selectNodes: (ids: string[]) => void;
-  dump: () => { cursor: Cursor; nodesCount: number; linksCount: number };
+  dump: () => { projectId: string; graphSpaceId: string; head: number; minReadableCursor: number; cursor: Cursor; nodesCount: number; linksCount: number; localCursorKey: string };
   logs?: Array<{ message: string; detail?: unknown }>;
   log?: (message: string, detail?: unknown) => void;
 };
 
-function installTestHook(store: GraphStore): void {
+function installTestHook(store: GraphStore, readContext: () => { projectId: string; graphSpaceId: string; localCursorKey: string }): void {
   const mode = (import.meta as ImportMeta & { env?: { MODE?: string } }).env?.MODE;
   if (mode !== "test" && !isDebugEnabled()) return;
   const meshDebug: MeshDebugApi = {
@@ -1324,10 +1333,16 @@ function installTestHook(store: GraphStore): void {
       const state = store.getState();
       const canvasStats = (window as Window & { __meshCanvasStats?: () => unknown }).__meshCanvasStats?.();
       const runtimeStats = (window as Window & { __meshRuntimeStats?: unknown }).__meshRuntimeStats;
+      const context = readContext();
       return {
+        projectId: context.projectId,
+        graphSpaceId: context.graphSpaceId,
+        head: state.cursor.graphSeq,
+        minReadableCursor: 0,
         cursor: state.cursor,
         nodesCount: state.nodesById.size,
         linksCount: state.linksById.size,
+        localCursorKey: context.localCursorKey,
         canvasStats,
         runtimeStats
       };

@@ -67,6 +67,7 @@ type ProjectRecord = {
 type SnapshotRecord = {
   snapshotId: string;
   projectId: string;
+  graphSpaceId: string;
   cursor: Cursor;
   createdAt: number;
   label?: string;
@@ -189,6 +190,7 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
     const record: SnapshotRecord = {
       snapshotId: randomUUID(),
       projectId,
+      graphSpaceId: projectId,
       cursor,
       createdAt: Date.now(),
       label,
@@ -199,8 +201,38 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
     };
     catalog.snapshots[projectId] = [record, ...(catalog.snapshots[projectId] ?? [])].sort((a, b) => b.createdAt - a.createdAt);
     project.updatedAt = Date.now();
+    console.info("AUTO_SNAPSHOT_CREATED", {
+      snapshotId: record.snapshotId,
+      head: record.cursor.graphSeq,
+      projectId,
+      graphSpaceId: projectId,
+      reason: label === "auto" ? "auto" : "manual"
+    });
     await saveCatalog(catalogPath, catalog);
     return record;
+  }
+
+  function latestSnapshotHead(projectId: string): number {
+    const snapshots = catalog.snapshots[projectId] ?? [];
+    return snapshots.length > 0 ? snapshots[0]!.cursor.graphSeq : 0;
+  }
+
+  async function maybeCreateAutoSnapshot(projectId: string): Promise<void> {
+    const project = await ensureProject(projectId);
+    await refreshProjectHead(projectId);
+    const everyN = Math.max(1, project.retentionPolicy.snapshotEveryNEvents);
+    const head = project.headCursor.graphSeq;
+    const lastSnapshotHead = latestSnapshotHead(projectId);
+    const shouldSnapshot = head > 0 && head - lastSnapshotHead >= everyN;
+    console.info("AUTO_SNAPSHOT_CHECK", {
+      projectId,
+      graphSpaceId: projectId,
+      head,
+      lastSnapshotHead,
+      everyN,
+      shouldSnapshot
+    });
+    if (shouldSnapshot) await createSnapshot(projectId, "auto");
   }
 
   async function purgeHistory(projectId: string, dryRun = false): Promise<Record<string, unknown>> {
@@ -255,7 +287,7 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
   }
 
   const appServer = createServer((req, res) => {
-    void handleRequest(req, res, { graphSpaceId, catalog, catalogPath, ensureProject, getProjectContext, refreshProjectHead, createSnapshot, purgeHistory });
+    void handleRequest(req, res, { graphSpaceId, catalog, catalogPath, ensureProject, getProjectContext, refreshProjectHead, createSnapshot, purgeHistory, maybeCreateAutoSnapshot });
   });
 
   const host = options.host ?? "127.0.0.1";
@@ -291,6 +323,7 @@ async function handleRequest(
     refreshProjectHead: (projectId: string) => Promise<void>;
     createSnapshot: (projectId: string, label?: string) => Promise<SnapshotRecord>;
     purgeHistory: (projectId: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
+    maybeCreateAutoSnapshot: (projectId: string) => Promise<void>;
   }
 ): Promise<void> {
   const requestUrl = new URL(req.url ?? "/", "http://graph.local");
@@ -337,12 +370,16 @@ async function handleRequest(
     return;
   }
 
-  const projectId = readProjectIdFromRequest(requestUrl.pathname, deps.graphSpaceId);
+  const projectId = readProjectIdFromRequest(requestUrl.pathname);
+  if (!projectId) {
+    writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "GRAPH_SPACE_ID.REQUIRED" });
+    return;
+  }
   await deps.ensureProject(projectId);
   const { gateway } = await deps.getProjectContext(projectId);
 
-  if (req.method === "GET" && requestUrl.pathname === "/graph/view") {
-    writeJson(res, 200, await readGraphView(gateway, deps.graphSpaceId, principal));
+  if (req.method === "GET" && requestUrl.pathname === `/v1/${encodeURIComponent(projectId)}/graph:view`) {
+    writeJson(res, 200, await readGraphView(gateway, projectId, principal));
     return;
   }
 
@@ -387,6 +424,10 @@ async function handleRequest(
       await submitGraphCommand(newContext.gateway, newProjectId, principal, randomUUID(), { type: "graph.link.created", link });
     }
     await deps.refreshProjectHead(newProjectId);
+    const forked = deps.catalog.projects[newProjectId]!;
+    forked.minReadableCursor = { ...snapshot.cursor };
+    forked.headCursor = await newContext.store.getCursorHead(newProjectId);
+    await saveCatalog(deps.catalogPath, deps.catalog);
     await deps.createSnapshot(newProjectId, `fork:${snapshot.snapshotId}`);
     writeJson(res, 200, { newProjectId });
     return;
@@ -443,7 +484,7 @@ async function handleRequest(
     return;
   }
 
-  if (req.method === "POST" && requestUrl.pathname === "/graph/nodes") {
+  if (req.method === "POST" && requestUrl.pathname === `/v1/${encodeURIComponent(projectId)}/graph:nodes`) {
     const body = (await readJsonBody(req)) as Partial<GraphNode> & { idempotencyKey?: string };
     const node: GraphNode = {
       id: typeof body.id === "string" && body.id.trim() ? body.id : randomUUID(),
@@ -453,12 +494,12 @@ async function handleRequest(
     };
     const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
     const outcome = await submitGraphCommand(gateway, projectId, principal, idempotencyKey, { type: "graph.node.created", node });
-    await deps.refreshProjectHead(projectId);
+    await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { node, outcome });
     return;
   }
 
-  if (req.method === "POST" && requestUrl.pathname === "/graph/links") {
+  if (req.method === "POST" && requestUrl.pathname === `/v1/${encodeURIComponent(projectId)}/graph:links`) {
     const body = (await readJsonBody(req)) as Partial<GraphLink> & { idempotencyKey?: string };
     if (typeof body.source !== "string" || typeof body.target !== "string") return void writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "TRANSPORT.INVALID_REQUEST" });
     const link: GraphLink = {
@@ -470,33 +511,33 @@ async function handleRequest(
     };
     const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
     const outcome = await submitGraphCommand(gateway, projectId, principal, idempotencyKey, { type: "graph.link.created", link });
-    await deps.refreshProjectHead(projectId);
+    await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { link, outcome });
     return;
   }
 
-  if (req.method === "PATCH" && /^\/graph\/nodes\/[^/]+$/.test(requestUrl.pathname)) {
+  if (req.method === "PATCH" && new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/graph:nodes/[^/]+$`).test(requestUrl.pathname)) {
     const body = (await readJsonBody(req)) as { label?: unknown; idempotencyKey?: string };
     if (typeof body.label !== "string") return void writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "TRANSPORT.INVALID_REQUEST" });
-    const nodeId = decodeURIComponent(requestUrl.pathname.slice("/graph/nodes/".length));
+    const nodeId = decodeURIComponent(requestUrl.pathname.slice(`/v1/${encodeURIComponent(projectId)}/graph:nodes/`.length));
     const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req, body.idempotencyKey), { type: "graph.node.label.updated", nodeId, label: body.label });
-    await deps.refreshProjectHead(projectId);
+    await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { outcome, nodeId, label: body.label });
     return;
   }
 
-  if (req.method === "DELETE" && /^\/graph\/links\/[^/]+$/.test(requestUrl.pathname)) {
-    const linkId = decodeURIComponent(requestUrl.pathname.slice("/graph/links/".length));
+  if (req.method === "DELETE" && new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/graph:links/[^/]+$`).test(requestUrl.pathname)) {
+    const linkId = decodeURIComponent(requestUrl.pathname.slice(`/v1/${encodeURIComponent(projectId)}/graph:links/`.length));
     const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req), { type: "graph.link.deleted", linkId });
-    await deps.refreshProjectHead(projectId);
+    await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { outcome, linkId });
     return;
   }
 
-  if (req.method === "DELETE" && /^\/graph\/nodes\/[^/]+$/.test(requestUrl.pathname)) {
-    const nodeId = decodeURIComponent(requestUrl.pathname.slice("/graph/nodes/".length));
+  if (req.method === "DELETE" && new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/graph:nodes/[^/]+$`).test(requestUrl.pathname)) {
+    const nodeId = decodeURIComponent(requestUrl.pathname.slice(`/v1/${encodeURIComponent(projectId)}/graph:nodes/`.length));
     const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req), { type: "graph.node.deleted", nodeId });
-    await deps.refreshProjectHead(projectId);
+    await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { outcome, nodeId });
     return;
   }
@@ -528,9 +569,9 @@ async function saveCatalog(filePath: string, catalog: CatalogState): Promise<voi
   await fs.writeFile(filePath, JSON.stringify(catalog, null, 2), "utf8");
 }
 
-function readProjectIdFromRequest(pathname: string, fallbackProjectId: string): string {
+function readProjectIdFromRequest(pathname: string): string | null {
   const match = /^\/v1\/([^/]+)/.exec(pathname);
-  return match ? decodeURIComponent(match[1]!) : fallbackProjectId;
+  return match ? decodeURIComponent(match[1]!) : null;
 }
 
 function parseCursor(raw: string | null): Cursor {
@@ -578,7 +619,7 @@ async function runRetentionJob(
   for (const projectId of Object.keys(projects)) {
     const project = await ensureProject(projectId);
     await refreshProjectHead(projectId);
-    const dueByEvents = project.headCursor.graphSeq > 0 && project.headCursor.graphSeq % project.retentionPolicy.snapshotEveryNEvents === 0;
+    const dueByEvents = false;
     const dueByTime = project.updatedAt + project.retentionPolicy.snapshotEverySeconds * 1000 < Date.now();
     if (dueByEvents || dueByTime) await createSnapshot(projectId, "auto");
     if (project.retentionPolicy.ttlSeconds || project.retentionPolicy.maxEvents) await purgeHistory(projectId, false);

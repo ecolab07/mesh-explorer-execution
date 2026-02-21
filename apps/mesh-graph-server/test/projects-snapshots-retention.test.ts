@@ -17,17 +17,18 @@ describe("projects + snapshots + retention", () => {
     const server = await startMeshGraphServer({ storageDir, port: 0 });
     startedServers.push(server);
 
-    await fetch(`${server.url}/graph/nodes`, { method: "POST", headers, body: JSON.stringify({ id: "A", label: "A" }) });
-    await fetch(`${server.url}/graph/nodes`, { method: "POST", headers, body: JSON.stringify({ id: "B", label: "B" }) });
-    await fetch(`${server.url}/graph/links`, { method: "POST", headers, body: JSON.stringify({ id: "L", source: "A", target: "B", type: "related" }) });
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, { method: "POST", headers, body: JSON.stringify({ id: "A", label: "A" }) });
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, { method: "POST", headers, body: JSON.stringify({ id: "B", label: "B" }) });
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:links`, { method: "POST", headers, body: JSON.stringify({ id: "L", source: "A", target: "B", type: "related" }) });
 
     const created = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots:create`, { method: "POST", headers, body: JSON.stringify({ label: "manual" }) });
     const createdBody = (await created.json()) as { snapshotId: string };
     expect(createdBody.snapshotId).toBeTruthy();
 
     const listed = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots`, { headers });
-    const listBody = (await listed.json()) as Array<{ snapshotId: string }>;
+    const listBody = (await listed.json()) as Array<{ snapshotId: string; graphSpaceId?: string }>;
     expect(listBody.length).toBeGreaterThanOrEqual(1);
+    expect(listBody[0]?.graphSpaceId).toBe(server.graphSpaceId);
 
     const read = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots/${createdBody.snapshotId}`, { headers });
     const snapshot = (await read.json()) as { payload: { nodes: Array<{ id: string }>; links: Array<{ id: string }> } };
@@ -48,6 +49,32 @@ describe("projects + snapshots + retention", () => {
     expect(forkSnapshotBody.payload.links.length).toBe(1);
   });
 
+
+
+  it("creates repeated auto snapshots when head crosses multiple thresholds", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-auto-snapshots-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/retention`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ snapshotEveryNEvents: 50, snapshotEverySeconds: 3600, minSnapshotsToKeep: 1, mode: "delete" })
+    });
+
+    for (let idx = 0; idx < 155; idx += 1) {
+      await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, { method: "POST", headers, body: JSON.stringify({ id: `auto-${idx}`, label: `auto-${idx}` }) });
+    }
+
+    const listed = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots`, { headers });
+    const snapshots = (await listed.json()) as Array<{ snapshotId: string; cursor: { graphSeq: number } }>;
+    expect(snapshots.length).toBeGreaterThanOrEqual(3);
+    const heads = snapshots.map((entry) => entry.cursor.graphSeq).sort((a, b) => a - b);
+    expect(heads.some((head) => head >= 50)).toBe(true);
+    expect(heads.some((head) => head >= 100)).toBe(true);
+    expect(heads.some((head) => head >= 150)).toBe(true);
+  });
+
   it("purges history and returns cursor_too_old", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-retention-"));
     const server = await startMeshGraphServer({ storageDir, port: 0 });
@@ -60,7 +87,7 @@ describe("projects + snapshots + retention", () => {
     });
 
     for (let idx = 0; idx < 3; idx += 1) {
-      await fetch(`${server.url}/graph/nodes`, { method: "POST", headers, body: JSON.stringify({ id: `N-${idx}`, label: `N-${idx}` }) });
+      await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, { method: "POST", headers, body: JSON.stringify({ id: `N-${idx}`, label: `N-${idx}` }) });
       await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots:create`, { method: "POST", headers, body: JSON.stringify({ label: `s-${idx}` }) });
     }
 

@@ -94,7 +94,7 @@ function headers(principal: string): HeadersInit {
 }
 
 async function createNode(baseUrl: string, principal: string, label: string): Promise<void> {
-  await fetch(`${baseUrl}/graph/nodes`, {
+  await fetch(`${baseUrl}/v1/mesh-explorer-graph-v1/graph:nodes`, {
     method: "POST",
     headers: headers(principal),
     body: JSON.stringify({ label, idempotencyKey: crypto.randomUUID() })
@@ -102,7 +102,7 @@ async function createNode(baseUrl: string, principal: string, label: string): Pr
 }
 
 async function createLink(baseUrl: string, principal: string, source: string, target: string, type: string): Promise<void> {
-  await fetch(`${baseUrl}/graph/links`, {
+  await fetch(`${baseUrl}/v1/mesh-explorer-graph-v1/graph:links`, {
     method: "POST",
     headers: headers(principal),
     body: JSON.stringify({ source, target, type, idempotencyKey: crypto.randomUUID() })
