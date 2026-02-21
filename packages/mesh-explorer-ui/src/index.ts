@@ -30,6 +30,11 @@ import { LayoutPanel } from "./ui/LayoutPanel.js";
 import { deriveLayoutParams, loadLayoutUiState, saveLayoutUiState, type LayoutUiState } from "./ui/layoutSettings.js";
 import { exportGraphFromState, parseExportedGraph, type ExportedGraphV1 } from "./devtools/graphIo.js";
 import { buildMultiDeletePlan } from "./deleteSelection.js";
+import {
+  createPolicyHydrationController,
+  toEffectiveRetentionPolicy,
+  type RetentionPolicy
+} from "./policyHydration.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -72,11 +77,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           <button id="projectsRefresh">Refresh projects</button>
           <button id="projectCreate" style="margin-left:8px;">Create project</button>
           <div id="projectsList" style="margin-top:6px;font-size:12px;max-height:100px;overflow:auto;"></div>
-          <label>ttlSeconds <input id="policyTtl" style="width:100%" type="number" value="86400"/></label>
-          <label>maxEvents <input id="policyMaxEvents" style="width:100%" type="number" value="20000"/></label>
-          <label>snapshotEveryNEvents <input id="policyEveryN" style="width:100%" type="number" value="500"/></label>
-          <label>snapshotEverySeconds <input id="policyEverySeconds" style="width:100%" type="number" value="300"/></label>
-          <label>minSnapshotsToKeep <input id="policyMinSnapshots" style="width:100%" type="number" value="3"/></label>
+          <label>ttlSeconds <input id="policyTtl" style="width:100%" type="number"/></label>
+          <label>maxEvents <input id="policyMaxEvents" style="width:100%" type="number"/></label>
+          <label>snapshotEveryNEvents <input id="policyEveryN" style="width:100%" type="number"/></label>
+          <label>snapshotEverySeconds <input id="policyEverySeconds" style="width:100%" type="number"/></label>
+          <label>minSnapshotsToKeep <input id="policyMinSnapshots" style="width:100%" type="number"/></label>
           <button id="policySave">Save policy</button>
           <button id="snapshotCreate" style="margin-left:8px;">Create snapshot</button>
           <button id="snapshotList" style="margin-left:8px;">List snapshots</button>
@@ -149,6 +154,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let previousNodeIds = new Set<string>();
   const pendingSpawnSeeds: Array<{ x: number; y: number }> = [];
   const undoRedo = new UndoRedoManager();
+  const policyHydration = createPolicyHydrationController(fetchEffectivePolicy);
   let layoutUiState: LayoutUiState = loadLayoutUiState();
   const debugThrottleByEvent = new Map<string, number>();
 
@@ -189,6 +195,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   });
 
   el.connect.onclick = () => {
+    const scopeId = el.graphSpaceId.value;
+    setPolicyLoading(scopeId);
+    void hydratePolicyForScope(scopeId);
     syncSession += 1;
     void connectAndSync(syncSession);
   };
@@ -265,6 +274,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     graphSpaceId: el.graphSpaceId.value,
     localCursorKey: cursorStorageKey(normalizePrincipal(el.principal.value), el.graphSpaceId.value)
   }));
+  setPolicyLoading(el.graphSpaceId.value);
+  void hydratePolicyForScope(el.graphSpaceId.value);
   void refreshProjects();
   syncSession += 1;
   void connectAndSync(syncSession);
@@ -281,6 +292,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         const projectId = (button as HTMLButtonElement).dataset.projectId;
         if (!projectId) return;
         el.graphSpaceId.value = projectId;
+        setPolicyLoading(projectId);
+        void hydratePolicyForScope(projectId);
         syncSession += 1;
         void connectAndSync(syncSession);
       });
@@ -314,7 +327,47 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       body: JSON.stringify(body)
     });
     const payload = await response.json() as { retentionPolicy?: Record<string, unknown> };
-    el.projectReport.textContent = `effective policy projectId=${el.graphSpaceId.value} graphSpaceId=${el.graphSpaceId.value} => ${JSON.stringify(payload.retentionPolicy ?? {})}`;
+    const effective = toEffectiveRetentionPolicy(payload.retentionPolicy as Partial<RetentionPolicy> | undefined);
+    applyPolicyForm(effective);
+    el.projectReport.textContent = `effective policy projectId=${el.graphSpaceId.value} graphSpaceId=${el.graphSpaceId.value} => ${JSON.stringify(effective)}`;
+  }
+
+  async function fetchEffectivePolicy(scopeId: string): Promise<Partial<RetentionPolicy> | undefined> {
+    const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(scopeId)}`, {
+      headers: headers(el.principal.value)
+    });
+    if (!response.ok) return undefined;
+    const payload = await response.json() as { retentionPolicy?: Partial<RetentionPolicy> };
+    return payload.retentionPolicy;
+  }
+
+  async function hydratePolicyForScope(scopeId: string): Promise<void> {
+    const hydrated = await policyHydration.hydrate(scopeId);
+    if (!hydrated) return;
+    if (el.graphSpaceId.value !== hydrated.scopeId) return;
+    applyPolicyForm(hydrated.policy);
+    el.projectReport.textContent = `effective policy projectId=${hydrated.scopeId} graphSpaceId=${hydrated.scopeId} => ${JSON.stringify(hydrated.policy)}`;
+  }
+
+  function setPolicyLoading(scopeId: string): void {
+    for (const field of [el.policyTtl, el.policyMaxEvents, el.policyEveryN, el.policyEverySeconds, el.policyMinSnapshots]) {
+      field.value = "";
+      field.disabled = true;
+    }
+    el.policySave.disabled = true;
+    el.projectReport.textContent = `loading effective policy projectId=${scopeId}...`;
+  }
+
+  function applyPolicyForm(policy: RetentionPolicy): void {
+    el.policyTtl.value = String(policy.ttlSeconds ?? "");
+    el.policyMaxEvents.value = String(policy.maxEvents ?? "");
+    el.policyEveryN.value = String(policy.snapshotEveryNEvents);
+    el.policyEverySeconds.value = String(policy.snapshotEverySeconds);
+    el.policyMinSnapshots.value = String(policy.minSnapshotsToKeep);
+    for (const field of [el.policyTtl, el.policyMaxEvents, el.policyEveryN, el.policyEverySeconds, el.policyMinSnapshots]) {
+      field.disabled = false;
+    }
+    el.policySave.disabled = false;
   }
 
   async function createSnapshot(): Promise<void> {
@@ -346,6 +399,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     el.projectReport.textContent = `forked => ${fork.newProjectId}`;
     await refreshProjects();
     el.graphSpaceId.value = fork.newProjectId;
+    setPolicyLoading(fork.newProjectId);
+    void hydratePolicyForScope(fork.newProjectId);
     syncSession += 1;
     void connectAndSync(syncSession);
   }
