@@ -35,6 +35,7 @@ import {
   toEffectiveRetentionPolicy,
   type RetentionPolicy
 } from "./policyHydration.js";
+import { activateProjectScope } from "./projectScopeActivation.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -196,10 +197,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   el.connect.onclick = () => {
     const scopeId = el.graphSpaceId.value;
-    setPolicyLoading(scopeId);
-    void hydratePolicyForScope(scopeId);
-    syncSession += 1;
-    void connectAndSync(syncSession);
+    void activateScope(scopeId);
   };
   el.projectsRefresh.onclick = () => {
     void refreshProjects();
@@ -291,11 +289,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       button.addEventListener("click", () => {
         const projectId = (button as HTMLButtonElement).dataset.projectId;
         if (!projectId) return;
-        el.graphSpaceId.value = projectId;
-        setPolicyLoading(projectId);
-        void hydratePolicyForScope(projectId);
-        syncSession += 1;
-        void connectAndSync(syncSession);
+        void activateScope(projectId);
       });
     }
   }
@@ -310,6 +304,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const payload = (await response.json()) as { projectId: string };
     el.projectReport.textContent = `created project ${payload.projectId}`;
     await refreshProjects();
+    await activateScope(payload.projectId);
   }
 
   async function savePolicy(): Promise<void> {
@@ -398,11 +393,26 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const fork = (await response.json()) as { newProjectId: string };
     el.projectReport.textContent = `forked => ${fork.newProjectId}`;
     await refreshProjects();
-    el.graphSpaceId.value = fork.newProjectId;
-    setPolicyLoading(fork.newProjectId);
-    void hydratePolicyForScope(fork.newProjectId);
-    syncSession += 1;
-    void connectAndSync(syncSession);
+    await activateScope(fork.newProjectId);
+  }
+
+  async function activateScope(projectId: string): Promise<void> {
+    await activateProjectScope(projectId, {
+      setActiveProject(scopeId) {
+        el.graphSpaceId.value = scopeId;
+      },
+      updateRouteSelection(scopeId) {
+        syncProjectIdRoute(scopeId);
+      },
+      hydrateScopePolicy(scopeId) {
+        setPolicyLoading(scopeId);
+        return hydratePolicyForScope(scopeId);
+      },
+      bootstrapScopeSync() {
+        syncSession += 1;
+        return connectAndSync(syncSession);
+      }
+    });
   }
 
   async function purgeHistoryDryRun(): Promise<void> {
@@ -1335,6 +1345,16 @@ function readInitialPrincipal(): string {
     // ignore and use default
   }
   return DEFAULT_PRINCIPAL;
+}
+
+function syncProjectIdRoute(projectId: string): void {
+  try {
+    const currentUrl = new URL(window.location.href);
+    currentUrl.searchParams.set("projectId", projectId);
+    window.history.replaceState(window.history.state, "", currentUrl);
+  } catch {
+    // no-op: route sync is best effort only.
+  }
 }
 
 function persistPrincipal(principal: string): void {
