@@ -6,18 +6,37 @@ import { join } from "node:path";
 import { FileBackedLocalEventStore } from "@mesh/eventstore-local";
 import { KernelMinimalImpl } from "@mesh/kernel-minimal";
 import { LocalSyncGateway } from "@mesh/sync-local/internal";
-import { SyncHttpReferenceServer } from "@mesh/sync-http";
 import type { Command, CommandOutcome, Cursor, PrincipalContext } from "@mesh/shared";
 
 const GRAPH_SPACE_ID = "mesh-explorer-graph-v1";
 const PRINCIPAL_HEADER = "x-mesh-principal";
 const IDEMPOTENCY_HEADER = "x-idempotency-key";
 const DEBUG_AUTH_ENABLED = process.env.MESH_DEBUG_AUTH === "1";
-const STORE_CACHE = new Map<string, FileBackedLocalEventStore>();
+const RETENTION_JOB_ENABLED = process.env.MESH_RETENTION_JOB_ENABLED !== "0";
+const RETENTION_JOB_INTERVAL_MS = Number(process.env.MESH_RETENTION_JOB_INTERVAL_MS ?? (process.env.NODE_ENV === "production" ? 60 * 60_000 : 5 * 60_000));
+
+const DEV_RETENTION_PRESET: RetentionPolicy = {
+  ttlSeconds: 86_400,
+  maxEvents: 20_000,
+  snapshotEveryNEvents: 500,
+  snapshotEverySeconds: 300,
+  minSnapshotsToKeep: 3,
+  mode: "delete"
+};
+
+const PROD_RETENTION_PRESET: RetentionPolicy = {
+  ttlSeconds: 2_592_000,
+  maxEvents: 1_000_000,
+  snapshotEveryNEvents: 10_000,
+  snapshotEverySeconds: 86_400,
+  minSnapshotsToKeep: 30,
+  mode: "archive"
+};
 
 type GraphNode = { id: string; label: string; level?: number; metadata?: Record<string, unknown> };
 type GraphLink = { id: string; source: string; target: string; type: string; label?: string };
 type GraphView = { nodes: GraphNode[]; links: GraphLink[] };
+type SnapshotPayload = { nodes: GraphNode[]; links: GraphLink[]; version: 1 };
 
 type GraphEvent =
   | { type: "graph.node.created"; node: GraphNode; _acl?: Record<string, "mask"> }
@@ -26,9 +45,44 @@ type GraphEvent =
   | { type: "graph.link.created"; link: GraphLink; _acl?: Record<string, "mask"> }
   | { type: "graph.link.deleted"; linkId: string; _acl?: Record<string, "mask"> };
 
+interface RetentionPolicy {
+  ttlSeconds?: number;
+  maxEvents?: number;
+  snapshotEveryNEvents: number;
+  snapshotEverySeconds: number;
+  minSnapshotsToKeep: number;
+  mode: "archive" | "delete";
+}
+
+type ProjectRecord = {
+  projectId: string;
+  name?: string;
+  createdAt: number;
+  updatedAt: number;
+  headCursor: Cursor;
+  minReadableCursor: Cursor;
+  retentionPolicy: RetentionPolicy;
+};
+
+type SnapshotRecord = {
+  snapshotId: string;
+  projectId: string;
+  cursor: Cursor;
+  createdAt: number;
+  label?: string;
+  sizeBytes?: number;
+  nodeCount?: number;
+  linkCount?: number;
+  payload: SnapshotPayload;
+};
+
+type CatalogState = {
+  projects: Record<string, ProjectRecord>;
+  snapshots: Record<string, SnapshotRecord[]>;
+};
+
 type LocalSyncGatewayLike = {
   submit(graphSpaceId: string, principal: PrincipalContext, command: Command, idempotencyKey?: string): {
-    ackTransport: { accepted: true; idempotencyKey: string };
     final: Promise<CommandOutcome>;
   };
   syncPull(
@@ -36,20 +90,14 @@ type LocalSyncGatewayLike = {
     principal: PrincipalContext,
     fromCursorVisible: number,
     options?: { limitTx?: number; limitBytes?: number }
-  ): Promise<{ txBundlesVisible: Array<{ txBundle: { graphEvents: unknown[] } }>; cursorAfterVisible: number }>;
-  syncSubscribe(
-    graphSpaceId: string,
-    principal: PrincipalContext,
-    fromCursorVisible: number,
-    options?: { limitTx?: number; limitBytes?: number; heartbeatEveryMs?: number; pollIntervalMs?: number }
-  ): AsyncIterable<unknown>;
+  ): Promise<{ txBundlesVisible: Array<{ principalCursor: number; txBundle: { graphEvents: unknown[]; metaEvents?: unknown[] } }>; cursorAfterVisible: number }>;
   eventsRead(
     graphSpaceId: string,
     principal: PrincipalContext,
     stream: "meta" | "graph",
     fromSeqExclusive: number,
     options?: { limitEvents?: number; limitBytes?: number }
-  ): Promise<unknown[]>;
+  ): Promise<Array<{ payload: unknown }>>;
   syncPoll(
     graphSpaceId: string,
     principal: PrincipalContext,
@@ -62,11 +110,6 @@ type LocalSyncGatewayLike = {
     }
   ): Promise<{ meta: unknown[]; graph: unknown[]; cursorAfter: Cursor }>;
 };
-
-type LocalSyncGatewayCtor = new (
-  store: FileBackedLocalEventStore,
-  config: { graphSpaceId: string; executeCommand: (command: Command) => Promise<CommandOutcome> }
-) => LocalSyncGatewayLike;
 
 export interface MeshGraphServerOptions {
   storageDir: string;
@@ -88,19 +131,131 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
   const graphSpaceId = options.graphSpaceId ?? GRAPH_SPACE_ID;
   process.env.MESH_TX_VISIBILITY_POLICY = "acl";
 
-  const storePath = join(options.storageDir, "graph-eventstore.json");
-  const store = STORE_CACHE.get(storePath) ?? new FileBackedLocalEventStore(storePath);
-  STORE_CACHE.set(storePath, store);
-  const kernel = new KernelMinimalImpl(store);
-  const gateway = new (LocalSyncGateway as LocalSyncGatewayCtor)(store, {
-    graphSpaceId,
-    executeCommand: (command) => kernel.execute(command)
-  });
-  const syncServer = new SyncHttpReferenceServer({ graphSpaceId, gateway });
-  const syncListen = await syncServer.listen(0, "127.0.0.1");
+  const projectStores = new Map<string, { store: FileBackedLocalEventStore; gateway: LocalSyncGatewayLike; kernel: KernelMinimalImpl }>();
+  const catalogPath = join(options.storageDir, "mesh-projects.json");
+  const catalog = await loadCatalog(catalogPath);
+
+  async function getProjectContext(projectId: string): Promise<{ store: FileBackedLocalEventStore; gateway: LocalSyncGatewayLike; kernel: KernelMinimalImpl }> {
+    const cached = projectStores.get(projectId);
+    if (cached) return cached;
+    const storePath = join(options.storageDir, `graph-eventstore-${projectId}.json`);
+    const store = new FileBackedLocalEventStore(storePath);
+    const kernel = new KernelMinimalImpl(store);
+    const gateway = new LocalSyncGateway(store, { graphSpaceId: projectId, executeCommand: (command) => kernel.execute(command) });
+    const loaded = { store, gateway, kernel };
+    projectStores.set(projectId, loaded);
+    return loaded;
+  }
+
+  async function ensureProject(projectId: string, name?: string): Promise<ProjectRecord> {
+    const existing = catalog.projects[projectId];
+    if (existing) return existing;
+    const now = Date.now();
+    const policy = process.env.NODE_ENV === "production" ? PROD_RETENTION_PRESET : DEV_RETENTION_PRESET;
+    const record: ProjectRecord = {
+      projectId,
+      name,
+      createdAt: now,
+      updatedAt: now,
+      headCursor: { metaSeq: 0, graphSeq: 0 },
+      minReadableCursor: { metaSeq: 0, graphSeq: 0 },
+      retentionPolicy: { ...policy }
+    };
+    catalog.projects[projectId] = record;
+    catalog.snapshots[projectId] = [];
+    await saveCatalog(catalogPath, catalog);
+    await getProjectContext(projectId);
+    return record;
+  }
+
+  async function refreshProjectHead(projectId: string): Promise<void> {
+    const project = catalog.projects[projectId];
+    if (!project) return;
+    const context = await getProjectContext(projectId);
+    project.headCursor = await context.store.getCursorHead(projectId);
+    project.updatedAt = Date.now();
+    await saveCatalog(catalogPath, catalog);
+  }
+
+  async function createSnapshot(projectId: string, label?: string): Promise<SnapshotRecord> {
+    const project = await ensureProject(projectId);
+    const context = await getProjectContext(projectId);
+    const principal = { principalId: "system" };
+    const view = await readGraphView(context.gateway, projectId, principal);
+    const cursor = await context.store.getCursorHead(projectId);
+    project.headCursor = cursor;
+    const payload: SnapshotPayload = { nodes: view.nodes, links: view.links, version: 1 };
+    const serialized = JSON.stringify(payload);
+    const record: SnapshotRecord = {
+      snapshotId: randomUUID(),
+      projectId,
+      cursor,
+      createdAt: Date.now(),
+      label,
+      sizeBytes: serialized.length,
+      nodeCount: payload.nodes.length,
+      linkCount: payload.links.length,
+      payload
+    };
+    catalog.snapshots[projectId] = [record, ...(catalog.snapshots[projectId] ?? [])].sort((a, b) => b.createdAt - a.createdAt);
+    project.updatedAt = Date.now();
+    await saveCatalog(catalogPath, catalog);
+    return record;
+  }
+
+  async function purgeHistory(projectId: string, dryRun = false): Promise<Record<string, unknown>> {
+    const project = await ensureProject(projectId);
+    const snapshots = (catalog.snapshots[projectId] ?? []).sort((a, b) => b.createdAt - a.createdAt);
+    const keepCount = Math.max(1, project.retentionPolicy.minSnapshotsToKeep);
+    if (snapshots.length <= keepCount) {
+      return { eventsPurgedCount: 0, snapshotsDeletedCount: 0, newMinReadableCursor: project.minReadableCursor, cutSnapshotId: null };
+    }
+    await refreshProjectHead(projectId);
+    const head = project.headCursor;
+    const now = Date.now();
+    const protectedIds = new Set(snapshots.slice(0, keepCount).map((snapshot) => snapshot.snapshotId));
+    const eligible = snapshots.filter((snapshot) => !protectedIds.has(snapshot.snapshotId));
+    const ttlEligible = typeof project.retentionPolicy.ttlSeconds === "number"
+      ? eligible.filter((snapshot) => now - snapshot.createdAt >= project.retentionPolicy.ttlSeconds! * 1000)
+      : [];
+    const maxEventsEligible = typeof project.retentionPolicy.maxEvents === "number"
+      ? eligible.filter((snapshot) => head.graphSeq - snapshot.cursor.graphSeq >= project.retentionPolicy.maxEvents!)
+      : [];
+    const candidates = [...ttlEligible, ...maxEventsEligible];
+    if (candidates.length === 0) {
+      return { eventsPurgedCount: 0, snapshotsDeletedCount: 0, newMinReadableCursor: project.minReadableCursor, cutSnapshotId: null };
+    }
+    const cutSnapshot = candidates.sort((a, b) => b.cursor.graphSeq - a.cursor.graphSeq)[0]!;
+    const toDelete = snapshots.filter((snapshot) => snapshot.createdAt < cutSnapshot.createdAt && !protectedIds.has(snapshot.snapshotId));
+    const context = await getProjectContext(projectId);
+    const beforeHead = await context.store.getCursorHead(projectId);
+    if (!dryRun) {
+      await context.store.compactUpToCursor({ graphSpaceId: projectId, cursorExclusive: cutSnapshot.cursor.graphSeq });
+      catalog.snapshots[projectId] = snapshots.filter((snapshot) => !toDelete.some((stale) => stale.snapshotId === snapshot.snapshotId));
+      project.minReadableCursor = cutSnapshot.cursor;
+      project.headCursor = await context.store.getCursorHead(projectId);
+      project.updatedAt = Date.now();
+      await saveCatalog(catalogPath, catalog);
+    }
+    return {
+      eventsPurgedCount: Math.max(0, beforeHead.graphSeq - cutSnapshot.cursor.graphSeq),
+      snapshotsDeletedCount: toDelete.length,
+      newMinReadableCursor: cutSnapshot.cursor,
+      cutSnapshotId: cutSnapshot.snapshotId,
+      dryRun
+    };
+  }
+
+  await ensureProject(graphSpaceId);
+  if (RETENTION_JOB_ENABLED) {
+    const timer = setInterval(() => {
+      void runRetentionJob(catalog.projects, ensureProject, refreshProjectHead, createSnapshot, purgeHistory);
+    }, RETENTION_JOB_INTERVAL_MS);
+    if (typeof (timer as unknown as { unref?: () => void }).unref === "function") (timer as unknown as { unref: () => void }).unref();
+  }
 
   const appServer = createServer((req, res) => {
-    void handleRequest(req, res, { gateway, graphSpaceId, syncBaseUrl: syncListen.url });
+    void handleRequest(req, res, { graphSpaceId, catalog, catalogPath, ensureProject, getProjectContext, refreshProjectHead, createSnapshot, purgeHistory });
   });
 
   const host = options.host ?? "127.0.0.1";
@@ -108,21 +263,18 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
   appServer.listen(port, host);
   await once(appServer, "listening");
   const address = appServer.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Unable to bind mesh graph server");
-  }
+  if (!address || typeof address === "string") throw new Error("Unable to bind mesh graph server");
 
   return {
     url: `http://${host}:${address.port}`,
     port: address.port,
-    syncUrl: syncListen.url,
+    syncUrl: `http://${host}:${address.port}`,
     graphSpaceId,
     close: async () => {
       if (appServer.listening) {
         appServer.close();
         await once(appServer, "close");
       }
-      await syncServer.close();
     }
   };
 }
@@ -130,35 +282,164 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  deps: { gateway: LocalSyncGatewayLike; graphSpaceId: string; syncBaseUrl: string }
+  deps: {
+    graphSpaceId: string;
+    catalog: CatalogState;
+    catalogPath: string;
+    ensureProject: (projectId: string, name?: string) => Promise<ProjectRecord>;
+    getProjectContext: (projectId: string) => Promise<{ store: FileBackedLocalEventStore; gateway: LocalSyncGatewayLike; kernel: KernelMinimalImpl }>;
+    refreshProjectHead: (projectId: string) => Promise<void>;
+    createSnapshot: (projectId: string, label?: string) => Promise<SnapshotRecord>;
+    purgeHistory: (projectId: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
+  }
 ): Promise<void> {
   const requestUrl = new URL(req.url ?? "/", "http://graph.local");
   applyCorsHeaders(res);
-  if (req.method === "OPTIONS") {
-    res.statusCode = 204;
-    res.end();
+  if (req.method === "OPTIONS") return void (res.statusCode = 204, res.end());
+
+  if (req.method === "GET" && requestUrl.pathname === "/") return void writePlainText(res, 200, buildRootHelpMessage(deps.graphSpaceId));
+
+  if (req.method === "GET" && requestUrl.pathname === "/v1/projects") {
+    const entries = Object.values(deps.catalog.projects).map((project) => ({ ...project, snapshotsCount: deps.catalog.snapshots[project.projectId]?.length ?? 0 }));
+    writeJson(res, 200, entries);
     return;
   }
 
-  if (req.method === "GET" && requestUrl.pathname === "/") {
-    writePlainText(res, 200, buildRootHelpMessage(deps.graphSpaceId));
+  if (req.method === "POST" && requestUrl.pathname === "/v1/projects") {
+    const body = (await readJsonBody(req)) as { projectId?: string; name?: string };
+    const project = await deps.ensureProject(body.projectId && body.projectId.trim() ? body.projectId : randomUUID(), body.name);
+    writeJson(res, 201, { projectId: project.projectId });
     return;
   }
 
   const principal = parsePrincipal(req);
-  if (!principal) {
-    debugAuthLog(req, requestUrl);
-    writeJson(res, 401, { status: "rejected", category: "PERMISSION", reasonCode: "AUTH.PRINCIPAL_REQUIRED" });
+  if (!principal) return void writeJson(res, 401, { status: "rejected", category: "PERMISSION", reasonCode: "AUTH.PRINCIPAL_REQUIRED" });
+
+  const projectMatch = /^\/v1\/([^/]+)$/.exec(requestUrl.pathname);
+  if (req.method === "GET" && projectMatch) {
+    const projectId = decodeURIComponent(projectMatch[1]!);
+    await deps.ensureProject(projectId);
+    await deps.refreshProjectHead(projectId);
+    const project = deps.catalog.projects[projectId];
+    writeJson(res, 200, { ...project, snapshotsCount: deps.catalog.snapshots[projectId]?.length ?? 0 });
     return;
   }
 
-  if (requestUrl.pathname.startsWith("/v1/")) {
-    await proxyToSyncServer(req, res, `${deps.syncBaseUrl}${requestUrl.pathname}${requestUrl.search}`);
+  const retentionMatch = /^\/v1\/([^/]+)\/retention$/.exec(requestUrl.pathname);
+  if (req.method === "PATCH" && retentionMatch) {
+    const projectId = decodeURIComponent(retentionMatch[1]!);
+    const project = await deps.ensureProject(projectId);
+    const body = (await readJsonBody(req)) as Partial<RetentionPolicy>;
+    project.retentionPolicy = normalizeRetentionPolicy({ ...project.retentionPolicy, ...body });
+    project.updatedAt = Date.now();
+    await saveCatalog(deps.catalogPath, deps.catalog);
+    writeJson(res, 200, { retentionPolicy: project.retentionPolicy });
     return;
   }
+
+  const projectId = readProjectIdFromRequest(requestUrl.pathname, deps.graphSpaceId);
+  await deps.ensureProject(projectId);
+  const { gateway } = await deps.getProjectContext(projectId);
 
   if (req.method === "GET" && requestUrl.pathname === "/graph/view") {
-    writeJson(res, 200, await readGraphView(deps.gateway, deps.graphSpaceId, principal));
+    writeJson(res, 200, await readGraphView(gateway, deps.graphSpaceId, principal));
+    return;
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === `/v1/${encodeURIComponent(projectId)}/graph:snapshot`) {
+    const latest = deps.catalog.snapshots[projectId]?.[0] ?? (await deps.createSnapshot(projectId, "bootstrap"));
+    writeJson(res, 200, latest);
+    return;
+  }
+
+  const snapshotsListMatch = new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/snapshots$`).exec(requestUrl.pathname);
+  if (req.method === "GET" && snapshotsListMatch) {
+    writeJson(res, 200, deps.catalog.snapshots[projectId] ?? []);
+    return;
+  }
+  const snapshotCreateMatch = new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/snapshots:create$`).exec(requestUrl.pathname);
+  if (req.method === "POST" && snapshotCreateMatch) {
+    const body = (await readJsonBody(req)) as { label?: string };
+    const snapshot = await deps.createSnapshot(projectId, body.label);
+    writeJson(res, 200, { snapshotId: snapshot.snapshotId, cursor: snapshot.cursor });
+    return;
+  }
+  const snapshotGetMatch = new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/snapshots/([^/:]+)$`).exec(requestUrl.pathname);
+  if (req.method === "GET" && snapshotGetMatch) {
+    const snapshot = (deps.catalog.snapshots[projectId] ?? []).find((entry) => entry.snapshotId === decodeURIComponent(snapshotGetMatch[1]!));
+    if (!snapshot) return void writeJson(res, 404, { status: "error", reasonCode: "SNAPSHOT.NOT_FOUND" });
+    writeJson(res, 200, snapshot);
+    return;
+  }
+  const forkMatch = new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/snapshots/([^/:]+):fork$`).exec(requestUrl.pathname);
+  if (req.method === "POST" && forkMatch) {
+    const snapshotId = decodeURIComponent(forkMatch[1]!);
+    const snapshot = (deps.catalog.snapshots[projectId] ?? []).find((entry) => entry.snapshotId === snapshotId);
+    if (!snapshot) return void writeJson(res, 404, { status: "error", reasonCode: "SNAPSHOT.NOT_FOUND" });
+    const body = (await readJsonBody(req)) as { newProjectId?: string; name?: string };
+    const newProjectId = body.newProjectId?.trim() || randomUUID();
+    await deps.ensureProject(newProjectId, body.name);
+    const newContext = await deps.getProjectContext(newProjectId);
+    for (const node of snapshot.payload.nodes) {
+      await submitGraphCommand(newContext.gateway, newProjectId, principal, randomUUID(), { type: "graph.node.created", node });
+    }
+    for (const link of snapshot.payload.links) {
+      await submitGraphCommand(newContext.gateway, newProjectId, principal, randomUUID(), { type: "graph.link.created", link });
+    }
+    await deps.refreshProjectHead(newProjectId);
+    await deps.createSnapshot(newProjectId, `fork:${snapshot.snapshotId}`);
+    writeJson(res, 200, { newProjectId });
+    return;
+  }
+
+  const purgeMatch = new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/history:purge$`).exec(requestUrl.pathname);
+  if (req.method === "POST" && purgeMatch) {
+    const body = (await readJsonBody(req)) as { dryRun?: boolean };
+    writeJson(res, 200, await deps.purgeHistory(projectId, Boolean(body.dryRun)));
+    return;
+  }
+
+  const pullMatch = new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/sync:pull$`).exec(requestUrl.pathname);
+  if (req.method === "GET" && pullMatch) {
+    const from = Number.parseInt(requestUrl.searchParams.get("from") ?? "0", 10) || 0;
+    const project = deps.catalog.projects[projectId]!;
+    if (from < project.minReadableCursor.graphSeq) {
+      const recommendedSnapshotId = deps.catalog.snapshots[projectId]?.[0]?.snapshotId;
+      writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
+      return;
+    }
+    const result = await gateway.syncPull(projectId, principal, from, {
+      limitTx: Number.parseInt(requestUrl.searchParams.get("limitTx") ?? "64", 10) || 64,
+      limitBytes: Number.parseInt(requestUrl.searchParams.get("limitBytes") ?? `${128 * 1024}`, 10) || 128 * 1024
+    });
+    writeJson(res, 200, result);
+    return;
+  }
+
+  const pollMatch = new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/sync:poll$`).exec(requestUrl.pathname);
+  if (req.method === "GET" && pollMatch) {
+    const cursor = parseCursor(requestUrl.searchParams.get("cursor"));
+    const project = deps.catalog.projects[projectId]!;
+    if (isCursorTooOld(cursor, project.minReadableCursor)) {
+      const recommendedSnapshotId = deps.catalog.snapshots[projectId]?.[0]?.snapshotId;
+      writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
+      return;
+    }
+    const result = await gateway.syncPoll(projectId, principal, cursor);
+    writeJson(res, 200, result);
+    return;
+  }
+
+  const subscribeMatch = new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/sync:subscribe$`).exec(requestUrl.pathname);
+  if (req.method === "GET" && subscribeMatch) {
+    const from = Number.parseInt(requestUrl.searchParams.get("from") ?? "0", 10) || 0;
+    const project = deps.catalog.projects[projectId]!;
+    if (from < project.minReadableCursor.graphSeq) {
+      const recommendedSnapshotId = deps.catalog.snapshots[projectId]?.[0]?.snapshotId;
+      writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
+      return;
+    }
+    await streamSubscribe(res, async (cursor) => gateway.syncPull(projectId, principal, cursor));
     return;
   }
 
@@ -171,20 +452,15 @@ async function handleRequest(
       metadata: typeof body.metadata === "object" && body.metadata !== null ? body.metadata as Record<string, unknown> : undefined
     };
     const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
-    const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
-      type: "graph.node.created",
-      node
-    });
+    const outcome = await submitGraphCommand(gateway, projectId, principal, idempotencyKey, { type: "graph.node.created", node });
+    await deps.refreshProjectHead(projectId);
     writeJson(res, 200, { node, outcome });
     return;
   }
 
   if (req.method === "POST" && requestUrl.pathname === "/graph/links") {
     const body = (await readJsonBody(req)) as Partial<GraphLink> & { idempotencyKey?: string };
-    if (typeof body.source !== "string" || typeof body.target !== "string") {
-      writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "TRANSPORT.INVALID_REQUEST" });
-      return;
-    }
+    if (typeof body.source !== "string" || typeof body.target !== "string") return void writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "TRANSPORT.INVALID_REQUEST" });
     const link: GraphLink = {
       id: typeof body.id === "string" && body.id.trim() ? body.id : randomUUID(),
       source: body.source,
@@ -193,49 +469,34 @@ async function handleRequest(
       label: typeof body.label === "string" ? body.label : undefined
     };
     const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
-    const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
-      type: "graph.link.created",
-      link
-    });
+    const outcome = await submitGraphCommand(gateway, projectId, principal, idempotencyKey, { type: "graph.link.created", link });
+    await deps.refreshProjectHead(projectId);
     writeJson(res, 200, { link, outcome });
     return;
   }
 
   if (req.method === "PATCH" && /^\/graph\/nodes\/[^/]+$/.test(requestUrl.pathname)) {
     const body = (await readJsonBody(req)) as { label?: unknown; idempotencyKey?: string };
-    if (typeof body.label !== "string") {
-      writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "TRANSPORT.INVALID_REQUEST" });
-      return;
-    }
+    if (typeof body.label !== "string") return void writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "TRANSPORT.INVALID_REQUEST" });
     const nodeId = decodeURIComponent(requestUrl.pathname.slice("/graph/nodes/".length));
-    const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
-    const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
-      type: "graph.node.label.updated",
-      nodeId,
-      label: body.label
-    });
+    const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req, body.idempotencyKey), { type: "graph.node.label.updated", nodeId, label: body.label });
+    await deps.refreshProjectHead(projectId);
     writeJson(res, 200, { outcome, nodeId, label: body.label });
     return;
   }
 
   if (req.method === "DELETE" && /^\/graph\/links\/[^/]+$/.test(requestUrl.pathname)) {
     const linkId = decodeURIComponent(requestUrl.pathname.slice("/graph/links/".length));
-    const idempotencyKey = readIdempotencyKey(req);
-    const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
-      type: "graph.link.deleted",
-      linkId
-    });
+    const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req), { type: "graph.link.deleted", linkId });
+    await deps.refreshProjectHead(projectId);
     writeJson(res, 200, { outcome, linkId });
     return;
   }
 
   if (req.method === "DELETE" && /^\/graph\/nodes\/[^/]+$/.test(requestUrl.pathname)) {
     const nodeId = decodeURIComponent(requestUrl.pathname.slice("/graph/nodes/".length));
-    const idempotencyKey = readIdempotencyKey(req);
-    const outcome = await submitGraphCommand(deps.gateway, deps.graphSpaceId, principal, idempotencyKey, {
-      type: "graph.node.deleted",
-      nodeId
-    });
+    const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req), { type: "graph.node.deleted", nodeId });
+    await deps.refreshProjectHead(projectId);
     writeJson(res, 200, { outcome, nodeId });
     return;
   }
@@ -243,21 +504,97 @@ async function handleRequest(
   writeJson(res, 404, { status: "error", category: "NOT_FOUND", reasonCode: "NOT_FOUND.GENERIC" });
 }
 
+function normalizeRetentionPolicy(policy: RetentionPolicy): RetentionPolicy {
+  return {
+    ttlSeconds: typeof policy.ttlSeconds === "number" && policy.ttlSeconds > 0 ? Math.floor(policy.ttlSeconds) : undefined,
+    maxEvents: typeof policy.maxEvents === "number" && policy.maxEvents > 0 ? Math.floor(policy.maxEvents) : undefined,
+    snapshotEveryNEvents: Math.max(1, Math.floor(policy.snapshotEveryNEvents || 1)),
+    snapshotEverySeconds: Math.max(1, Math.floor(policy.snapshotEverySeconds || 1)),
+    minSnapshotsToKeep: Math.max(1, Math.floor(policy.minSnapshotsToKeep || 1)),
+    mode: policy.mode === "archive" ? "archive" : "delete"
+  };
+}
+
+async function loadCatalog(filePath: string): Promise<CatalogState> {
+  try {
+    const raw = JSON.parse(await fs.readFile(filePath, "utf8")) as CatalogState;
+    return { projects: raw.projects ?? {}, snapshots: raw.snapshots ?? {} };
+  } catch {
+    return { projects: {}, snapshots: {} };
+  }
+}
+
+async function saveCatalog(filePath: string, catalog: CatalogState): Promise<void> {
+  await fs.writeFile(filePath, JSON.stringify(catalog, null, 2), "utf8");
+}
+
+function readProjectIdFromRequest(pathname: string, fallbackProjectId: string): string {
+  const match = /^\/v1\/([^/]+)/.exec(pathname);
+  return match ? decodeURIComponent(match[1]!) : fallbackProjectId;
+}
+
+function parseCursor(raw: string | null): Cursor {
+  if (!raw) return { metaSeq: 0, graphSeq: 0 };
+  try {
+    const parsed = JSON.parse(raw) as Partial<Cursor>;
+    return { metaSeq: parsed.metaSeq ?? 0, graphSeq: parsed.graphSeq ?? 0 };
+  } catch {
+    return { metaSeq: 0, graphSeq: 0 };
+  }
+}
+
+function isCursorTooOld(requested: Cursor, minReadable: Cursor): boolean {
+  return requested.metaSeq < minReadable.metaSeq || requested.graphSeq < minReadable.graphSeq;
+}
+
+async function streamSubscribe(
+  res: ServerResponse,
+  syncPull: (fromCursorVisible: number) => Promise<{ txBundlesVisible: Array<{ principalCursor: number; txBundle: { graphEvents: unknown[] } }>; cursorAfterVisible: number }>
+): Promise<void> {
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/event-stream");
+  res.setHeader("cache-control", "no-cache");
+  let cursor = 0;
+  const timer = setInterval(async () => {
+    const pulled = await syncPull(cursor);
+    if (pulled.txBundlesVisible.length > 0) {
+      res.write(`data:${JSON.stringify({ kind: "txBundles", txBundlesVisible: pulled.txBundlesVisible })}\n\n`);
+      cursor = pulled.cursorAfterVisible;
+      res.write(`data:${JSON.stringify({ kind: "cursor", cursorVisible: cursor })}\n\n`);
+      return;
+    }
+    res.write(`data:${JSON.stringify({ kind: "heartbeat", cursorVisible: cursor })}\n\n`);
+  }, 1000);
+  (res as unknown as { on: (event: string, listener: () => void) => void }).on("close", () => clearInterval(timer));
+}
+
+async function runRetentionJob(
+  projects: Record<string, ProjectRecord>,
+  ensureProject: (projectId: string, name?: string) => Promise<ProjectRecord>,
+  refreshProjectHead: (projectId: string) => Promise<void>,
+  createSnapshot: (projectId: string, label?: string) => Promise<SnapshotRecord>,
+  purgeHistory: (projectId: string, dryRun?: boolean) => Promise<Record<string, unknown>>
+): Promise<void> {
+  for (const projectId of Object.keys(projects)) {
+    const project = await ensureProject(projectId);
+    await refreshProjectHead(projectId);
+    const dueByEvents = project.headCursor.graphSeq > 0 && project.headCursor.graphSeq % project.retentionPolicy.snapshotEveryNEvents === 0;
+    const dueByTime = project.updatedAt + project.retentionPolicy.snapshotEverySeconds * 1000 < Date.now();
+    if (dueByEvents || dueByTime) await createSnapshot(projectId, "auto");
+    if (project.retentionPolicy.ttlSeconds || project.retentionPolicy.maxEvents) await purgeHistory(projectId, false);
+  }
+}
+
 function buildRootHelpMessage(graphSpaceId: string): string {
   return [
     "mesh-graph-server API endpoint",
     "",
     "This server expects authenticated API requests using header x-mesh-principal.",
-    "Example:",
-    '  curl -H "x-mesh-principal: local-dev" http://127.0.0.1:8090/v1/sync/pull?fromCursorVisible=0',
-    "",
     "Useful routes:",
-    "  /v1/...        Sync HTTP API",
-    "  /graph/view    Current graph view (requires x-mesh-principal)",
-    "",
-    "To open the UI, run: pnpm webapp",
-    "Default UI URL: http://127.0.0.1:5173",
-    `graphSpaceId: ${graphSpaceId}`
+    "  /v1/projects",
+    "  /v1/:projectId/sync:poll",
+    "  /v1/:projectId/graph:snapshot",
+    `default projectId: ${graphSpaceId}`
   ].join("\n");
 }
 
@@ -273,13 +610,9 @@ async function submitGraphCommand(
     commandId: randomUUID(),
     actorId: principal.principalId,
     idempotencyKey,
-    payload: {
-      ...payload,
-      _acl: maskForOtherPrincipal(principal.principalId)
-    }
+    payload: { ...payload, _acl: maskForOtherPrincipal(principal.principalId) }
   };
-  const submitted = gateway.submit(graphSpaceId, principal, command, idempotencyKey);
-  return submitted.final;
+  return gateway.submit(graphSpaceId, principal, command, idempotencyKey).final;
 }
 
 async function readGraphView(gateway: LocalSyncGatewayLike, graphSpaceId: string, principal: PrincipalContext): Promise<GraphView> {
@@ -289,48 +622,29 @@ async function readGraphView(gateway: LocalSyncGatewayLike, graphSpaceId: string
   while (true) {
     const pulled = await gateway.syncPull(graphSpaceId, principal, cursor, { limitTx: 64, limitBytes: 128 * 1024 });
     for (const bundle of pulled.txBundlesVisible) {
-      for (const rawEvent of bundle.txBundle.graphEvents) {
-        applyGraphEvent(nodes, links, rawEvent as GraphEvent);
-      }
+      for (const rawEvent of bundle.txBundle.graphEvents) applyGraphEvent(nodes, links, rawEvent as GraphEvent);
     }
-    if (pulled.cursorAfterVisible === cursor) {
-      break;
-    }
+    if (pulled.cursorAfterVisible === cursor) break;
     cursor = pulled.cursorAfterVisible;
   }
-  return {
-    nodes: Array.from(nodes.values()),
-    links: Array.from(links.values()).filter((link) => nodes.has(link.source) && nodes.has(link.target))
-  };
+  return { nodes: Array.from(nodes.values()), links: Array.from(links.values()).filter((link) => nodes.has(link.source) && nodes.has(link.target)) };
 }
 
 function applyGraphEvent(nodes: Map<string, GraphNode>, links: Map<string, GraphLink>, event: GraphEvent): void {
-  if (event.type === "graph.node.created") {
-    nodes.set(event.node.id, event.node);
-    return;
-  }
+  if (event.type === "graph.node.created") return void nodes.set(event.node.id, event.node);
   if (event.type === "graph.node.label.updated") {
     const existing = nodes.get(event.nodeId);
     if (!existing) return;
-    nodes.set(event.nodeId, { ...existing, label: event.label });
-    return;
+    return void nodes.set(event.nodeId, { ...existing, label: event.label });
   }
   if (event.type === "graph.node.deleted") {
     nodes.delete(event.nodeId);
-    for (const [id, link] of links) {
-      if (link.source === event.nodeId || link.target === event.nodeId) links.delete(id);
-    }
+    for (const [id, link] of links) if (link.source === event.nodeId || link.target === event.nodeId) links.delete(id);
     return;
   }
-  if (event.type === "graph.link.created") {
-    links.set(event.link.id, event.link);
-    return;
-  }
-  if (event.type === "graph.link.deleted") {
-    links.delete(event.linkId);
-  }
+  if (event.type === "graph.link.created") return void links.set(event.link.id, event.link);
+  if (event.type === "graph.link.deleted") links.delete(event.linkId);
 }
-
 
 function readIdempotencyKey(req: IncomingMessage, bodyValue?: unknown): string {
   if (typeof bodyValue === "string" && bodyValue.trim()) return bodyValue;
@@ -349,17 +663,6 @@ function parsePrincipal(req: IncomingMessage): PrincipalContext | null {
   return { principalId: trimmed };
 }
 
-function debugAuthLog(req: IncomingMessage, requestUrl: URL): void {
-  if (!DEBUG_AUTH_ENABLED) return;
-  const raw = req.headers[PRINCIPAL_HEADER];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  const normalized = typeof value === "string" ? value.trim() : "";
-  process.stdout.write(
-    `[mesh-auth-debug] reject ${req.method ?? "UNKNOWN"} ${requestUrl.pathname}${requestUrl.search} ` +
-      `${PRINCIPAL_HEADER}=${JSON.stringify(value ?? null)} missing=${typeof value !== "string"} blank=${normalized.length === 0}\n`
-  );
-}
-
 function applyCorsHeaders(res: ServerResponse): void {
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
@@ -372,36 +675,6 @@ function maskForOtherPrincipal(principal: string): Record<string, "mask"> {
   return {};
 }
 
-async function proxyToSyncServer(req: IncomingMessage, res: ServerResponse, targetUrl: string): Promise<void> {
-  const body = req.method === "GET" || req.method === "HEAD" ? undefined : await readRawBody(req);
-  const proxied = await fetch(targetUrl, {
-    method: req.method,
-    headers: copyHeaders(req.headers),
-    body
-  });
-
-  res.statusCode = proxied.status;
-  for (const [header, value] of proxied.headers.entries()) {
-    res.setHeader(header, value);
-  }
-
-  if (!proxied.body) {
-    res.end();
-    return;
-  }
-
-  const reader = proxied.body.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    if (!res.write(Buffer.from(value))) {
-      await once(res, "drain");
-    }
-  }
-  res.end();
-}
-
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const raw = await readRawBody(req);
   if (!raw) return {};
@@ -410,19 +683,8 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 
 async function readRawBody(req: IncomingMessage): Promise<string> {
   let raw = "";
-  for await (const chunk of req) {
-    raw += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-  }
+  for await (const chunk of req) raw += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
   return raw;
-}
-
-function copyHeaders(headers: IncomingMessage["headers"]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    if (typeof value === "string") out[key] = value;
-    if (Array.isArray(value)) out[key] = value.join(",");
-  }
-  return out;
 }
 
 function writeJson(res: ServerResponse, status: number, payload: unknown): void {
@@ -437,6 +699,10 @@ function writePlainText(res: ServerResponse, status: number, payload: string): v
   res.statusCode = status;
   res.setHeader("content-type", "text/plain; charset=utf-8");
   res.end(payload);
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
