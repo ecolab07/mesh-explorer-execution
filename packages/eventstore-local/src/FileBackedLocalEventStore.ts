@@ -51,6 +51,9 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   private readonly txVisibilityDecider: TxVisibilityDecider;
   private state: PersistedState | null = null;
   private readonly txIndexBySpace = new Map<string, Map<TxId, TxIndexEntry>>();
+  private persistQueue: Promise<void> = Promise.resolve();
+  private writeQueue: Promise<unknown> = Promise.resolve();
+  private persistCounter = 0;
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -63,6 +66,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     idempotencyCtx: IdempotencyCtx,
     hooks?: FaultInjectionHooks
   ): Promise<TransactionReceipt | CommandError> {
+    return this.serializeWrite(async () => {
     await this.loadState();
 
     if (txBundle.metaEvents.length === 0 && txBundle.graphEvents.length === 0) {
@@ -145,6 +149,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
 
     await this.persistState();
     return receipt;
+    });
   }
 
   async readTx(graphSpaceId: string, txId: TxId): Promise<{ txId: TxId; meta: EventEnvelope[]; graph: EventEnvelope[] } | null> {
@@ -256,6 +261,7 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   }
 
   async compactUpToCursor(params: { graphSpaceId: string; cursorExclusive: number }): Promise<void> {
+    await this.serializeWrite(async () => {
     await this.loadState();
     const space = this.getSpace(params.graphSpaceId);
     if (!space) return;
@@ -269,10 +275,18 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     space.graph = space.graph.filter((event) => !prunedTxIds.has(event.txId));
     this.txIndexBySpace.delete(params.graphSpaceId);
     await this.persistState();
+    });
   }
 
   async close(): Promise<void> {
     // No open file descriptors to release.
+  }
+
+
+  private async serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.writeQueue.then(operation, operation);
+    this.writeQueue = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   private async loadState(): Promise<PersistedState> {
@@ -294,12 +308,16 @@ export class FileBackedLocalEventStore implements LocalEventStore {
   }
 
   private async persistState(): Promise<void> {
-    const state = await this.loadState();
-    const dir = path.dirname(this.filePath);
-    await fs.mkdir(dir, { recursive: true });
-    const tempPath = `${this.filePath}.tmp`;
-    await fs.writeFile(tempPath, `${JSON.stringify(state)}\n`, "utf8");
-    await fs.rename(tempPath, this.filePath);
+    this.persistQueue = this.persistQueue.then(async () => {
+      const state = await this.loadState();
+      const dir = path.dirname(this.filePath);
+      await fs.mkdir(dir, { recursive: true });
+      this.persistCounter += 1;
+      const tempPath = `${this.filePath}.${Date.now()}.${this.persistCounter}.tmp`;
+      await fs.writeFile(tempPath, `${JSON.stringify(state)}\n`, "utf8");
+      await fs.rename(tempPath, this.filePath);
+    });
+    return this.persistQueue;
   }
 
   private getSpace(graphSpaceId: string): SpaceState | undefined {
