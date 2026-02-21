@@ -8,7 +8,7 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
-import { isStoreEmpty, nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
+import { nextMonotonicCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
 import {
@@ -56,6 +56,23 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
         <label>graphSpaceId <input id="graphSpaceId" style="width:100%" value="mesh-explorer-graph-v1"/></label><br/>
         <label>principal <input id="principal" style="width:100%" value="${escapeHtml(initialPrincipal)}"/></label><br/>
         <button id="connect">Connect</button>
+        <div style="margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:8px;">
+          <div><strong>Project</strong></div>
+          <button id="projectsRefresh">Refresh projects</button>
+          <button id="projectCreate" style="margin-left:8px;">Create project</button>
+          <div id="projectsList" style="margin-top:6px;font-size:12px;max-height:100px;overflow:auto;"></div>
+          <label>ttlSeconds <input id="policyTtl" style="width:100%" type="number" value="86400"/></label>
+          <label>maxEvents <input id="policyMaxEvents" style="width:100%" type="number" value="20000"/></label>
+          <label>snapshotEveryNEvents <input id="policyEveryN" style="width:100%" type="number" value="500"/></label>
+          <label>snapshotEverySeconds <input id="policyEverySeconds" style="width:100%" type="number" value="300"/></label>
+          <label>minSnapshotsToKeep <input id="policyMinSnapshots" style="width:100%" type="number" value="3"/></label>
+          <button id="policySave">Save policy</button>
+          <button id="snapshotCreate" style="margin-left:8px;">Create snapshot</button>
+          <button id="snapshotList" style="margin-left:8px;">List snapshots</button>
+          <button id="snapshotFork" style="margin-left:8px;">Fork latest</button>
+          <button id="purgeNow" style="margin-left:8px;">Purge dry-run</button>
+          <div id="projectReport" style="margin-top:6px;font-size:12px;color:#374151;"></div>
+        </div>
         <hr/>
         <div id="status">Connectivity: Degraded</div>
         <div id="transport">transport: disconnected</div>
@@ -163,6 +180,27 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     syncSession += 1;
     void connectAndSync(syncSession);
   };
+  el.projectsRefresh.onclick = () => {
+    void refreshProjects();
+  };
+  el.projectCreate.onclick = () => {
+    void createProject();
+  };
+  el.policySave.onclick = () => {
+    void savePolicy();
+  };
+  el.snapshotCreate.onclick = () => {
+    void createSnapshot();
+  };
+  el.snapshotList.onclick = () => {
+    void listSnapshots();
+  };
+  el.snapshotFork.onclick = () => {
+    void forkLatestSnapshot();
+  };
+  el.purgeNow.onclick = () => {
+    void purgeHistoryDryRun();
+  };
 
   el.addNode.onclick = () => {
     void promptAndCreateNode();
@@ -211,8 +249,95 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   });
 
   installTestHook(store);
+  void refreshProjects();
   syncSession += 1;
   void connectAndSync(syncSession);
+
+  async function refreshProjects(): Promise<void> {
+    const response = await fetch(`${el.baseUrl.value}/v1/projects`);
+    if (!response.ok) return;
+    const projects = (await response.json()) as Array<{ projectId: string; headCursor?: { graphSeq: number }; minReadableCursor?: { graphSeq: number } }>;
+    el.projectsList.innerHTML = projects
+      .map((project) => `<button data-project-id="${escapeHtml(project.projectId)}" style="display:block;margin-top:4px;">${escapeHtml(project.projectId)} (head=${project.headCursor?.graphSeq ?? 0}, min=${project.minReadableCursor?.graphSeq ?? 0})</button>`)
+      .join("");
+    for (const button of Array.from(el.projectsList.querySelectorAll("button[data-project-id]"))) {
+      button.addEventListener("click", () => {
+        const projectId = (button as HTMLButtonElement).dataset.projectId;
+        if (!projectId) return;
+        el.graphSpaceId.value = projectId;
+        syncSession += 1;
+        void connectAndSync(syncSession);
+      });
+    }
+  }
+
+  async function createProject(): Promise<void> {
+    const requested = window.prompt("projectId (empty = uuid)", "") ?? "";
+    const response = await fetch(`${el.baseUrl.value}/v1/projects`, {
+      method: "POST",
+      headers: headers(el.principal.value),
+      body: JSON.stringify({ projectId: requested || undefined })
+    });
+    const payload = (await response.json()) as { projectId: string };
+    el.projectReport.textContent = `created project ${payload.projectId}`;
+    await refreshProjects();
+  }
+
+  async function savePolicy(): Promise<void> {
+    const body = {
+      ttlSeconds: Number(el.policyTtl.value) || undefined,
+      maxEvents: Number(el.policyMaxEvents.value) || undefined,
+      snapshotEveryNEvents: Number(el.policyEveryN.value) || 1,
+      snapshotEverySeconds: Number(el.policyEverySeconds.value) || 1,
+      minSnapshotsToKeep: Number(el.policyMinSnapshots.value) || 1,
+      mode: "delete"
+    };
+    const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/retention`, {
+      method: "PATCH",
+      headers: headers(el.principal.value),
+      body: JSON.stringify(body)
+    });
+    el.projectReport.textContent = `policy save status=${response.status}`;
+  }
+
+  async function createSnapshot(): Promise<void> {
+    const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/snapshots:create`, {
+      method: "POST",
+      headers: headers(el.principal.value),
+      body: JSON.stringify({ label: "ui" })
+    });
+    el.projectReport.textContent = `snapshot create status=${response.status}`;
+  }
+
+  async function listSnapshots(): Promise<void> {
+    const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/snapshots`, { headers: headers(el.principal.value) });
+    const payload = (await response.json()) as Array<{ snapshotId: string }>;
+    el.projectReport.textContent = `snapshots=${payload.map((entry) => entry.snapshotId).join(", ")}`;
+  }
+
+  async function forkLatestSnapshot(): Promise<void> {
+    const listed = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/snapshots`, { headers: headers(el.principal.value) });
+    const payload = (await listed.json()) as Array<{ snapshotId: string }>;
+    const latest = payload[0];
+    if (!latest) return;
+    const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/snapshots/${encodeURIComponent(latest.snapshotId)}:fork`, {
+      method: "POST",
+      headers: headers(el.principal.value),
+      body: JSON.stringify({})
+    });
+    const fork = (await response.json()) as { newProjectId: string };
+    el.projectReport.textContent = `forked => ${fork.newProjectId}`;
+    await refreshProjects();
+  }
+
+  async function purgeHistoryDryRun(): Promise<void> {
+    const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/history:purge`, {
+      method: "POST",
+      headers: headers(el.principal.value),
+      body: JSON.stringify({ dryRun: true })
+    });
+    el.projectReport.textContent = `purge report: ${await response.text()}`;
+  }
 
   async function connectAndSync(sessionId: number): Promise<void> {
     activeAbort = rotateAbortController(activeAbort);
@@ -222,25 +347,32 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
-    const persistedCursor = readCursor(storageKey);
-    const storeSnapshot = {
-      nodesCount: store.getState().nodesById.size,
-      linksCount: store.getState().linksById.size
-    };
-    const fromCursor = resolveBootstrapFromCursor(persistedCursor, storeSnapshot);
-    dbg("sync:bootstrap:cursor-key", {
-      principal: normalizedPrincipal,
-      graphSpaceId: el.graphSpaceId.value,
-      storageKey,
-      isStoreEmpty: isStoreEmpty(storeSnapshot),
-      persistedCursor,
-      fromCursor
-    });
-    const replayResult = await pollReplayFromCursor(fromCursor, sessionId, activeAbort.signal);
+    const snapshotCursor = await bootstrapFromSnapshot(normalizedPrincipal);
+    const replayResult = await pollReplayFromCursor(snapshotCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
-    persistBootstrapCursor(storageKey, fromCursor, replayResult.cursor);
+    persistBootstrapCursor(storageKey, snapshotCursor, replayResult.cursor);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
+
+
+    async function bootstrapFromSnapshot(principalValue: string): Promise<Cursor> {
+      const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:snapshot`, { headers: headers(principalValue) }, {
+        principal: principalValue,
+        transport: "fetch",
+        debugAuth,
+        onNetworkResult: (status) => markNetworkConnectivity(status, "snapshot-bootstrap")
+      });
+      if (!response.ok) return { metaSeq: 0, graphSeq: 0 };
+      const snapshot = (await response.json()) as { payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor?: Cursor };
+      const nodes = snapshot.payload?.nodes ?? [];
+      const links = snapshot.payload?.links ?? [];
+      store.resetProjection();
+      store.applyGraphEvents(nodes.map((node) => ({ type: "graph.node.created", node } as GraphEvent)));
+      store.applyGraphEvents(links.map((link) => ({ type: "graph.link.created", link } as GraphEvent)));
+      const cursor = snapshot.cursor ?? { metaSeq: 0, graphSeq: 0 };
+      store.setCursor(cursor);
+      return cursor;
+    }
 
     async function subscribeLoop(activeSessionId: number, signal: AbortSignal): Promise<void> {
       activeSyncSubscriptions += 1;
@@ -320,6 +452,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             { principal: normalizedPrincipal, transport: "fetch", debugAuth, onNetworkResult: (status) => markNetworkConnectivity(status, "poll") }
           );
           if (!response.ok) {
+            if (response.status === 410) {
+              const nextCursor = await bootstrapFromSnapshot(normalizedPrincipal);
+              return { cursor: nextCursor, graphEventsApplied };
+            }
             markNetworkConnectivity(response.status === 0 ? "offline" : "degraded", "poll-non-ok");
             reportDevError(el, `sync poll non-ok: ${response.status}`);
             return { cursor, graphEventsApplied };
@@ -912,6 +1048,20 @@ type UiElements = {
   rendererBadge: HTMLDivElement;
   devBanner: HTMLDivElement;
   layoutPanelHost: HTMLDivElement;
+  projectsRefresh: HTMLButtonElement;
+  projectCreate: HTMLButtonElement;
+  projectsList: HTMLDivElement;
+  policyTtl: HTMLInputElement;
+  policyMaxEvents: HTMLInputElement;
+  policyEveryN: HTMLInputElement;
+  policyEverySeconds: HTMLInputElement;
+  policyMinSnapshots: HTMLInputElement;
+  policySave: HTMLButtonElement;
+  snapshotCreate: HTMLButtonElement;
+  snapshotList: HTMLButtonElement;
+  snapshotFork: HTMLButtonElement;
+  purgeNow: HTMLButtonElement;
+  projectReport: HTMLDivElement;
 };
 
 function byId(container: HTMLElement): UiElements {
@@ -935,7 +1085,21 @@ function byId(container: HTMLElement): UiElements {
     graphCanvas: container.querySelector("#graphCanvas") as HTMLCanvasElement,
     rendererBadge: container.querySelector("#rendererBadge") as HTMLDivElement,
     devBanner: container.querySelector("#devBanner") as HTMLDivElement,
-    layoutPanelHost: container.querySelector("#layoutPanelHost") as HTMLDivElement
+    layoutPanelHost: container.querySelector("#layoutPanelHost") as HTMLDivElement,
+    projectsRefresh: container.querySelector("#projectsRefresh") as HTMLButtonElement,
+    projectCreate: container.querySelector("#projectCreate") as HTMLButtonElement,
+    projectsList: container.querySelector("#projectsList") as HTMLDivElement,
+    policyTtl: container.querySelector("#policyTtl") as HTMLInputElement,
+    policyMaxEvents: container.querySelector("#policyMaxEvents") as HTMLInputElement,
+    policyEveryN: container.querySelector("#policyEveryN") as HTMLInputElement,
+    policyEverySeconds: container.querySelector("#policyEverySeconds") as HTMLInputElement,
+    policyMinSnapshots: container.querySelector("#policyMinSnapshots") as HTMLInputElement,
+    policySave: container.querySelector("#policySave") as HTMLButtonElement,
+    snapshotCreate: container.querySelector("#snapshotCreate") as HTMLButtonElement,
+    snapshotList: container.querySelector("#snapshotList") as HTMLButtonElement,
+    snapshotFork: container.querySelector("#snapshotFork") as HTMLButtonElement,
+    purgeNow: container.querySelector("#purgeNow") as HTMLButtonElement,
+    projectReport: container.querySelector("#projectReport") as HTMLDivElement
   };
 }
 
