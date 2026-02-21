@@ -297,6 +297,24 @@ export function nextSelectedEdgeIds(
   return new Set();
 }
 
+export function getPreferredSpawnWorldPos(params: {
+  lastPointerClientPos: Vec2 | null;
+  canvasRect: Pick<DOMRectReadOnly, "left" | "top" | "width" | "height">;
+  camera: CameraState;
+}): Vec2 {
+  const { lastPointerClientPos, canvasRect, camera } = params;
+  if (lastPointerClientPos) {
+    const inCanvas = lastPointerClientPos.x >= canvasRect.left
+      && lastPointerClientPos.x <= canvasRect.left + canvasRect.width
+      && lastPointerClientPos.y >= canvasRect.top
+      && lastPointerClientPos.y <= canvasRect.top + canvasRect.height;
+    if (inCanvas) {
+      return screenToWorld({ x: lastPointerClientPos.x - canvasRect.left, y: lastPointerClientPos.y - canvasRect.top }, camera);
+    }
+  }
+  return screenToWorld({ x: canvasRect.width / 2, y: canvasRect.height / 2 }, camera);
+}
+
 export function computeSeedRadius(nodeCount: number): number {
   return SEED_BASE * Math.sqrt(Math.max(1, nodeCount));
 }
@@ -556,13 +574,20 @@ export type GraphCanvasOptions = {
   debugLog?: GraphCanvasDebugLog;
 };
 
+const graphCanvasDevMetrics = {
+  activeCanvasInstances: 0,
+  activeResizeObservers: 0
+};
+
 export class GraphCanvas2D {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly layout: ForceLayout2D;
   private renderRaf = 0;
   private pointer = { x: 0, y: 0 };
   private pointerInsideCanvas = false;
-  private lastPointerScreenPos: Vec2 | null = null;
+  private lastPointerClientPos: Vec2 | null = null;
+  private pendingDragNodeIds: string[] = [];
+  private pointerDownScreenPos: Vec2 | null = null;
   private panning = false;
   private draggingNodeIds: string[] = [];
   private hoveredEdgeId: string | null = null;
@@ -571,6 +596,7 @@ export class GraphCanvas2D {
   private debugLogsEnabled = false;
   private readonly debugLog?: GraphCanvasDebugLog;
   private resizeObserver: ResizeObserver | null = null;
+  private cleanupFns: Array<() => void> = [];
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -590,6 +616,8 @@ export class GraphCanvas2D {
       onSoftWarmupFrame: () => this.requestRender(),
       onTick: () => this.requestRender()
     });
+    graphCanvasDevMetrics.activeCanvasInstances += 1;
+    (window as Window & { __meshCanvasStats?: () => unknown }).__meshCanvasStats = () => ({ ...graphCanvasDevMetrics });
     this.syncLayoutGraph("init");
     this.bindEvents();
     this.resize();
@@ -609,8 +637,15 @@ export class GraphCanvas2D {
 
   destroy(): void {
     if (this.renderRaf) cancelAnimationFrame(this.renderRaf);
-    this.resizeObserver?.disconnect();
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+      graphCanvasDevMetrics.activeResizeObservers = Math.max(0, graphCanvasDevMetrics.activeResizeObservers - 1);
+    }
+    for (const cleanup of this.cleanupFns) cleanup();
+    this.cleanupFns.length = 0;
     this.layout.destroy();
+    graphCanvasDevMetrics.activeCanvasInstances = Math.max(0, graphCanvasDevMetrics.activeCanvasInstances - 1);
   }
 
   getNodePositions(): Map<string, Vec2> {
@@ -639,13 +674,14 @@ export class GraphCanvas2D {
   }
 
   getPreferredSpawnWorldPos(): Vec2 {
-    const pointerPos = this.getLastPointerWorldPos();
-    return pointerPos ?? this.getViewCenterWorldPos();
+    const rect = this.canvas.getBoundingClientRect();
+    return getPreferredSpawnWorldPos({ lastPointerClientPos: this.lastPointerClientPos, canvasRect: rect, camera: this.ui.camera });
   }
 
   getLastPointerWorldPos(): Vec2 | null {
-    if (!this.pointerInsideCanvas || !this.lastPointerScreenPos) return null;
-    return screenToWorld(this.lastPointerScreenPos, this.ui.camera);
+    if (!this.pointerInsideCanvas || !this.lastPointerClientPos) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    return screenToWorld({ x: this.lastPointerClientPos.x - rect.left, y: this.lastPointerClientPos.y - rect.top }, this.ui.camera);
   }
 
   getViewCenterWorldPos(): Vec2 {
@@ -658,6 +694,17 @@ export class GraphCanvas2D {
     const center = { x: rect.width / 2, y: rect.height / 2 };
     this.ui.camera = zoomAtPoint(this.ui.camera, center, this.ui.camera.zoom * factor);
     this.callbacks.onCameraChange?.(this.ui.camera);
+    this.requestRender();
+  }
+
+  clearTransientUiState(): void {
+    this.edgeDraftCursorWorldPos = null;
+    this.pendingDragNodeIds = [];
+    this.draggingNodeIds = [];
+    this.pointerDownScreenPos = null;
+    this.ui.hoveredNodeId = null;
+    this.ui.edgeDraft = null;
+    this.callbacks.onEdgeDraftChange(null);
     this.requestRender();
   }
 
@@ -695,8 +742,12 @@ export class GraphCanvas2D {
       }
       this.pointer = { x: event.offsetX, y: event.offsetY };
       this.pointerInsideCanvas = true;
-      this.lastPointerScreenPos = { ...this.pointer };
+      this.lastPointerClientPos = { x: event.clientX, y: event.clientY };
+      this.pointerDownScreenPos = { ...this.pointer };
       const hit = hitTestNode(this.positionedNodes(), this.ui.camera, this.pointer);
+      const edgeHit = hit
+        ? null
+        : hitTestEdges(this.readModel.links, this.nodePositions(), this.ui.camera, this.pointer);
       if (event.button === 1 || event.altKey) {
         this.panning = true;
         this.callbacks.onCameraChange?.(this.ui.camera);
@@ -714,16 +765,11 @@ export class GraphCanvas2D {
 
         if (this.readModel.selectedNodeIds.has(hit) || !event.shiftKey) {
           const selected = this.readModel.selectedNodeIds.has(hit) ? this.readModel.selectedNodeIds : new Set([hit]);
-          this.draggingNodeIds = Array.from(selected);
-          const pointerWorld = screenToWorld(this.pointer, this.ui.camera);
-          for (const id of this.draggingNodeIds) {
-            this.layout.setPin(id, pointerWorld);
-          }
-          this.emitDebug("ui.drag.start", { draggedCount: this.draggingNodeIds.length });
-          this.requestRender();
+          this.pendingDragNodeIds = Array.from(selected);
         }
       } else {
-        this.callbacks.onSelectionClear();
+        this.pendingDragNodeIds = [];
+        if (!edgeHit) this.callbacks.onSelectionClear();
       }
       this.canvas.setPointerCapture(event.pointerId);
     };
@@ -731,7 +777,7 @@ export class GraphCanvas2D {
     const onPointerMove = (event: PointerEvent) => {
       this.pointer = { x: event.offsetX, y: event.offsetY };
       this.pointerInsideCanvas = true;
-      this.lastPointerScreenPos = { ...this.pointer };
+      this.lastPointerClientPos = { x: event.clientX, y: event.clientY };
       const pointerWorld = screenToWorld(this.pointer, this.ui.camera);
       if (this.ui.edgeDraft) this.edgeDraftCursorWorldPos = pointerWorld;
       if (this.panning) {
@@ -743,6 +789,14 @@ export class GraphCanvas2D {
         this.callbacks.onCameraChange?.(this.ui.camera);
         this.requestRender();
         return;
+      }
+      const movement = this.pointerDownScreenPos
+        ? Math.hypot(this.pointer.x - this.pointerDownScreenPos.x, this.pointer.y - this.pointerDownScreenPos.y)
+        : 0;
+      if (this.draggingNodeIds.length === 0 && this.pendingDragNodeIds.length > 0 && movement > 3) {
+        this.draggingNodeIds = [...this.pendingDragNodeIds];
+        for (const id of this.draggingNodeIds) this.layout.setPin(id, pointerWorld);
+        this.emitDebug("ui.drag.start", { draggedCount: this.draggingNodeIds.length });
       }
       if (this.draggingNodeIds.length === 0) {
         this.ui.hoveredNodeId = hitTestNode(this.positionedNodes(), this.ui.camera, this.pointer);
@@ -766,6 +820,8 @@ export class GraphCanvas2D {
     const onPointerUp = (event: PointerEvent) => {
       this.emitDebug("ui.pointerup", { button: event.button });
       const wasDragging = this.draggingNodeIds.length > 0;
+      this.pendingDragNodeIds = [];
+      this.pointerDownScreenPos = null;
       if (wasDragging) {
         for (const id of this.draggingNodeIds) {
           this.layout.clearPin(id);
@@ -818,29 +874,41 @@ export class GraphCanvas2D {
     };
 
     this.canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
+    this.cleanupFns.push(() => this.canvas.removeEventListener("pointerdown", onPointerDown));
     this.canvas.addEventListener("pointermove", onPointerMove);
+    this.cleanupFns.push(() => this.canvas.removeEventListener("pointermove", onPointerMove));
     this.canvas.addEventListener("pointerup", onPointerUp);
-    this.canvas.addEventListener("pointerleave", () => {
+    this.cleanupFns.push(() => this.canvas.removeEventListener("pointerup", onPointerUp));
+    const onPointerLeave = () => {
       this.pointerInsideCanvas = false;
-    });
+    };
+    this.canvas.addEventListener("pointerleave", onPointerLeave);
+    this.cleanupFns.push(() => this.canvas.removeEventListener("pointerleave", onPointerLeave));
     this.canvas.addEventListener("pointercancel", onPointerUp);
-    this.canvas.addEventListener("mousedown", (event) => {
+    this.cleanupFns.push(() => this.canvas.removeEventListener("pointercancel", onPointerUp));
+    const onMouseDown = (event: MouseEvent) => {
       if (event.button === 1) {
         event.preventDefault();
         event.stopPropagation();
       }
-    }, { passive: false });
-    this.canvas.addEventListener("auxclick", (event) => {
+    };
+    this.canvas.addEventListener("mousedown", onMouseDown, { passive: false });
+    this.cleanupFns.push(() => this.canvas.removeEventListener("mousedown", onMouseDown));
+    const onAuxClick = (event: MouseEvent) => {
       if (event.button === 1) event.preventDefault();
-    }, { passive: false });
-    this.canvas.addEventListener("wheel", (event) => {
+    };
+    this.canvas.addEventListener("auxclick", onAuxClick, { passive: false });
+    this.cleanupFns.push(() => this.canvas.removeEventListener("auxclick", onAuxClick));
+    const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       const ratio = Math.exp(-event.deltaY * 0.0015);
       this.ui.camera = zoomAtPoint(this.ui.camera, { x: event.offsetX, y: event.offsetY }, this.ui.camera.zoom * ratio);
       this.callbacks.onCameraChange?.(this.ui.camera);
       this.requestRender();
-    }, { passive: false });
-    window.addEventListener("keydown", (event) => {
+    };
+    this.canvas.addEventListener("wheel", onWheel, { passive: false });
+    this.cleanupFns.push(() => this.canvas.removeEventListener("wheel", onWheel));
+    const onKeyDown = (event: KeyboardEvent) => {
       this.emitDebug("ui.keydown", { key: event.key });
       if (event.key === "Escape") {
         this.edgeDraftCursorWorldPos = null;
@@ -863,13 +931,18 @@ export class GraphCanvas2D {
         if (selectedNodeId) this.callbacks.onRequestRename?.(selectedNodeId);
       }
       if (event.key.toLowerCase() === "f") this.callbacks.onFitRequest?.();
-    });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    this.cleanupFns.push(() => window.removeEventListener("keydown", onKeyDown));
     const host = this.canvas.parentElement;
     if (host && typeof ResizeObserver !== "undefined") {
       this.resizeObserver = new ResizeObserver(() => this.resize());
       this.resizeObserver.observe(host);
+      graphCanvasDevMetrics.activeResizeObservers += 1;
     } else {
-      window.addEventListener("resize", () => this.resize());
+      const onResize = () => this.resize();
+      window.addEventListener("resize", onResize);
+      this.cleanupFns.push(() => window.removeEventListener("resize", onResize));
     }
   }
 
