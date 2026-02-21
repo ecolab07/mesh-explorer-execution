@@ -51,6 +51,51 @@ describe("projects + snapshots + retention", () => {
 
 
 
+
+  it("keeps fork cursors consistent and allows subscribe from head", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-fork-invariant-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    for (let idx = 0; idx < 4; idx += 1) {
+      await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, { method: "POST", headers, body: JSON.stringify({ id: `F-${idx}`, label: `F-${idx}` }) });
+      await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots:create`, { method: "POST", headers, body: JSON.stringify({ label: `f-${idx}` }) });
+    }
+
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/retention`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ maxEvents: 1, minSnapshotsToKeep: 1, snapshotEveryNEvents: 1, snapshotEverySeconds: 1, mode: "delete" })
+    });
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/history:purge`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ dryRun: false })
+    });
+
+    const snapshots = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots`, { headers });
+    const latest = ((await snapshots.json()) as Array<{ snapshotId: string }>)[0];
+    expect(latest?.snapshotId).toBeTruthy();
+
+    const forkResponse = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots/${latest!.snapshotId}:fork`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ newProjectId: "fork-invariant" })
+    });
+    expect(forkResponse.status).toBe(200);
+
+    const projects = await fetch(`${server.url}/v1/projects`, { headers });
+    const forked = ((await projects.json()) as Array<{ projectId: string; headCursor: { graphSeq: number }; minReadableCursor: { graphSeq: number } }>)
+      .find((entry) => entry.projectId === "fork-invariant");
+
+    expect(forked).toBeDefined();
+    expect(forked!.minReadableCursor.graphSeq).toBeGreaterThanOrEqual(0);
+    expect(forked!.headCursor.graphSeq).toBeGreaterThanOrEqual(forked!.minReadableCursor.graphSeq);
+
+    const subscribe = await fetch(`${server.url}/v1/fork-invariant/sync:subscribe?from=${forked!.headCursor.graphSeq}`, { headers });
+    expect(subscribe.status).toBe(200);
+  });
+
   it("creates repeated auto snapshots when head crosses multiple thresholds", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-auto-snapshots-"));
     const server = await startMeshGraphServer({ storageDir, port: 0 });

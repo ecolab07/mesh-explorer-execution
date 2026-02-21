@@ -46,6 +46,17 @@ type SyncPollPayload = {
   cursorAfter?: Cursor;
 };
 
+type CursorTooOldPayload = {
+  kind?: string;
+  minReadableCursor?: Cursor;
+  recommendedSnapshotId?: string;
+};
+
+type SnapshotPayloadResponse = {
+  payload?: { nodes?: GraphNode[]; links?: GraphLink[] };
+  cursor?: Cursor;
+};
+
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
   container.innerHTML = `
@@ -364,15 +375,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     void subscribeLoop(sessionId, activeAbort.signal);
 
 
-    async function bootstrapFromSnapshot(principalValue: string): Promise<Cursor> {
-      const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:snapshot`, { headers: headers(principalValue) }, {
-        principal: principalValue,
-        transport: "fetch",
-        debugAuth,
-        onNetworkResult: (status) => markNetworkConnectivity(status, "snapshot-bootstrap")
-      });
-      if (!response.ok) return { metaSeq: 0, graphSeq: 0 };
-      const snapshot = (await response.json()) as { payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor?: Cursor };
+    function applySnapshot(snapshot: SnapshotPayloadResponse): Cursor {
       const nodes = snapshot.payload?.nodes ?? [];
       const links = snapshot.payload?.links ?? [];
       store.resetProjection();
@@ -381,6 +384,53 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       const cursor = snapshot.cursor ?? { metaSeq: 0, graphSeq: 0 };
       store.setCursor(cursor);
       return cursor;
+    }
+
+    async function bootstrapFromSnapshot(principalValue: string): Promise<Cursor> {
+      const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:snapshot`, { headers: headers(principalValue) }, {
+        principal: principalValue,
+        transport: "fetch",
+        debugAuth,
+        onNetworkResult: (status) => markNetworkConnectivity(status, "snapshot-bootstrap")
+      });
+      if (!response.ok) return { metaSeq: 0, graphSeq: 0 };
+      return applySnapshot((await response.json()) as SnapshotPayloadResponse);
+    }
+
+    async function recoverFromCursorTooOld(payload: CursorTooOldPayload, signal: AbortSignal): Promise<Cursor | null> {
+      const minReadable = payload.minReadableCursor ?? { metaSeq: 0, graphSeq: 0 };
+      const snapshotPath = payload.recommendedSnapshotId
+        ? `/v1/${encodeURIComponent(el.graphSpaceId.value)}/snapshots/${encodeURIComponent(payload.recommendedSnapshotId)}`
+        : `/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:snapshot`;
+      emitUiDebugLog("sync.subscribe.cursor_too_old", {
+        from: store.getState().cursor,
+        minReadable,
+        recommendedSnapshotId: payload.recommendedSnapshotId ?? null,
+        snapshotPath
+      });
+      console.info("[mesh-ui] sync subscribe cursor_too_old; re-bootstraping", {
+        graphSpaceId: el.graphSpaceId.value,
+        from: store.getState().cursor,
+        minReadable,
+        recommendedSnapshotId: payload.recommendedSnapshotId ?? null
+      });
+      const response = await meshFetch(`${el.baseUrl.value}${snapshotPath}`, { headers: headers(normalizedPrincipal), signal }, {
+        principal: normalizedPrincipal,
+        transport: "fetch",
+        debugAuth,
+        onNetworkResult: (status) => markNetworkConnectivity(status, "snapshot-recover")
+      });
+      if (!response.ok) {
+        reportDevError(el, `snapshot recover failed: ${response.status}`);
+        return null;
+      }
+      const recoveredCursor = applySnapshot((await response.json()) as SnapshotPayloadResponse);
+      const recoveryCursor = compareCursor(recoveredCursor, minReadable) >= 0 ? recoveredCursor : minReadable;
+      store.setCursor(recoveryCursor);
+      persistCursorSafely(storageKey, recoveryCursor, (key, value) => localStorage.setItem(key, value));
+      markNetworkConnectivity("online", "sse-cursor-too-old-recovered");
+      setConnectionStatus("connected");
+      return recoveryCursor;
     }
 
     async function subscribeLoop(activeSessionId: number, signal: AbortSignal): Promise<void> {
@@ -397,6 +447,20 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
               debugAuth,
               onNetworkResult: (status) => markNetworkConnectivity(status, "sse-subscribe")
             });
+            if (response.status === 410) {
+              const payload = (await response.json()) as CursorTooOldPayload;
+              if (payload.kind === "cursor_too_old") {
+                setConnectionStatus("reconnecting");
+                const recovered = await recoverFromCursorTooOld(payload, signal);
+                if (recovered) continue;
+              }
+            }
+            if (!response.ok) {
+              markNetworkConnectivity("degraded", "sse-non-ok");
+              setConnectionStatus("reconnecting");
+              await wait(retryDelayMs);
+              continue;
+            }
             if (!response.body) {
               markNetworkConnectivity("degraded", "sse-empty-body");
               setConnectionStatus("reconnecting");

@@ -425,8 +425,8 @@ async function handleRequest(
     }
     await deps.refreshProjectHead(newProjectId);
     const forked = deps.catalog.projects[newProjectId]!;
-    forked.minReadableCursor = { ...snapshot.cursor };
     forked.headCursor = await newContext.store.getCursorHead(newProjectId);
+    forked.minReadableCursor = boundedMinReadableCursor(snapshot.cursor, forked.headCursor);
     await saveCatalog(deps.catalogPath, deps.catalog);
     await deps.createSnapshot(newProjectId, `fork:${snapshot.snapshotId}`);
     writeJson(res, 200, { newProjectId });
@@ -586,6 +586,13 @@ function parseCursor(raw: string | null): Cursor {
 
 function isCursorTooOld(requested: Cursor, minReadable: Cursor): boolean {
   return requested.metaSeq < minReadable.metaSeq || requested.graphSeq < minReadable.graphSeq;
+}
+
+function boundedMinReadableCursor(minReadable: Cursor, head: Cursor): Cursor {
+  return {
+    metaSeq: Math.max(0, Math.min(minReadable.metaSeq, head.metaSeq)),
+    graphSeq: Math.max(0, Math.min(minReadable.graphSeq, head.graphSeq))
+  };
 }
 
 async function streamSubscribe(
