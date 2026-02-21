@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ForceLayout2D, GraphCanvas2D, computeEdgeHitSlopWorld, computeGraphBounds, computeMinZoomEffective, computeParallelLinkCurvatures, computeSeedRadius, distancePointToSegment, fitCameraToBounds, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
+import { ForceLayout2D, GraphCanvas2D, computeEdgeHitSlopWorld, computeGraphBounds, computeMinZoomEffective, computeParallelLinkCurvatures, computeSeedRadius, distancePointToSegment, fitCameraToBounds, getPreferredSpawnWorldPos, hitTestEdge, hitTestEdges, hitTestNode, nextEdgeDraft, nextSelectedEdgeIds, screenToWorld, seededNodePosition, worldToScreen, zoomAtPoint, type CameraState } from "../src/graphCanvas2d.js";
 import { LAYOUT_LIMITS, deriveLayoutParams } from "../src/ui/layoutSettings.js";
 
 describe("graphCanvas2d transforms", () => {
@@ -115,6 +115,34 @@ describe("edge selection state machine", () => {
 
     const selectedB = nextSelectedEdgeIds(selectedAB, { nodeHit: null, edgeHit: "edge-a", shiftKey: true, toggleKey: false });
     expect(selectedB).toEqual(new Set(["edge-b"]));
+  });
+
+  it("supports ctrl/cmd toggle for multi-edge selection", () => {
+    const selectedA = nextSelectedEdgeIds(new Set(), { nodeHit: null, edgeHit: "edge-a", shiftKey: false, toggleKey: false });
+    const selectedAB = nextSelectedEdgeIds(selectedA, { nodeHit: null, edgeHit: "edge-b", shiftKey: false, toggleKey: true });
+    expect(selectedAB).toEqual(new Set(["edge-a", "edge-b"]));
+  });
+});
+
+describe("spawn position helper", () => {
+  it("uses pointer world position when pointer is inside canvas bounds", () => {
+    const camera: CameraState = { x: 50, y: 30, zoom: 2, minZoom: 0.2, maxZoom: 4 };
+    const pos = getPreferredSpawnWorldPos({
+      lastPointerClientPos: { x: 160, y: 120 },
+      canvasRect: { left: 100, top: 100, width: 400, height: 300 },
+      camera
+    });
+    expect(pos).toEqual({ x: 80, y: 40 });
+  });
+
+  it("falls back to viewport center when pointer is outside canvas bounds", () => {
+    const camera: CameraState = { x: 10, y: -20, zoom: 2, minZoom: 0.2, maxZoom: 4 };
+    const pos = getPreferredSpawnWorldPos({
+      lastPointerClientPos: { x: 20, y: 20 },
+      canvasRect: { left: 100, top: 100, width: 400, height: 300 },
+      camera
+    });
+    expect(pos).toEqual({ x: 110, y: 55 });
   });
 });
 
@@ -338,6 +366,7 @@ describe("GraphCanvas2D topology guards and reheat", () => {
       getContext: () => ctx,
       getBoundingClientRect: () => ({ width: 640, height: 480 }),
       addEventListener: (name: string, listener: EventListener) => events.set(name, listener),
+      removeEventListener: () => undefined,
       setPointerCapture: () => undefined,
       hasPointerCapture: () => false,
       releasePointerCapture: () => undefined
@@ -451,6 +480,38 @@ describe("GraphCanvas2D topology guards and reheat", () => {
     expect(reheatSpy).toHaveBeenCalledWith(0.9);
     expect(restartSpy).toHaveBeenCalledTimes(1);
     renderer.destroy();
+  });
+
+  it("keeps active canvas metrics stable across repeated init/destroy cycles", () => {
+    const win = {
+      devicePixelRatio: 1,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined
+    } as unknown as Window;
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("requestAnimationFrame", raf);
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+
+    const ui = {
+      camera: { x: 0, y: 0, zoom: 1, minZoom: 0.2, maxZoom: 4 },
+      hoveredNodeId: null,
+      edgeDraft: null,
+      dragSelectionRect: null
+    };
+    for (let i = 0; i < 3; i += 1) {
+      const { canvas } = createCanvasHarness();
+      const renderer = new GraphCanvas2D(canvas, { nodes: [{ id: `n${i}`, label: "N" }], links: [], selectedNodeIds: new Set(), selectedLinkIds: new Set() }, ui, {
+        onSelectionReplace: () => undefined,
+        onSelectionToggle: () => undefined,
+        onSelectionClear: () => undefined,
+        onEdgeDraftChange: () => undefined,
+        onCreateEdge: () => undefined
+      });
+      renderer.destroy();
+    }
+    const stats = (window as Window & { __meshCanvasStats?: () => { activeCanvasInstances: number; activeResizeObservers: number } }).__meshCanvasStats?.();
+    expect(stats?.activeCanvasInstances ?? 0).toBe(0);
+    expect(stats?.activeResizeObservers ?? 0).toBe(0);
   });
 });
 

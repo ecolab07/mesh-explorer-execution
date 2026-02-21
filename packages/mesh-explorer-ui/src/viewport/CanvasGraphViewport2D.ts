@@ -118,6 +118,10 @@ export class CanvasGraphViewport2D implements GraphViewportHandle {
     this.renderer.nudgeZoomOut(factor);
   }
 
+  clearTransientUiState(): void {
+    this.renderer.clearTransientUiState();
+  }
+
 }
 
 function toReadModel(model: GraphViewportModel): GraphCanvasReadModel {

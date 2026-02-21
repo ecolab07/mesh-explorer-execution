@@ -105,6 +105,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let connectivityState: ConnectivityStatus = "degraded";
   let badgeStats = { nodes: 0, links: 0 };
   let badgeRaf = 0;
+  let lastTopologySignature = "";
+  let lastCurvatureByLinkId = new Map<string, number>();
+  let activeSyncSubscriptions = 0;
 
   const uiState: CanvasUiState = {
     camera: cameraInfo,
@@ -137,7 +140,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       nodes: Array.from(snapshot.nodesById.values()),
       links: Array.from(snapshot.linksById.values()).filter((link: GraphLink) => snapshot.nodesById.has(link.source) && snapshot.nodesById.has(link.target))
     };
-    const curvatureByLinkId = computeParallelLinkCurvatures(data.links);
+    const topologySignature = `${Array.from(snapshot.nodesById.keys()).sort().join("|")}::${data.links.map((link) => `${link.id}:${link.source}:${link.target}:${link.type ?? ""}`).sort().join("|")}`;
+    if (topologySignature !== lastTopologySignature) {
+      lastCurvatureByLinkId = computeParallelLinkCurvatures(data.links);
+      lastTopologySignature = topologySignature;
+    }
+    const curvatureByLinkId = lastCurvatureByLinkId;
     const viewLinks = data.links.map((link) => ({ ...link, curvature: curvatureByLinkId.get(link.id) ?? 0 }));
     applyPendingSpawnSeeds(snapshot.nodesById);
     canvasRenderer?.update({ nodes: data.nodes, links: viewLinks, selectedNodeIds: snapshot.selectedNodeIds, selectedLinkIds: snapshot.selectedLinkIds }, uiState);
@@ -208,6 +216,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   async function connectAndSync(sessionId: number): Promise<void> {
     activeAbort = rotateAbortController(activeAbort);
+    store.resetProjection();
+    canvasRenderer?.clearTransientUiState();
+    resetAutoFitState();
     setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
@@ -232,61 +243,69 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     void subscribeLoop(sessionId, activeAbort.signal);
 
     async function subscribeLoop(activeSessionId: number, signal: AbortSignal): Promise<void> {
+      activeSyncSubscriptions += 1;
       let retryDelayMs = SUBSCRIBE_RETRY_DELAY_MS;
       let lastSubscribeErrorLogAt = 0;
-      while (activeSessionId === syncSession) {
-        try {
-          const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
-          const response = await meshFetch(url, { headers: headers(normalizedPrincipal), signal }, {
-            principal: normalizedPrincipal,
-            transport: "fetch-sse",
-            debugAuth,
-            onNetworkResult: (status) => markNetworkConnectivity(status, "sse-subscribe")
-          });
-          if (!response.body) {
-            markNetworkConnectivity("degraded", "sse-empty-body");
-            setConnectionStatus("reconnecting");
-            await wait(retryDelayMs);
-            continue;
-          }
-          markNetworkConnectivity("online", "sse-connected");
-          setConnectionStatus("connected");
-          retryDelayMs = SUBSCRIBE_RETRY_DELAY_MS;
-          for await (const data of parseSse(response.body)) {
-            if (activeSessionId !== syncSession) return;
-            if (data.kind === "heartbeat") continue;
-            if (data.kind === "txBundles") {
-              const txBundles = data.txBundlesVisible ?? [];
-              const cursorFromBundles = readCursorFromTxBundles(txBundles);
-              if (cursorFromBundles !== null) {
-                const next = { ...store.getState().cursor, graphSeq: cursorFromBundles };
-                const advanced = applyCursorIfAdvanced(storageKey, next, "sse");
-                if (advanced) {
-                  store.applyGraphEvents(extractGraphEventsFromTxBundles(txBundles));
+      try {
+        while (activeSessionId === syncSession) {
+          try {
+            const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
+            const response = await meshFetch(url, { headers: headers(normalizedPrincipal), signal }, {
+              principal: normalizedPrincipal,
+              transport: "fetch-sse",
+              debugAuth,
+              onNetworkResult: (status) => markNetworkConnectivity(status, "sse-subscribe")
+            });
+            if (!response.body) {
+              markNetworkConnectivity("degraded", "sse-empty-body");
+              setConnectionStatus("reconnecting");
+              await wait(retryDelayMs);
+              continue;
+            }
+            markNetworkConnectivity("online", "sse-connected");
+            setConnectionStatus("connected");
+            retryDelayMs = SUBSCRIBE_RETRY_DELAY_MS;
+            for await (const data of parseSse(response.body)) {
+              if (activeSessionId !== syncSession) return;
+              if (data.kind === "heartbeat") continue;
+              if (data.kind === "txBundles") {
+                const txBundles = data.txBundlesVisible ?? [];
+                const cursorFromBundles = readCursorFromTxBundles(txBundles);
+                if (cursorFromBundles !== null) {
+                  const next = { ...store.getState().cursor, graphSeq: cursorFromBundles };
+                  const advanced = applyCursorIfAdvanced(storageKey, next, "sse");
+                  if (advanced) {
+                    store.applyGraphEvents(extractGraphEventsFromTxBundles(txBundles));
+                    setLastSyncNow();
+                  }
+                  continue;
+                }
+                const events = extractGraphEventsFromTxBundles(txBundles);
+                if (events.length > 0) {
+                  store.applyGraphEvents(events);
                   setLastSyncNow();
                 }
-                continue;
               }
-              store.applyGraphEvents(extractGraphEventsFromTxBundles(txBundles));
-              setLastSyncNow();
             }
-          }
-          if (activeSessionId === syncSession) {
-            markNetworkConnectivity("degraded", "sse-ended");
+            if (activeSessionId === syncSession) {
+              markNetworkConnectivity("degraded", "sse-ended");
+              setConnectionStatus("reconnecting");
+            }
+          } catch (error) {
+            if (signal.aborted) return;
+            markNetworkConnectivity("offline", "sse-error");
             setConnectionStatus("reconnecting");
+            const now = Date.now();
+            const shouldLog = verboseSyncErrors || now - lastSubscribeErrorLogAt >= SUBSCRIBE_ERROR_LOG_THROTTLE_MS;
+            if (shouldLog) {
+              reportDevError(el, `sync subscribe failed: ${String(error)}`, error);
+              lastSubscribeErrorLogAt = now;
+            }
+            await wait(retryDelayMs);
           }
-        } catch (error) {
-          if (signal.aborted) return;
-          markNetworkConnectivity("offline", "sse-error");
-          setConnectionStatus("reconnecting");
-          const now = Date.now();
-          const shouldLog = verboseSyncErrors || now - lastSubscribeErrorLogAt >= SUBSCRIBE_ERROR_LOG_THROTTLE_MS;
-          if (shouldLog) {
-            reportDevError(el, `sync subscribe failed: ${String(error)}`, error);
-            lastSubscribeErrorLogAt = now;
-          }
-          await wait(retryDelayMs);
         }
+      } finally {
+        activeSyncSubscriptions = Math.max(0, activeSyncSubscriptions - 1);
       }
     }
 
@@ -309,12 +328,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           markNetworkConnectivity("online", "poll-success");
           const graphEvents = (payload.graph ?? []).map((entry) => asGraphEvent(entry.payload)).filter((event): event is GraphEvent => event !== null);
           const nextCursor = payload.cursorAfter ?? cursor;
-          graphEventsApplied += graphEvents.length;
-          store.applyGraphEvents(graphEvents);
-          if (graphEvents.length > 0) setLastSyncNow();
-
           const nextMonotonic = nextMonotonicCursor(cursor, nextCursor);
           const cursorUnchanged = cursorEq(nextMonotonic, cursor);
+          if (!cursorUnchanged && graphEvents.length > 0) {
+            graphEventsApplied += graphEvents.length;
+            store.applyGraphEvents(graphEvents);
+            setLastSyncNow();
+          }
           cursor = nextMonotonic;
           if ((payload.meta?.length ?? 0) === 0 && (payload.graph?.length ?? 0) === 0 || cursorUnchanged) break;
         }
@@ -340,7 +360,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   }
 
   async function promptAndCreateNode(seedPosition?: { x: number; y: number }): Promise<void> {
-    const label = prompt("Node label", "new node") ?? "";
+    const label = prompt("Node label", nextAutoNodeLabel()) ?? "";
     if (!label) return;
     dbg("add-node:submit", { label });
     await addNode(label, { seedPosition });
@@ -407,8 +427,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const now = performance.now();
     const minIntervalMs = 1000 / Math.max(1, layoutUiState.settings.cinematicFitRate);
     if (now - importLastProgressiveFitAt < minIntervalMs) return;
-    importLastProgressiveFitAt = now;
-    fitCameraToCurrentGraph({ markAutoFitApplied: false });
+    const before = uiState.camera.zoom;
+    const applied = fitCameraToCurrentGraph({ markAutoFitApplied: false, maxZoom: before });
+    if (applied) importLastProgressiveFitAt = now;
   }
 
   async function createLinkFromDraft(source: string, target: string): Promise<void> {
@@ -725,7 +746,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     });
   }
 
-  function fitCameraToCurrentGraph(options: { markAutoFitApplied?: boolean } = {}): boolean {
+  function fitCameraToCurrentGraph(options: { markAutoFitApplied?: boolean; maxZoom?: number } = {}): boolean {
     const positioned = Array.from((canvasRenderer?.getNodePositions() ?? new Map()).values()).map((position) => ({ position }));
     const bounds = computeGraphBounds(positioned);
     if (!bounds) return false;
@@ -734,7 +755,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     if (!Number.isFinite(boundsWidth) || !Number.isFinite(boundsHeight) || boundsWidth < 1 || boundsHeight < 1) return false;
     const rect = el.graphCanvas.getBoundingClientRect();
     if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width < 2 || rect.height < 2) return false;
-    uiState.camera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12, store.getState().nodesById.size);
+    const nextCamera = fitCameraToBounds(bounds, { width: rect.width, height: rect.height }, uiState.camera, 0.12, store.getState().nodesById.size);
+    uiState.camera = options.maxZoom !== undefined && nextCamera.zoom > options.maxZoom ? { ...nextCamera, zoom: options.maxZoom } : nextCamera;
     if (options.markAutoFitApplied) autoFitApplied = true;
     cameraInfo = uiState.camera;
     queueBadgeRender();
@@ -767,6 +789,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     el.transport.textContent = `transport: ${snapshot.connectionStatus}`;
     el.lastCursor.textContent = `cursor: ${JSON.stringify(snapshot.cursor)}`;
     el.lastSync.textContent = `last sync: ${snapshot.lastSync}`;
+    (window as Window & { __meshRuntimeStats?: unknown }).__meshRuntimeStats = {
+      activeSyncSubscriptions,
+      activeCinematicFitRafs: autoFitRaf !== 0 ? 1 : 0,
+      isImporting
+    };
     badgeStats = { nodes, links };
     queueBadgeRender();
     if (!el.principal.value.trim()) {
@@ -1131,10 +1158,14 @@ function installTestHook(store: GraphStore): void {
     },
     dump() {
       const state = store.getState();
+      const canvasStats = (window as Window & { __meshCanvasStats?: () => unknown }).__meshCanvasStats?.();
+      const runtimeStats = (window as Window & { __meshRuntimeStats?: unknown }).__meshRuntimeStats;
       return {
         cursor: state.cursor,
         nodesCount: state.nodesById.size,
-        linksCount: state.linksById.size
+        linksCount: state.linksById.size,
+        canvasStats,
+        runtimeStats
       };
     },
     logs: [],

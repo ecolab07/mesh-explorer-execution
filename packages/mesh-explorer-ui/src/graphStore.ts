@@ -32,6 +32,7 @@ export type GraphStore = {
   replaceSelection: (ids: string[]) => void;
   replaceLinkSelection: (ids: string[]) => void;
   clearSelection: () => void;
+  resetProjection: () => void;
 };
 
 export function createGraphStore(): GraphStore {
@@ -143,6 +144,16 @@ export function createGraphStore(): GraphStore {
     },
     clearSelection() {
       emit({ ...state, selectedNodeIds: new Set(), selectedLinkIds: new Set() });
+    },
+    resetProjection() {
+      emit({
+        ...state,
+        nodesById: new Map(),
+        linksById: new Map(),
+        selectedNodeIds: new Set(),
+        selectedLinkIds: new Set(),
+        cursor: { metaSeq: 0, graphSeq: 0 }
+      });
     }
   };
 }
