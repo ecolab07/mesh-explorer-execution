@@ -56,6 +56,55 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     expect(links[0]).toMatchObject({ source: nodeIds[0], target: nodeIds[1], type: "depends" });
   });
 
+
+
+  it("recovers after fork when subscribe responds cursor_too_old", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-ui-fork-recovery-"));
+    cleanups.push(async () => rm(storageDir, { recursive: true, force: true }));
+
+    const server: MeshGraphServerHandle = await startMeshGraphServer({ storageDir, port: 0 });
+    cleanups.push(async () => server.close());
+
+    for (let idx = 0; idx < 4; idx += 1) {
+      await createNode(server.url, "alice", `fork-src-${idx}`);
+      await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots:create`, { method: "POST", headers: headers("alice"), body: JSON.stringify({ label: `s-${idx}` }) });
+    }
+
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/retention`, {
+      method: "PATCH",
+      headers: headers("alice"),
+      body: JSON.stringify({ maxEvents: 1, minSnapshotsToKeep: 1, snapshotEveryNEvents: 1, snapshotEverySeconds: 1, mode: "delete" })
+    });
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/history:purge`, { method: "POST", headers: headers("alice"), body: JSON.stringify({ dryRun: false }) });
+
+    const snapshots = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots`, { headers: headers("alice") });
+    const latest = ((await snapshots.json()) as Array<{ snapshotId: string }>)[0];
+    expect(latest?.snapshotId).toBeTruthy();
+
+    const forkResponse = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots/${latest!.snapshotId}:fork`, {
+      method: "POST",
+      headers: headers("alice"),
+      body: JSON.stringify({ newProjectId: "fork-recover-p1" })
+    });
+    const forkedProject = (await forkResponse.json()) as { newProjectId: string };
+
+    const staleSubscribe = await fetch(`${server.url}/v1/${forkedProject.newProjectId}/sync:subscribe?from=0`, { headers: headers("alice") });
+    expect(staleSubscribe.status).toBe(410);
+    const tooOld = (await staleSubscribe.json()) as { kind: string; minReadableCursor: Cursor; recommendedSnapshotId?: string };
+    expect(tooOld.kind).toBe("cursor_too_old");
+
+    const snapshotUrl = tooOld.recommendedSnapshotId
+      ? `${server.url}/v1/${forkedProject.newProjectId}/snapshots/${tooOld.recommendedSnapshotId}`
+      : `${server.url}/v1/${forkedProject.newProjectId}/graph:snapshot`;
+    const snapshot = await fetch(snapshotUrl, { headers: headers("alice") });
+    const snapshotBody = (await snapshot.json()) as { payload: { nodes: Array<{ id: string }>; links: Array<{ id: string }> }; cursor: Cursor };
+
+    const resumeFrom = Math.max(snapshotBody.cursor.graphSeq, tooOld.minReadableCursor.graphSeq);
+    const recoveredSubscribe = await fetch(`${server.url}/v1/${forkedProject.newProjectId}/sync:subscribe?from=${resumeFrom}`, { headers: headers("alice") });
+    expect(recoveredSubscribe.ok).toBe(true);
+    expect(snapshotBody.payload.nodes.length).toBeGreaterThan(0);
+  });
+
   it("reload bootstrap rebuilds nodes/links before subscribe", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-ui-"));
     cleanups.push(async () => rm(storageDir, { recursive: true, force: true }));
