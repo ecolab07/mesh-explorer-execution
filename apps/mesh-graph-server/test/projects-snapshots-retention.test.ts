@@ -12,6 +12,39 @@ describe("projects + snapshots + retention", () => {
     await Promise.all(startedServers.splice(0).map((server) => server.close()));
   });
 
+
+
+  it("creates projects with UUID ids, persists names, and supports rename", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-project-create-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    const create = await fetch(`${server.url}/v1/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "J" })
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { id: string; name: string; graphSpaceId: string };
+    expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(created.name).toBe("J");
+    expect(created.graphSpaceId).toBe(created.id);
+
+    const rename = await fetch(`${server.url}/v1/projects/${created.id}/name`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ name: "Renamed project" })
+    });
+    expect(rename.status).toBe(200);
+
+    const projects = await fetch(`${server.url}/v1/projects`, { headers });
+    const list = (await projects.json()) as Array<{ id: string; name: string; graphSpaceId: string }>;
+    const createdEntry = list.find((entry) => entry.id === created.id);
+    expect(createdEntry?.name).toBe("Renamed project");
+    expect(createdEntry?.graphSpaceId).toBe(createdEntry?.id);
+  });
+
+
   it("creates/lists/gets snapshots and supports fork", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-projects-"));
     const server = await startMeshGraphServer({ storageDir, port: 0 });
@@ -38,12 +71,12 @@ describe("projects + snapshots + retention", () => {
     const fork = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots/${createdBody.snapshotId}:fork`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ newProjectId: "fork-p1" })
+      body: JSON.stringify({ name: "fork-p1" })
     });
     const forkBody = (await fork.json()) as { newProjectId: string };
-    expect(forkBody.newProjectId).toBe("fork-p1");
+    expect(forkBody.newProjectId).toMatch(/^[0-9a-f-]{36}$/i);
 
-    const forkSnapshot = await fetch(`${server.url}/v1/fork-p1/graph:snapshot`, { headers });
+    const forkSnapshot = await fetch(`${server.url}/v1/${forkBody.newProjectId}/graph:snapshot`, { headers });
     const forkSnapshotBody = (await forkSnapshot.json()) as { payload: { nodes: unknown[]; links: unknown[] } };
     expect(forkSnapshotBody.payload.nodes.length).toBe(2);
     expect(forkSnapshotBody.payload.links.length).toBe(1);
@@ -80,19 +113,20 @@ describe("projects + snapshots + retention", () => {
     const forkResponse = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots/${latest!.snapshotId}:fork`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ newProjectId: "fork-invariant" })
+      body: JSON.stringify({ name: "fork-invariant" })
     });
     expect(forkResponse.status).toBe(200);
+    const forkPayload = (await forkResponse.json()) as { newProjectId: string };
 
     const projects = await fetch(`${server.url}/v1/projects`, { headers });
     const forked = ((await projects.json()) as Array<{ projectId: string; headCursor: { graphSeq: number }; minReadableCursor: { graphSeq: number } }>)
-      .find((entry) => entry.projectId === "fork-invariant");
+      .find((entry) => entry.projectId === forkPayload.newProjectId);
 
     expect(forked).toBeDefined();
     expect(forked!.minReadableCursor.graphSeq).toBeGreaterThanOrEqual(0);
     expect(forked!.headCursor.graphSeq).toBeGreaterThanOrEqual(forked!.minReadableCursor.graphSeq);
 
-    const subscribe = await fetch(`${server.url}/v1/fork-invariant/sync:subscribe?from=${forked!.headCursor.graphSeq}`, { headers });
+    const subscribe = await fetch(`${server.url}/v1/${forkPayload.newProjectId}/sync:subscribe?from=${forked!.headCursor.graphSeq}`, { headers });
     expect(subscribe.status).toBe(200);
   });
 

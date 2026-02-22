@@ -8,7 +8,8 @@ import { KernelMinimalImpl } from "@mesh/kernel-minimal";
 import { LocalSyncGateway } from "@mesh/sync-local/internal";
 import type { Command, CommandOutcome, Cursor, PrincipalContext } from "@mesh/shared";
 
-const GRAPH_SPACE_ID = "mesh-explorer-graph-v1";
+const GRAPH_SPACE_ID = "00000000-0000-4000-8000-000000000001";
+const UUID_V4ISH_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PRINCIPAL_HEADER = "x-mesh-principal";
 const IDEMPOTENCY_HEADER = "x-idempotency-key";
 const DEBUG_AUTH_ENABLED = process.env.MESH_DEBUG_AUTH === "1";
@@ -55,8 +56,9 @@ interface RetentionPolicy {
 }
 
 type ProjectRecord = {
-  projectId: string;
-  name?: string;
+  id: string;
+  // v1 invariant: projectId and graphSpaceId are the same UUID.
+  name: string;
   createdAt: number;
   updatedAt: number;
   headCursor: Cursor;
@@ -127,9 +129,26 @@ export interface MeshGraphServerHandle {
   close: () => Promise<void>;
 }
 
+function graphSpaceIdFromProjectId(projectId: string): string {
+  // v1 constraint: 1 project == 1 graph space.
+  return projectId;
+}
+
+function assertV1ProjectGraphInvariant(projectId: string, graphSpaceId: string): void {
+  if (projectId !== graphSpaceId) {
+    throw new Error(`v1 invariant violated: projectId (${projectId}) must equal graphSpaceId (${graphSpaceId})`);
+  }
+}
+
+function isUuid(value: string): boolean {
+  return UUID_V4ISH_REGEX.test(value);
+}
+
 export async function startMeshGraphServer(options: MeshGraphServerOptions): Promise<MeshGraphServerHandle> {
   await fs.mkdir(options.storageDir, { recursive: true });
-  const graphSpaceId = options.graphSpaceId ?? GRAPH_SPACE_ID;
+  const preferredProjectId = options.graphSpaceId ?? GRAPH_SPACE_ID;
+  const graphSpaceId = isUuid(preferredProjectId) ? preferredProjectId : randomUUID();
+  if (!isUuid(preferredProjectId)) console.info(`[mesh-graph-server] migrated legacy configured graphSpaceId (${preferredProjectId}) to UUID project id (${graphSpaceId}).`);
   process.env.MESH_TX_VISIBILITY_POLICY = "acl";
 
   const projectStores = new Map<string, { store: FileBackedLocalEventStore; gateway: LocalSyncGatewayLike; kernel: KernelMinimalImpl }>();
@@ -142,20 +161,30 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
     const storePath = join(options.storageDir, `graph-eventstore-${projectId}.json`);
     const store = new FileBackedLocalEventStore(storePath);
     const kernel = new KernelMinimalImpl(store);
-    const gateway = new LocalSyncGateway(store, { graphSpaceId: projectId, executeCommand: (command) => kernel.execute(command) });
+    const graphSpaceId = graphSpaceIdFromProjectId(projectId);
+    assertV1ProjectGraphInvariant(projectId, graphSpaceId);
+    const gateway = new LocalSyncGateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
     const loaded = { store, gateway, kernel };
     projectStores.set(projectId, loaded);
     return loaded;
   }
 
   async function ensureProject(projectId: string, name?: string): Promise<ProjectRecord> {
+    if (!isUuid(projectId)) throw new Error(`projectId must be a UUID: ${projectId}`);
     const existing = catalog.projects[projectId];
-    if (existing) return existing;
+    if (existing) {
+      if (typeof name === "string" && name.trim() && name !== existing.name) {
+        existing.name = name.trim();
+        existing.updatedAt = Date.now();
+        await saveCatalog(catalogPath, catalog);
+      }
+      return existing;
+    }
     const now = Date.now();
     const policy = process.env.NODE_ENV === "production" ? PROD_RETENTION_PRESET : DEV_RETENTION_PRESET;
     const record: ProjectRecord = {
-      projectId,
-      name,
+      id: projectId,
+      name: typeof name === "string" && name.trim() ? name.trim() : "Untitled project",
       createdAt: now,
       updatedAt: now,
       headCursor: { metaSeq: 0, graphSeq: 0 },
@@ -190,7 +219,7 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
     const record: SnapshotRecord = {
       snapshotId: randomUUID(),
       projectId,
-      graphSpaceId: projectId,
+      graphSpaceId: graphSpaceIdFromProjectId(projectId),
       cursor,
       createdAt: Date.now(),
       label,
@@ -205,7 +234,7 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
       snapshotId: record.snapshotId,
       head: record.cursor.graphSeq,
       projectId,
-      graphSpaceId: projectId,
+      graphSpaceId: graphSpaceIdFromProjectId(projectId),
       reason: label === "auto" ? "auto" : "manual"
     });
     await saveCatalog(catalogPath, catalog);
@@ -226,7 +255,7 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
     const shouldSnapshot = head > 0 && head - lastSnapshotHead >= everyN;
     console.info("AUTO_SNAPSHOT_CHECK", {
       projectId,
-      graphSpaceId: projectId,
+      graphSpaceId: graphSpaceIdFromProjectId(projectId),
       head,
       lastSnapshotHead,
       everyN,
@@ -262,7 +291,7 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
     const context = await getProjectContext(projectId);
     const beforeHead = await context.store.getCursorHead(projectId);
     if (!dryRun) {
-      await context.store.compactUpToCursor({ graphSpaceId: projectId, cursorExclusive: cutSnapshot.cursor.graphSeq });
+      await context.store.compactUpToCursor({ graphSpaceId: graphSpaceIdFromProjectId(projectId), cursorExclusive: cutSnapshot.cursor.graphSeq });
       catalog.snapshots[projectId] = snapshots.filter((snapshot) => !toDelete.some((stale) => stale.snapshotId === snapshot.snapshotId));
       project.minReadableCursor = cutSnapshot.cursor;
       project.headCursor = await context.store.getCursorHead(projectId);
@@ -333,15 +362,34 @@ async function handleRequest(
   if (req.method === "GET" && requestUrl.pathname === "/") return void writePlainText(res, 200, buildRootHelpMessage(deps.graphSpaceId));
 
   if (req.method === "GET" && requestUrl.pathname === "/v1/projects") {
-    const entries = Object.values(deps.catalog.projects).map((project) => ({ ...project, snapshotsCount: deps.catalog.snapshots[project.projectId]?.length ?? 0 }));
+    const entries = Object.values(deps.catalog.projects).map((project) => ({ ...project, projectId: project.id, graphSpaceId: graphSpaceIdFromProjectId(project.id), snapshotsCount: deps.catalog.snapshots[project.id]?.length ?? 0 }));
     writeJson(res, 200, entries);
     return;
   }
 
   if (req.method === "POST" && requestUrl.pathname === "/v1/projects") {
-    const body = (await readJsonBody(req)) as { projectId?: string; name?: string };
-    const project = await deps.ensureProject(body.projectId && body.projectId.trim() ? body.projectId : randomUUID(), body.name);
-    writeJson(res, 201, { projectId: project.projectId });
+    const body = (await readJsonBody(req)) as { name?: string };
+    const projectId = randomUUID();
+    const project = await deps.ensureProject(projectId, body.name);
+    writeJson(res, 201, { id: project.id, projectId: project.id, name: project.name, graphSpaceId: graphSpaceIdFromProjectId(project.id) });
+    return;
+  }
+
+
+
+  const renameMatch = /^\/v1\/projects\/([^/]+)\/name$/.exec(requestUrl.pathname);
+  if (req.method === "PATCH" && renameMatch) {
+    const projectId = decodeURIComponent(renameMatch[1]!);
+    const project = deps.catalog.projects[projectId];
+    if (!project) return void writeJson(res, 404, { status: "error", reasonCode: "PROJECT.NOT_FOUND" });
+    const body = (await readJsonBody(req)) as { name?: unknown };
+    if (typeof body.name !== "string" || !body.name.trim()) {
+      return void writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "PROJECT.NAME_REQUIRED" });
+    }
+    project.name = body.name.trim();
+    project.updatedAt = Date.now();
+    await saveCatalog(deps.catalogPath, deps.catalog);
+    writeJson(res, 200, { id: project.id, projectId: project.id, name: project.name, graphSpaceId: graphSpaceIdFromProjectId(project.id) });
     return;
   }
 
@@ -354,7 +402,7 @@ async function handleRequest(
     await deps.ensureProject(projectId);
     await deps.refreshProjectHead(projectId);
     const project = deps.catalog.projects[projectId];
-    writeJson(res, 200, { ...project, snapshotsCount: deps.catalog.snapshots[projectId]?.length ?? 0 });
+    writeJson(res, 200, { ...project, projectId: project.id, graphSpaceId: graphSpaceIdFromProjectId(project.id), snapshotsCount: deps.catalog.snapshots[projectId]?.length ?? 0 });
     return;
   }
 
@@ -375,11 +423,17 @@ async function handleRequest(
     writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "GRAPH_SPACE_ID.REQUIRED" });
     return;
   }
+  if (!isUuid(projectId)) {
+    writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "PROJECT_ID.UUID_REQUIRED" });
+    return;
+  }
+  const graphSpaceId = graphSpaceIdFromProjectId(projectId);
+  assertV1ProjectGraphInvariant(projectId, graphSpaceId);
   await deps.ensureProject(projectId);
   const { gateway } = await deps.getProjectContext(projectId);
 
   if (req.method === "GET" && requestUrl.pathname === `/v1/${encodeURIComponent(projectId)}/graph:view`) {
-    writeJson(res, 200, await readGraphView(gateway, projectId, principal));
+    writeJson(res, 200, await readGraphView(gateway, graphSpaceId, principal));
     return;
   }
 
@@ -413,8 +467,8 @@ async function handleRequest(
     const snapshotId = decodeURIComponent(forkMatch[1]!);
     const snapshot = (deps.catalog.snapshots[projectId] ?? []).find((entry) => entry.snapshotId === snapshotId);
     if (!snapshot) return void writeJson(res, 404, { status: "error", reasonCode: "SNAPSHOT.NOT_FOUND" });
-    const body = (await readJsonBody(req)) as { newProjectId?: string; name?: string };
-    const newProjectId = body.newProjectId?.trim() || randomUUID();
+    const body = (await readJsonBody(req)) as { name?: string };
+    const newProjectId = randomUUID();
     await deps.ensureProject(newProjectId, body.name);
     const newContext = await deps.getProjectContext(newProjectId);
     for (const node of snapshot.payload.nodes) {
@@ -429,7 +483,7 @@ async function handleRequest(
     forked.minReadableCursor = boundedMinReadableCursor(snapshot.cursor, forked.headCursor);
     await saveCatalog(deps.catalogPath, deps.catalog);
     await deps.createSnapshot(newProjectId, `fork:${snapshot.snapshotId}`);
-    writeJson(res, 200, { newProjectId });
+    writeJson(res, 200, { newProjectId, id: newProjectId, graphSpaceId: graphSpaceIdFromProjectId(newProjectId) });
     return;
   }
 
@@ -449,7 +503,7 @@ async function handleRequest(
       writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
       return;
     }
-    const result = await gateway.syncPull(projectId, principal, from, {
+    const result = await gateway.syncPull(graphSpaceId, principal, from, {
       limitTx: Number.parseInt(requestUrl.searchParams.get("limitTx") ?? "64", 10) || 64,
       limitBytes: Number.parseInt(requestUrl.searchParams.get("limitBytes") ?? `${128 * 1024}`, 10) || 128 * 1024
     });
@@ -466,7 +520,7 @@ async function handleRequest(
       writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
       return;
     }
-    const result = await gateway.syncPoll(projectId, principal, cursor);
+    const result = await gateway.syncPoll(graphSpaceId, principal, cursor);
     writeJson(res, 200, result);
     return;
   }
@@ -480,7 +534,7 @@ async function handleRequest(
       writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
       return;
     }
-    await streamSubscribe(res, async (cursor) => gateway.syncPull(projectId, principal, cursor));
+    await streamSubscribe(res, async (cursor) => gateway.syncPull(graphSpaceId, principal, cursor));
     return;
   }
 
@@ -493,7 +547,7 @@ async function handleRequest(
       metadata: typeof body.metadata === "object" && body.metadata !== null ? body.metadata as Record<string, unknown> : undefined
     };
     const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
-    const outcome = await submitGraphCommand(gateway, projectId, principal, idempotencyKey, { type: "graph.node.created", node });
+    const outcome = await submitGraphCommand(gateway, graphSpaceId, principal, idempotencyKey, { type: "graph.node.created", node });
     await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { node, outcome });
     return;
@@ -510,7 +564,7 @@ async function handleRequest(
       label: typeof body.label === "string" ? body.label : undefined
     };
     const idempotencyKey = readIdempotencyKey(req, body.idempotencyKey);
-    const outcome = await submitGraphCommand(gateway, projectId, principal, idempotencyKey, { type: "graph.link.created", link });
+    const outcome = await submitGraphCommand(gateway, graphSpaceId, principal, idempotencyKey, { type: "graph.link.created", link });
     await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { link, outcome });
     return;
@@ -520,7 +574,7 @@ async function handleRequest(
     const body = (await readJsonBody(req)) as { label?: unknown; idempotencyKey?: string };
     if (typeof body.label !== "string") return void writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "TRANSPORT.INVALID_REQUEST" });
     const nodeId = decodeURIComponent(requestUrl.pathname.slice(`/v1/${encodeURIComponent(projectId)}/graph:nodes/`.length));
-    const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req, body.idempotencyKey), { type: "graph.node.label.updated", nodeId, label: body.label });
+    const outcome = await submitGraphCommand(gateway, graphSpaceId, principal, readIdempotencyKey(req, body.idempotencyKey), { type: "graph.node.label.updated", nodeId, label: body.label });
     await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { outcome, nodeId, label: body.label });
     return;
@@ -528,7 +582,7 @@ async function handleRequest(
 
   if (req.method === "DELETE" && new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/graph:links/[^/]+$`).test(requestUrl.pathname)) {
     const linkId = decodeURIComponent(requestUrl.pathname.slice(`/v1/${encodeURIComponent(projectId)}/graph:links/`.length));
-    const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req), { type: "graph.link.deleted", linkId });
+    const outcome = await submitGraphCommand(gateway, graphSpaceId, principal, readIdempotencyKey(req), { type: "graph.link.deleted", linkId });
     await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { outcome, linkId });
     return;
@@ -536,7 +590,7 @@ async function handleRequest(
 
   if (req.method === "DELETE" && new RegExp(`^/v1/${escapeRegExp(encodeURIComponent(projectId))}/graph:nodes/[^/]+$`).test(requestUrl.pathname)) {
     const nodeId = decodeURIComponent(requestUrl.pathname.slice(`/v1/${encodeURIComponent(projectId)}/graph:nodes/`.length));
-    const outcome = await submitGraphCommand(gateway, projectId, principal, readIdempotencyKey(req), { type: "graph.node.deleted", nodeId });
+    const outcome = await submitGraphCommand(gateway, graphSpaceId, principal, readIdempotencyKey(req), { type: "graph.node.deleted", nodeId });
     await deps.maybeCreateAutoSnapshot(projectId);
     writeJson(res, 200, { outcome, nodeId });
     return;
@@ -558,8 +612,47 @@ function normalizeRetentionPolicy(policy: RetentionPolicy): RetentionPolicy {
 
 async function loadCatalog(filePath: string): Promise<CatalogState> {
   try {
-    const raw = JSON.parse(await fs.readFile(filePath, "utf8")) as CatalogState;
-    return { projects: raw.projects ?? {}, snapshots: raw.snapshots ?? {} };
+    const raw = JSON.parse(await fs.readFile(filePath, "utf8")) as { projects?: Record<string, Partial<ProjectRecord> & { projectId?: string; id?: string; name?: string }>; snapshots?: Record<string, SnapshotRecord[]> };
+    const normalizedProjects: Record<string, ProjectRecord> = {};
+    const normalizedSnapshots: Record<string, SnapshotRecord[]> = {};
+    let migratedProjects = 0;
+
+    for (const [legacyKey, legacyProject] of Object.entries(raw.projects ?? {})) {
+      const legacyId = typeof legacyProject.projectId === "string"
+        ? legacyProject.projectId
+        : typeof legacyProject.id === "string"
+          ? legacyProject.id
+          : legacyKey;
+      const nextId = isUuid(legacyId) ? legacyId : randomUUID();
+      const now = Date.now();
+      const name = typeof legacyProject.name === "string" && legacyProject.name.trim()
+        ? legacyProject.name.trim()
+        : isUuid(legacyId)
+          ? `Project ${legacyId.slice(0, 8)}`
+          : legacyId;
+      normalizedProjects[nextId] = {
+        id: nextId,
+        name,
+        createdAt: typeof legacyProject.createdAt === "number" ? legacyProject.createdAt : now,
+        updatedAt: typeof legacyProject.updatedAt === "number" ? legacyProject.updatedAt : now,
+        headCursor: legacyProject.headCursor ?? { metaSeq: 0, graphSeq: 0 },
+        minReadableCursor: legacyProject.minReadableCursor ?? { metaSeq: 0, graphSeq: 0 },
+        retentionPolicy: normalizeRetentionPolicy((legacyProject.retentionPolicy as RetentionPolicy | undefined) ?? DEV_RETENTION_PRESET)
+      };
+      const legacySnapshots = [...(raw.snapshots?.[legacyKey] ?? []), ...(legacyId !== legacyKey ? (raw.snapshots?.[legacyId] ?? []) : [])];
+      normalizedSnapshots[nextId] = legacySnapshots.map((snapshot) => ({
+        ...snapshot,
+        projectId: nextId,
+        graphSpaceId: graphSpaceIdFromProjectId(nextId)
+      }));
+      if (legacyId !== nextId || legacyProject.projectId !== undefined || legacyProject.id !== nextId) migratedProjects += 1;
+    }
+
+    if (migratedProjects > 0) {
+      console.info(`[mesh-graph-server] migrated ${migratedProjects} legacy project record(s) to UUID project ids; old identifiers were retained as project names.`);
+    }
+
+    return { projects: normalizedProjects, snapshots: normalizedSnapshots };
   } catch {
     return { projects: {}, snapshots: {} };
   }
