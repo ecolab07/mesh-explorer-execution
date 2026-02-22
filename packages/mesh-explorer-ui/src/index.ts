@@ -70,13 +70,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       <aside style="padding:12px;border-right:1px solid #ddd;overflow:auto;">
         <h3>Mesh Explorer</h3>
         <label>baseUrl <input id="baseUrl" style="width:100%" value="http://127.0.0.1:8090"/></label><br/>
-        <label>graphSpaceId <input id="graphSpaceId" style="width:100%" value="mesh-explorer-graph-v1"/></label><br/>
+        <label>graphSpaceId <input id="graphSpaceId" style="width:100%" value="00000000-0000-4000-8000-000000000001"/></label><br/>
         <label>principal <input id="principal" style="width:100%" value="${escapeHtml(initialPrincipal)}"/></label><br/>
         <button id="connect">Connect</button>
         <div style="margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:8px;">
           <div><strong>Server policy (per project)</strong></div>
           <button id="projectsRefresh">Refresh projects</button>
           <button id="projectCreate" style="margin-left:8px;">Create project</button>
+          <button id="projectRename" style="margin-left:8px;">Rename active</button>
           <div id="projectsList" style="margin-top:6px;font-size:12px;max-height:100px;overflow:auto;"></div>
           <label>ttlSeconds <input id="policyTtl" style="width:100%" type="number"/></label>
           <label>maxEvents <input id="policyMaxEvents" style="width:100%" type="number"/></label>
@@ -157,6 +158,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   const undoRedo = new UndoRedoManager();
   const policyHydration = createPolicyHydrationController(fetchEffectivePolicy);
   let layoutUiState: LayoutUiState = loadLayoutUiState();
+  let activeProjectName = "Untitled project";
   const debugThrottleByEvent = new Map<string, number>();
 
   setConnectionStatus("disconnected");
@@ -204,6 +206,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   };
   el.projectCreate.onclick = () => {
     void createProject();
+  };
+  el.projectRename.onclick = () => {
+    void renameActiveProject();
   };
   el.policySave.onclick = () => {
     void savePolicy();
@@ -269,7 +274,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
   installTestHook(store, () => ({
     projectId: el.graphSpaceId.value,
-    graphSpaceId: el.graphSpaceId.value,
+    projectName: activeProjectName,
+    graphSpaceId: graphSpaceIdFromProjectId(el.graphSpaceId.value),
     localCursorKey: cursorStorageKey(normalizePrincipal(el.principal.value), el.graphSpaceId.value)
   }));
   setPolicyLoading(el.graphSpaceId.value);
@@ -281,30 +287,54 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   async function refreshProjects(): Promise<void> {
     const response = await fetch(`${el.baseUrl.value}/v1/projects`);
     if (!response.ok) return;
-    const projects = (await response.json()) as Array<{ projectId: string; headCursor?: { graphSeq: number }; minReadableCursor?: { graphSeq: number } }>;
+    const projects = (await response.json()) as Array<{ id?: string; projectId?: string; name?: string; headCursor?: { graphSeq: number }; minReadableCursor?: { graphSeq: number } }>;
     el.projectsList.innerHTML = projects
-      .map((project) => `<button data-project-id="${escapeHtml(project.projectId)}" style="display:block;margin-top:4px;">${escapeHtml(project.projectId)} (head=${project.headCursor?.graphSeq ?? 0}, min=${project.minReadableCursor?.graphSeq ?? 0})</button>`)
+      .map((project) => {
+        const id = project.id ?? project.projectId ?? "";
+        const name = project.name ?? "Untitled project";
+        return `<button data-project-id="${escapeHtml(id)}" data-project-name="${escapeHtml(name)}" style="display:block;margin-top:4px;">${escapeHtml(name)} (head=${project.headCursor?.graphSeq ?? 0}, min=${project.minReadableCursor?.graphSeq ?? 0})</button>`;
+      })
       .join("");
     for (const button of Array.from(el.projectsList.querySelectorAll("button[data-project-id]"))) {
       button.addEventListener("click", () => {
         const projectId = (button as HTMLButtonElement).dataset.projectId;
+        const projectName = (button as HTMLButtonElement).dataset.projectName;
         if (!projectId) return;
+        if (projectName) activeProjectName = projectName;
         void activateScope(projectId);
       });
     }
   }
 
   async function createProject(): Promise<void> {
-    const requested = window.prompt("projectId (empty = uuid)", "") ?? "";
+    const requestedName = window.prompt("Project name (optional)", "") ?? "";
     const response = await fetch(`${el.baseUrl.value}/v1/projects`, {
       method: "POST",
       headers: headers(el.principal.value),
-      body: JSON.stringify({ projectId: requested || undefined })
+      body: JSON.stringify({ name: requestedName.trim() || undefined })
     });
-    const payload = (await response.json()) as { projectId: string };
-    el.projectReport.textContent = `created project ${payload.projectId}`;
+    const payload = (await response.json()) as { id?: string; projectId?: string; name?: string };
+    const projectId = payload.id ?? payload.projectId ?? "";
+    if (!projectId) return;
+    activeProjectName = payload.name ?? (requestedName.trim() || "Untitled project");
+    el.projectReport.textContent = `created project ${activeProjectName}`;
     await refreshProjects();
-    await activateScope(payload.projectId);
+    await activateScope(projectId);
+  }
+
+  async function renameActiveProject(): Promise<void> {
+    const requestedName = window.prompt("New project name", activeProjectName) ?? "";
+    if (!requestedName.trim()) return;
+    const response = await fetch(`${el.baseUrl.value}/v1/projects/${encodeURIComponent(el.graphSpaceId.value)}/name`, {
+      method: "PATCH",
+      headers: headers(el.principal.value),
+      body: JSON.stringify({ name: requestedName.trim() })
+    });
+    if (!response.ok) return;
+    const payload = (await response.json()) as { name?: string };
+    activeProjectName = payload.name ?? requestedName.trim();
+    el.projectReport.textContent = `renamed project to ${activeProjectName}`;
+    await refreshProjects();
   }
 
   async function savePolicy(): Promise<void> {
@@ -324,7 +354,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const payload = await response.json() as { retentionPolicy?: Record<string, unknown> };
     const effective = toEffectiveRetentionPolicy(payload.retentionPolicy as Partial<RetentionPolicy> | undefined);
     applyPolicyForm(effective);
-    el.projectReport.textContent = `effective policy projectId=${el.graphSpaceId.value} graphSpaceId=${el.graphSpaceId.value} => ${JSON.stringify(effective)}`;
+    el.projectReport.textContent = `effective policy projectId=${el.graphSpaceId.value} graphSpaceId=${graphSpaceIdFromProjectId(el.graphSpaceId.value)} => ${JSON.stringify(effective)}`;
   }
 
   async function fetchEffectivePolicy(scopeId: string): Promise<Partial<RetentionPolicy> | undefined> {
@@ -332,7 +362,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       headers: headers(el.principal.value)
     });
     if (!response.ok) return undefined;
-    const payload = await response.json() as { retentionPolicy?: Partial<RetentionPolicy> };
+    const payload = await response.json() as { name?: string; retentionPolicy?: Partial<RetentionPolicy> };
+    if (payload.name) activeProjectName = payload.name;
     return payload.retentionPolicy;
   }
 
@@ -341,7 +372,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     if (!hydrated) return;
     if (el.graphSpaceId.value !== hydrated.scopeId) return;
     applyPolicyForm(hydrated.policy);
-    el.projectReport.textContent = `effective policy projectId=${hydrated.scopeId} graphSpaceId=${hydrated.scopeId} => ${JSON.stringify(hydrated.policy)}`;
+    el.projectReport.textContent = `effective policy projectId=${hydrated.scopeId} graphSpaceId=${graphSpaceIdFromProjectId(hydrated.scopeId)} => ${JSON.stringify(hydrated.policy)}`;
   }
 
   function setPolicyLoading(scopeId: string): void {
@@ -1188,6 +1219,7 @@ type UiElements = {
   layoutPanelHost: HTMLDivElement;
   projectsRefresh: HTMLButtonElement;
   projectCreate: HTMLButtonElement;
+  projectRename: HTMLButtonElement;
   projectsList: HTMLDivElement;
   policyTtl: HTMLInputElement;
   policyMaxEvents: HTMLInputElement;
@@ -1226,6 +1258,7 @@ function byId(container: HTMLElement): UiElements {
     layoutPanelHost: container.querySelector("#layoutPanelHost") as HTMLDivElement,
     projectsRefresh: container.querySelector("#projectsRefresh") as HTMLButtonElement,
     projectCreate: container.querySelector("#projectCreate") as HTMLButtonElement,
+    projectRename: container.querySelector("#projectRename") as HTMLButtonElement,
     projectsList: container.querySelector("#projectsList") as HTMLDivElement,
     policyTtl: container.querySelector("#policyTtl") as HTMLInputElement,
     policyMaxEvents: container.querySelector("#policyMaxEvents") as HTMLInputElement,
@@ -1370,6 +1403,11 @@ function normalizePrincipal(principal: string): string {
   return trimmed || DEFAULT_PRINCIPAL;
 }
 
+function graphSpaceIdFromProjectId(projectId: string): string {
+  // v1 invariant: graphSpaceId === projectId.
+  return projectId;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -1456,12 +1494,12 @@ function reportDevInfo(el: Pick<UiElements, "devBanner">, message: string): void
 
 type MeshDebugApi = {
   selectNodes: (ids: string[]) => void;
-  dump: () => { projectId: string; graphSpaceId: string; head: number; minReadableCursor: number; cursor: Cursor; nodesCount: number; linksCount: number; localCursorKey: string };
+  dump: () => { projectId: string; projectName: string; graphSpaceId: string; head: number; minReadableCursor: number; cursor: Cursor; nodesCount: number; linksCount: number; localCursorKey: string };
   logs?: Array<{ message: string; detail?: unknown }>;
   log?: (message: string, detail?: unknown) => void;
 };
 
-function installTestHook(store: GraphStore, readContext: () => { projectId: string; graphSpaceId: string; localCursorKey: string }): void {
+function installTestHook(store: GraphStore, readContext: () => { projectId: string; projectName: string; graphSpaceId: string; localCursorKey: string }): void {
   const mode = (import.meta as ImportMeta & { env?: { MODE?: string } }).env?.MODE;
   if (mode !== "test" && !isDebugEnabled()) return;
   const meshDebug: MeshDebugApi = {
@@ -1475,6 +1513,7 @@ function installTestHook(store: GraphStore, readContext: () => { projectId: stri
       const context = readContext();
       return {
         projectId: context.projectId,
+        projectName: context.projectName,
         graphSpaceId: context.graphSpaceId,
         head: state.cursor.graphSeq,
         minReadableCursor: 0,
