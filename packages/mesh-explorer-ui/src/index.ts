@@ -287,6 +287,18 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   async function refreshProjects(): Promise<void> {
     const response = await fetch(`${el.baseUrl.value}/v1/projects`);
     if (!response.ok) return;
+    const legacyMigrationCount = Number(response.headers.get("x-mesh-legacy-migration-count") ?? "0");
+    const legacyMigrationMappings = response.headers.get("x-mesh-legacy-migration-mappings");
+    if (isDevRuntime() && Number.isFinite(legacyMigrationCount) && legacyMigrationCount > 0) {
+      reportDevInfo(el, `Migrated legacy projects: ${legacyMigrationCount}`);
+      if (legacyMigrationMappings) {
+        try {
+          console.info("[mesh-explorer-ui] legacy migration details", JSON.parse(legacyMigrationMappings));
+        } catch {
+          console.info("[mesh-explorer-ui] legacy migration details", legacyMigrationMappings);
+        }
+      }
+    }
     const projects = (await response.json()) as Array<{ id?: string; projectId?: string; name?: string; headCursor?: { graphSeq: number }; minReadableCursor?: { graphSeq: number } }>;
     el.projectsList.innerHTML = projects
       .map((project) => {
@@ -1194,6 +1206,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     activeAbort?.abort();
     setConnectionStatus("disconnected");
   });
+}
+
+function isDevRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1" || host.endsWith(".local");
 }
 
 type UiElements = {
