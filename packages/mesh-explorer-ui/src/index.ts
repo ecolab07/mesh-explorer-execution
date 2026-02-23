@@ -8,7 +8,7 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
-import { nextMonotonicCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
+import { chooseInitialSyncCursor, nextMonotonicCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
 import {
@@ -61,6 +61,15 @@ type CursorTooOldPayload = {
 type SnapshotPayloadResponse = {
   payload?: { nodes?: GraphNode[]; links?: GraphLink[] };
   cursor?: Cursor;
+};
+
+type ProjectRootPayload = {
+  cursor?: Cursor;
+  serverCursor?: Cursor;
+  headCursor?: Cursor;
+  minReadableCursor?: Cursor;
+  name?: string;
+  retentionPolicy?: Partial<RetentionPolicy>;
 };
 
 export function mountMeshExplorerUi(container: HTMLElement): void {
@@ -374,7 +383,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       headers: headers(el.principal.value)
     });
     if (!response.ok) return undefined;
-    const payload = await response.json() as { name?: string; retentionPolicy?: Partial<RetentionPolicy> };
+    const payload = await response.json() as ProjectRootPayload;
     if (payload.name) activeProjectName = payload.name;
     return payload.retentionPolicy;
   }
@@ -475,10 +484,34 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
-    const snapshotCursor = await bootstrapFromSnapshot(normalizedPrincipal);
-    const replayResult = await pollReplayFromCursor(snapshotCursor, sessionId, activeAbort.signal);
+    const persistedCursor = readCursor(storageKey);
+    const serverBootstrap = await fetchServerBootstrapCursor(normalizedPrincipal);
+    const snapshotCursor = persistedCursor ? null : await bootstrapFromSnapshot(normalizedPrincipal);
+    const initialCursor = chooseInitialSyncCursor({
+      persistedCursor,
+      serverCursor: serverBootstrap.serverCursor,
+      minReadableCursor: serverBootstrap.minReadableCursor,
+      snapshotCursor
+    });
+    store.setCursor(initialCursor);
+    emitUiDebugLog("sync.bootstrap.cursor_choice", {
+      graphSpaceId: el.graphSpaceId.value,
+      localCursorKey: storageKey,
+      persistedCursor,
+      serverCursor: serverBootstrap.serverCursor,
+      chosenCursor: initialCursor
+    });
+    console.info("[mesh-ui] sync bootstrap cursor choice", {
+      graphSpaceId: el.graphSpaceId.value,
+      localCursorKey: storageKey,
+      persistedCursor,
+      serverCursor: serverBootstrap.serverCursor,
+      chosenCursor: initialCursor
+    });
+
+    const replayResult = await pollReplayFromCursor(initialCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
-    persistBootstrapCursor(storageKey, snapshotCursor, replayResult.cursor);
+    persistBootstrapCursor(storageKey, initialCursor, replayResult.cursor);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
 
@@ -503,6 +536,21 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       });
       if (!response.ok) return { metaSeq: 0, graphSeq: 0 };
       return applySnapshot((await response.json()) as SnapshotPayloadResponse);
+    }
+
+    async function fetchServerBootstrapCursor(principalValue: string): Promise<{ serverCursor: Cursor | null; minReadableCursor: Cursor | null }> {
+      const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}`, { headers: headers(principalValue) }, {
+        principal: principalValue,
+        transport: "fetch",
+        debugAuth,
+        onNetworkResult: (status) => markNetworkConnectivity(status, "project-root-bootstrap")
+      });
+      if (!response.ok) return { serverCursor: null, minReadableCursor: null };
+      const payload = (await response.json()) as ProjectRootPayload;
+      return {
+        serverCursor: payload.serverCursor ?? payload.headCursor ?? payload.cursor ?? null,
+        minReadableCursor: payload.minReadableCursor ?? null
+      };
     }
 
     async function recoverFromCursorTooOld(payload: CursorTooOldPayload, signal: AbortSignal): Promise<Cursor | null> {

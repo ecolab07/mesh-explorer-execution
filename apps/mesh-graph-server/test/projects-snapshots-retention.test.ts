@@ -42,6 +42,11 @@ describe("projects + snapshots + retention", () => {
     const createdEntry = list.find((entry) => entry.id === created.id);
     expect(createdEntry?.name).toBe("Renamed project");
     expect(createdEntry?.graphSpaceId).toBe(createdEntry?.id);
+
+    const projectRead = await fetch(`${server.url}/v1/${created.id}`, { headers });
+    expect(projectRead.status).toBe(200);
+    const projectPayload = (await projectRead.json()) as { headCursor?: { graphSeq: number }; serverCursor?: { graphSeq: number } };
+    expect(projectPayload.serverCursor?.graphSeq).toBe(projectPayload.headCursor?.graphSeq);
   });
 
 

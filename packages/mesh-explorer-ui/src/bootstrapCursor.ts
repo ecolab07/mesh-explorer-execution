@@ -25,3 +25,26 @@ export function shouldPersistBootstrapCursor(fromCursor: Cursor, finalCursor: Cu
   if (compareCursor(finalCursor, currentCursor) < 0) return false;
   return true;
 }
+
+export function chooseInitialSyncCursor(input: {
+  persistedCursor: Cursor | null;
+  serverCursor: Cursor | null;
+  minReadableCursor: Cursor | null;
+  snapshotCursor: Cursor | null;
+}): Cursor {
+  const persisted = sanitizeCursor(input.persistedCursor);
+  if (persisted) return persisted;
+
+  const candidates = [input.serverCursor, input.minReadableCursor, input.snapshotCursor]
+    .map(sanitizeCursor)
+    .filter((cursor): cursor is Cursor => cursor !== null);
+  if (candidates.length === 0) return ZERO_CURSOR;
+  return candidates.reduce((max, cursor) => (compareCursor(cursor, max) > 0 ? cursor : max), candidates[0]!);
+}
+
+function sanitizeCursor(cursor: Cursor | null): Cursor | null {
+  if (!cursor) return null;
+  if (!Number.isFinite(cursor.metaSeq) || !Number.isFinite(cursor.graphSeq)) return null;
+  if (compareCursor(cursor, ZERO_CURSOR) < 0) return null;
+  return cursor;
+}
