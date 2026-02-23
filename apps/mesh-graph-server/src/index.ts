@@ -442,7 +442,13 @@ async function handleRequest(
     await deps.ensureProject(projectId);
     await deps.refreshProjectHead(projectId);
     const project = deps.catalog.projects[projectId];
-    writeJson(res, 200, { ...project, projectId: project.id, graphSpaceId: graphSpaceIdFromProjectId(project.id), snapshotsCount: deps.catalog.snapshots[projectId]?.length ?? 0 });
+    writeJson(res, 200, {
+      ...project,
+      serverCursor: project.headCursor,
+      projectId: project.id,
+      graphSpaceId: graphSpaceIdFromProjectId(project.id),
+      snapshotsCount: deps.catalog.snapshots[projectId]?.length ?? 0
+    });
     return;
   }
 

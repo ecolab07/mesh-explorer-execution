@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { cursorStorageKey } from "../src/cursorStorage.js";
-import { isStoreEmpty, nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor, ZERO_CURSOR } from "../src/bootstrapCursor.js";
+import {
+  chooseInitialSyncCursor,
+  isStoreEmpty,
+  nextMonotonicCursor,
+  resolveBootstrapFromCursor,
+  shouldPersistBootstrapCursor,
+  ZERO_CURSOR
+} from "../src/bootstrapCursor.js";
 
 describe("mesh explorer bootstrap cursor", () => {
   it("uses {0,0} when no local cursor exists (fresh browser)", () => {
@@ -38,5 +45,23 @@ describe("mesh explorer bootstrap cursor", () => {
     expect(shouldPersistBootstrapCursor({ metaSeq: 0, graphSeq: 0 }, { metaSeq: 0, graphSeq: 5 }, { metaSeq: 0, graphSeq: 5 })).toBe(true);
     expect(shouldPersistBootstrapCursor({ metaSeq: 0, graphSeq: 5 }, { metaSeq: 0, graphSeq: 5 }, { metaSeq: 0, graphSeq: 5 })).toBe(false);
     expect(shouldPersistBootstrapCursor({ metaSeq: 0, graphSeq: 0 }, { metaSeq: 0, graphSeq: 5 }, { metaSeq: 0, graphSeq: 6 })).toBe(false);
+  });
+
+  it("prefers persisted cursor over stale server cursor for bootstrap", () => {
+    expect(chooseInitialSyncCursor({
+      persistedCursor: { metaSeq: 0, graphSeq: 100 },
+      serverCursor: { metaSeq: 0, graphSeq: 76 },
+      minReadableCursor: { metaSeq: 0, graphSeq: 100 },
+      snapshotCursor: { metaSeq: 0, graphSeq: 100 }
+    })).toEqual({ metaSeq: 0, graphSeq: 100 });
+  });
+
+  it("uses server cursor only when persisted cursor is missing", () => {
+    expect(chooseInitialSyncCursor({
+      persistedCursor: null,
+      serverCursor: { metaSeq: 0, graphSeq: 76 },
+      minReadableCursor: null,
+      snapshotCursor: null
+    })).toEqual({ metaSeq: 0, graphSeq: 76 });
   });
 });
