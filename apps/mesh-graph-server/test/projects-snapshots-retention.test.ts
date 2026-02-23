@@ -1,8 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { startMeshGraphServer, type MeshGraphServerHandle } from "../src/index";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { migrateLegacyCatalog, startMeshGraphServer, type MeshGraphServerHandle } from "../src/index";
 
 describe("projects + snapshots + retention", () => {
   const startedServers: MeshGraphServerHandle[] = [];
@@ -80,6 +80,68 @@ describe("projects + snapshots + retention", () => {
     const forkSnapshotBody = (await forkSnapshot.json()) as { payload: { nodes: unknown[]; links: unknown[] } };
     expect(forkSnapshotBody.payload.nodes.length).toBe(2);
     expect(forkSnapshotBody.payload.links.length).toBe(1);
+  });
+
+  it("reports legacy migration mappings and logs migration only once across restarts", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-legacy-migration-"));
+    const catalogPath = join(storageDir, "mesh-projects.json");
+    await writeFile(catalogPath, JSON.stringify({
+      projects: {
+        J: {
+          id: "J",
+          headCursor: { metaSeq: 0, graphSeq: 0 },
+          minReadableCursor: { metaSeq: 0, graphSeq: 0 },
+          retentionPolicy: { snapshotEveryNEvents: 10, snapshotEverySeconds: 10, minSnapshotsToKeep: 1, mode: "delete" }
+        }
+      },
+      snapshots: {}
+    }), "utf8");
+
+    const migrationProbe = migrateLegacyCatalog({
+      projects: {
+        J: {
+          id: "J",
+          headCursor: { metaSeq: 0, graphSeq: 0 },
+          minReadableCursor: { metaSeq: 0, graphSeq: 0 },
+          retentionPolicy: { snapshotEveryNEvents: 10, snapshotEverySeconds: 10, minSnapshotsToKeep: 1, mode: "delete" }
+        }
+      },
+      snapshots: {}
+    });
+    expect(migrationProbe.migration).toMatchObject({
+      migratedCount: 1,
+      mappings: [
+        { oldId: "J", derivedName: "J" }
+      ]
+    });
+    expect(migrationProbe.migration.mappings[0]?.newId).toMatch(/^[0-9a-f-]{36}$/i);
+
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    expect(infoSpy).toHaveBeenCalledWith("[mesh-graph-server] migrated legacy projects", expect.objectContaining({
+      migratedCount: 1,
+      mappings: [expect.objectContaining({ oldId: "J", derivedName: "J" })]
+    }));
+
+    const projects = await fetch(`${server.url}/v1/projects`, { headers });
+    expect(projects.headers.get("x-mesh-legacy-migration-count")).toBe("1");
+    const firstPayload = (await projects.json()) as Array<{ id: string; name: string }>;
+    expect(firstPayload.some((entry) => entry.name === "J")).toBe(true);
+
+    await server.close();
+    startedServers.pop();
+
+    const afterFirstBootCalls = infoSpy.mock.calls.length;
+    const restarted = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(restarted);
+    expect(infoSpy.mock.calls.length).toBe(afterFirstBootCalls);
+
+    const restartedProjects = await fetch(`${restarted.url}/v1/projects`, { headers });
+    expect(restartedProjects.headers.get("x-mesh-legacy-migration-count")).toBe("1");
+
+    infoSpy.mockRestore();
   });
 
 

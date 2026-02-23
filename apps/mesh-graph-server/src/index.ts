@@ -82,6 +82,27 @@ type SnapshotRecord = {
 type CatalogState = {
   projects: Record<string, ProjectRecord>;
   snapshots: Record<string, SnapshotRecord[]>;
+  metadata?: {
+    legacyProjectMigration?: LegacyProjectMigrationSummary;
+  };
+};
+
+type LegacyProjectMigrationMapping = {
+  oldId: string;
+  newId: string;
+  derivedName: string;
+};
+
+type LegacyProjectMigrationSummary = {
+  pendingNotice: boolean;
+  migratedCount: number;
+  mappings: LegacyProjectMigrationMapping[];
+  appliedAt: number;
+};
+
+export type LegacyProjectMigrationResult = {
+  migratedCount: number;
+  mappings: LegacyProjectMigrationMapping[];
 };
 
 type LocalSyncGatewayLike = {
@@ -153,7 +174,20 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
 
   const projectStores = new Map<string, { store: FileBackedLocalEventStore; gateway: LocalSyncGatewayLike; kernel: KernelMinimalImpl }>();
   const catalogPath = join(options.storageDir, "mesh-projects.json");
-  const catalog = await loadCatalog(catalogPath);
+  const { catalog, writeApplied } = await loadCatalog(catalogPath);
+  let shouldPersistCatalog = writeApplied;
+  const migration = catalog.metadata?.legacyProjectMigration;
+  if (migration?.pendingNotice) {
+    console.info("[mesh-graph-server] migrated legacy projects", {
+      migratedCount: migration.migratedCount,
+      mappings: migration.mappings
+    });
+    migration.pendingNotice = false;
+    shouldPersistCatalog = true;
+  }
+  if (shouldPersistCatalog) {
+    await saveCatalog(catalogPath, catalog);
+  }
 
   async function getProjectContext(projectId: string): Promise<{ store: FileBackedLocalEventStore; gateway: LocalSyncGatewayLike; kernel: KernelMinimalImpl }> {
     const cached = projectStores.get(projectId);
@@ -362,6 +396,12 @@ async function handleRequest(
   if (req.method === "GET" && requestUrl.pathname === "/") return void writePlainText(res, 200, buildRootHelpMessage(deps.graphSpaceId));
 
   if (req.method === "GET" && requestUrl.pathname === "/v1/projects") {
+    const migration = deps.catalog.metadata?.legacyProjectMigration;
+    if (migration && migration.migratedCount > 0) {
+      res.setHeader("x-mesh-legacy-migration-count", String(migration.migratedCount));
+      res.setHeader("x-mesh-legacy-migration-applied-at", String(migration.appliedAt));
+      res.setHeader("x-mesh-legacy-migration-mappings", JSON.stringify(migration.mappings));
+    }
     const entries = Object.values(deps.catalog.projects).map((project) => ({ ...project, projectId: project.id, graphSpaceId: graphSpaceIdFromProjectId(project.id), snapshotsCount: deps.catalog.snapshots[project.id]?.length ?? 0 }));
     writeJson(res, 200, entries);
     return;
@@ -610,51 +650,85 @@ function normalizeRetentionPolicy(policy: RetentionPolicy): RetentionPolicy {
   };
 }
 
-async function loadCatalog(filePath: string): Promise<CatalogState> {
+export function migrateLegacyCatalog(raw: {
+  projects?: Record<string, Partial<ProjectRecord> & { projectId?: string; id?: string; name?: string }>;
+  snapshots?: Record<string, SnapshotRecord[]>;
+  metadata?: CatalogState["metadata"];
+}): { catalog: CatalogState; migration: LegacyProjectMigrationResult; migrationApplied: boolean } {
+  const normalizedProjects: Record<string, ProjectRecord> = {};
+  const normalizedSnapshots: Record<string, SnapshotRecord[]> = {};
+  const mappings: LegacyProjectMigrationMapping[] = [];
+
+  for (const [legacyKey, legacyProject] of Object.entries(raw.projects ?? {})) {
+    const legacyId = typeof legacyProject.projectId === "string"
+      ? legacyProject.projectId
+      : typeof legacyProject.id === "string"
+        ? legacyProject.id
+        : legacyKey;
+    const nextId = isUuid(legacyId) ? legacyId : randomUUID();
+    const now = Date.now();
+    const name = typeof legacyProject.name === "string" && legacyProject.name.trim()
+      ? legacyProject.name.trim()
+      : isUuid(legacyId)
+        ? `Project ${legacyId.slice(0, 8)}`
+        : legacyId;
+    normalizedProjects[nextId] = {
+      id: nextId,
+      name,
+      createdAt: typeof legacyProject.createdAt === "number" ? legacyProject.createdAt : now,
+      updatedAt: typeof legacyProject.updatedAt === "number" ? legacyProject.updatedAt : now,
+      headCursor: legacyProject.headCursor ?? { metaSeq: 0, graphSeq: 0 },
+      minReadableCursor: legacyProject.minReadableCursor ?? { metaSeq: 0, graphSeq: 0 },
+      retentionPolicy: normalizeRetentionPolicy((legacyProject.retentionPolicy as RetentionPolicy | undefined) ?? DEV_RETENTION_PRESET)
+    };
+    const legacySnapshots = [...(raw.snapshots?.[legacyKey] ?? []), ...(legacyId !== legacyKey ? (raw.snapshots?.[legacyId] ?? []) : [])];
+    normalizedSnapshots[nextId] = legacySnapshots.map((snapshot) => ({
+      ...snapshot,
+      projectId: nextId,
+      graphSpaceId: graphSpaceIdFromProjectId(nextId)
+    }));
+    if (legacyId !== nextId || legacyProject.projectId !== undefined || legacyProject.id !== nextId) {
+      mappings.push({ oldId: legacyId, newId: nextId, derivedName: name });
+    }
+  }
+
+  const migration: LegacyProjectMigrationResult = {
+    migratedCount: mappings.length,
+    mappings
+  };
+  const migrationApplied = migration.migratedCount > 0;
+
+  return {
+    catalog: {
+      projects: normalizedProjects,
+      snapshots: normalizedSnapshots,
+      metadata: migrationApplied
+        ? {
+          legacyProjectMigration: {
+            pendingNotice: true,
+            migratedCount: migration.migratedCount,
+            mappings: migration.mappings,
+            appliedAt: Date.now()
+          }
+        }
+        : raw.metadata
+    },
+    migration,
+    migrationApplied
+  };
+}
+
+async function loadCatalog(filePath: string): Promise<{ catalog: CatalogState; writeApplied: boolean }> {
   try {
-    const raw = JSON.parse(await fs.readFile(filePath, "utf8")) as { projects?: Record<string, Partial<ProjectRecord> & { projectId?: string; id?: string; name?: string }>; snapshots?: Record<string, SnapshotRecord[]> };
-    const normalizedProjects: Record<string, ProjectRecord> = {};
-    const normalizedSnapshots: Record<string, SnapshotRecord[]> = {};
-    let migratedProjects = 0;
-
-    for (const [legacyKey, legacyProject] of Object.entries(raw.projects ?? {})) {
-      const legacyId = typeof legacyProject.projectId === "string"
-        ? legacyProject.projectId
-        : typeof legacyProject.id === "string"
-          ? legacyProject.id
-          : legacyKey;
-      const nextId = isUuid(legacyId) ? legacyId : randomUUID();
-      const now = Date.now();
-      const name = typeof legacyProject.name === "string" && legacyProject.name.trim()
-        ? legacyProject.name.trim()
-        : isUuid(legacyId)
-          ? `Project ${legacyId.slice(0, 8)}`
-          : legacyId;
-      normalizedProjects[nextId] = {
-        id: nextId,
-        name,
-        createdAt: typeof legacyProject.createdAt === "number" ? legacyProject.createdAt : now,
-        updatedAt: typeof legacyProject.updatedAt === "number" ? legacyProject.updatedAt : now,
-        headCursor: legacyProject.headCursor ?? { metaSeq: 0, graphSeq: 0 },
-        minReadableCursor: legacyProject.minReadableCursor ?? { metaSeq: 0, graphSeq: 0 },
-        retentionPolicy: normalizeRetentionPolicy((legacyProject.retentionPolicy as RetentionPolicy | undefined) ?? DEV_RETENTION_PRESET)
-      };
-      const legacySnapshots = [...(raw.snapshots?.[legacyKey] ?? []), ...(legacyId !== legacyKey ? (raw.snapshots?.[legacyId] ?? []) : [])];
-      normalizedSnapshots[nextId] = legacySnapshots.map((snapshot) => ({
-        ...snapshot,
-        projectId: nextId,
-        graphSpaceId: graphSpaceIdFromProjectId(nextId)
-      }));
-      if (legacyId !== nextId || legacyProject.projectId !== undefined || legacyProject.id !== nextId) migratedProjects += 1;
-    }
-
-    if (migratedProjects > 0) {
-      console.info(`[mesh-graph-server] migrated ${migratedProjects} legacy project record(s) to UUID project ids; old identifiers were retained as project names.`);
-    }
-
-    return { projects: normalizedProjects, snapshots: normalizedSnapshots };
+    const raw = JSON.parse(await fs.readFile(filePath, "utf8")) as {
+      projects?: Record<string, Partial<ProjectRecord> & { projectId?: string; id?: string; name?: string }>;
+      snapshots?: Record<string, SnapshotRecord[]>;
+      metadata?: CatalogState["metadata"];
+    };
+    const { catalog, migrationApplied } = migrateLegacyCatalog(raw);
+    return { catalog, writeApplied: migrationApplied };
   } catch {
-    return { projects: {}, snapshots: {} };
+    return { catalog: { projects: {}, snapshots: {} }, writeApplied: false };
   }
 }
 
