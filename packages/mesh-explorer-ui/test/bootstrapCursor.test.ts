@@ -52,7 +52,8 @@ describe("mesh explorer bootstrap cursor", () => {
       persistedCursor: { metaSeq: 0, graphSeq: 100 },
       serverCursor: { metaSeq: 0, graphSeq: 76 },
       minReadableCursor: { metaSeq: 0, graphSeq: 100 },
-      snapshotCursor: { metaSeq: 0, graphSeq: 100 }
+      snapshotCursor: { metaSeq: 0, graphSeq: 100 },
+      projectionEmpty: false
     })).toEqual({ metaSeq: 0, graphSeq: 100 });
   });
 
@@ -61,7 +62,29 @@ describe("mesh explorer bootstrap cursor", () => {
       persistedCursor: null,
       serverCursor: { metaSeq: 0, graphSeq: 76 },
       minReadableCursor: null,
-      snapshotCursor: null
+      snapshotCursor: null,
+      projectionEmpty: false
     })).toEqual({ metaSeq: 0, graphSeq: 76 });
   });
+
+  it("prefers snapshot cursor when projection is empty", () => {
+    expect(chooseInitialSyncCursor({
+      persistedCursor: { metaSeq: 0, graphSeq: 18 },
+      serverCursor: { metaSeq: 0, graphSeq: 18 },
+      minReadableCursor: { metaSeq: 0, graphSeq: 0 },
+      snapshotCursor: { metaSeq: 0, graphSeq: 10 },
+      projectionEmpty: true
+    })).toEqual({ metaSeq: 0, graphSeq: 10 });
+  });
+
+  it("falls back to minReadable when projection is empty and snapshot is missing", () => {
+    expect(chooseInitialSyncCursor({
+      persistedCursor: { metaSeq: 0, graphSeq: 18 },
+      serverCursor: { metaSeq: 0, graphSeq: 18 },
+      minReadableCursor: { metaSeq: 0, graphSeq: 7 },
+      snapshotCursor: null,
+      projectionEmpty: true
+    })).toEqual({ metaSeq: 0, graphSeq: 7 });
+  });
+
 });
