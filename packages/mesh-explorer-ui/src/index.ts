@@ -98,6 +98,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           <button id="snapshotList" style="margin-left:8px;">List snapshots</button>
           <button id="snapshotFork" style="margin-left:8px;">Fork latest</button>
           <button id="purgeNow" style="margin-left:8px;">Purge dry-run</button>
+          <div id="debugMinReadablePanel" style="display:none;margin-top:8px;padding:8px;border:1px dashed #9ca3af;border-radius:6px;">
+            <div><strong>Debug minReadable cursor (dev/test only)</strong></div>
+            <div id="debugScopeInfo" style="margin-top:4px;font-size:12px;color:#374151;"></div>
+            <label>metaSeq <input id="debugMinReadableMetaSeq" style="width:100%" type="number" min="0" value="0"/></label>
+            <label>graphSeq <input id="debugMinReadableGraphSeq" style="width:100%" type="number" min="0" value="0"/></label>
+            <button id="debugMinReadableDryRun">Set minReadable (dry run)</button>
+            <button id="debugMinReadableApply" style="margin-left:8px;">Apply</button>
+          </div>
           <div id="projectReport" style="margin-top:6px;font-size:12px;color:#374151;"></div>
           <div style="margin-top:6px;font-size:12px;color:#6b7280;"><strong>App preferences (local only)</strong>: layout and debug options in the panel below.</div>
         </div>
@@ -131,6 +139,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   const el = byId(container);
   const debugAuth = isDebugAuthEnabled();
   const debugEnabled = isDebugEnabled();
+  el.debugMinReadablePanel.style.display = isDevRuntime() ? "block" : "none";
   const verboseSyncErrors = isSyncDebugEnabled();
   const store = createGraphStore();
   let syncSession = 0;
@@ -181,6 +190,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     el.principal.value = normalized;
     persistPrincipal(normalized);
   };
+
+  void refreshMinReadableDebugState();
 
   const unsubscribe = store.subscribe((snapshot: GraphState) => {
     const data: GraphData = {
@@ -233,6 +244,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   };
   el.purgeNow.onclick = () => {
     void purgeHistoryDryRun();
+  };
+  el.debugMinReadableDryRun.onclick = () => {
+    void advanceMinReadableCursor(true);
+  };
+  el.debugMinReadableApply.onclick = () => {
+    void advanceMinReadableCursor(false);
   };
 
   el.addNode.onclick = () => {
@@ -452,6 +469,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     await activateProjectScope(projectId, {
       setActiveProject(scopeId) {
         el.graphSpaceId.value = scopeId;
+        void refreshMinReadableDebugState();
       },
       updateRouteSelection(scopeId) {
         syncProjectIdRoute(scopeId);
@@ -474,6 +492,48 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       body: JSON.stringify({ dryRun: true })
     });
     el.projectReport.textContent = `purge report: ${await response.text()}`;
+  }
+
+  async function refreshMinReadableDebugState(): Promise<void> {
+    if (!isDevRuntime()) return;
+    try {
+      const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}`, {
+        headers: headers(el.principal.value)
+      });
+      if (!response.ok) return;
+      const payload = (await response.json()) as { minReadableCursor?: Cursor; projectId?: string; graphSpaceId?: string };
+      const minReadable = payload.minReadableCursor ?? { metaSeq: 0, graphSeq: 0 };
+      el.debugScopeInfo.textContent = `scope projectId=${payload.projectId ?? el.graphSpaceId.value}, graphSpaceId=${payload.graphSpaceId ?? el.graphSpaceId.value}, current minReadable=(${minReadable.metaSeq}, ${minReadable.graphSeq})`;
+      el.debugMinReadableMetaSeq.value = String(minReadable.metaSeq);
+      el.debugMinReadableGraphSeq.value = String(minReadable.graphSeq);
+    } catch (error) {
+      console.error("[mesh-ui] refreshMinReadableDebugState failed", error);
+    }
+  }
+
+  async function advanceMinReadableCursor(dryRun: boolean): Promise<void> {
+    try {
+      const metaSeq = Number.parseInt(el.debugMinReadableMetaSeq.value, 10);
+      const graphSeq = Number.parseInt(el.debugMinReadableGraphSeq.value, 10);
+      const response = await fetch(`${el.baseUrl.value}/debug/advance-min-readable-cursor`, {
+        method: "POST",
+        headers: headers(el.principal.value, undefined, true),
+        body: JSON.stringify({
+          projectId: el.graphSpaceId.value,
+          graphSpaceId: el.graphSpaceId.value,
+          newMinReadableCursor: { metaSeq, graphSeq },
+          dryRun
+        })
+      });
+      const bodyText = await response.text();
+      el.projectReport.textContent = `advance minReadable (${dryRun ? "dry-run" : "apply"}): ${bodyText}`;
+      if (!response.ok) {
+        console.error("[mesh-ui] advanceMinReadableCursor failed", { status: response.status, bodyText });
+      }
+      await refreshMinReadableDebugState();
+    } catch (error) {
+      console.error("[mesh-ui] advanceMinReadableCursor error", error);
+    }
   }
 
   async function connectAndSync(sessionId: number): Promise<void> {
@@ -1351,6 +1411,12 @@ type UiElements = {
   snapshotList: HTMLButtonElement;
   snapshotFork: HTMLButtonElement;
   purgeNow: HTMLButtonElement;
+  debugMinReadablePanel: HTMLDivElement;
+  debugScopeInfo: HTMLDivElement;
+  debugMinReadableMetaSeq: HTMLInputElement;
+  debugMinReadableGraphSeq: HTMLInputElement;
+  debugMinReadableDryRun: HTMLButtonElement;
+  debugMinReadableApply: HTMLButtonElement;
   projectReport: HTMLDivElement;
 };
 
@@ -1390,17 +1456,34 @@ function byId(container: HTMLElement): UiElements {
     snapshotList: container.querySelector("#snapshotList") as HTMLButtonElement,
     snapshotFork: container.querySelector("#snapshotFork") as HTMLButtonElement,
     purgeNow: container.querySelector("#purgeNow") as HTMLButtonElement,
+    debugMinReadablePanel: container.querySelector("#debugMinReadablePanel") as HTMLDivElement,
+    debugScopeInfo: container.querySelector("#debugScopeInfo") as HTMLDivElement,
+    debugMinReadableMetaSeq: container.querySelector("#debugMinReadableMetaSeq") as HTMLInputElement,
+    debugMinReadableGraphSeq: container.querySelector("#debugMinReadableGraphSeq") as HTMLInputElement,
+    debugMinReadableDryRun: container.querySelector("#debugMinReadableDryRun") as HTMLButtonElement,
+    debugMinReadableApply: container.querySelector("#debugMinReadableApply") as HTMLButtonElement,
     projectReport: container.querySelector("#projectReport") as HTMLDivElement
   };
 }
 
-function headers(principal: string, idempotencyKey?: string): HeadersInit {
+function headers(principal: string, idempotencyKey?: string, includeDebugToken = false): HeadersInit {
   const next: Record<string, string> = {
     "content-type": "application/json",
     "x-mesh-principal": normalizePrincipal(principal)
   };
   if (idempotencyKey) next["x-idempotency-key"] = idempotencyKey;
+  if (includeDebugToken) {
+    next["x-mesh-debug-token"] = readDebugEndpointToken();
+  }
   return next;
+}
+
+function readDebugEndpointToken(): string {
+  try {
+    return localStorage.getItem("meshDebugEndpointToken") || "mesh-dev-debug-token";
+  } catch {
+    return "mesh-dev-debug-token";
+  }
 }
 
 type MeshFetchMeta = {
