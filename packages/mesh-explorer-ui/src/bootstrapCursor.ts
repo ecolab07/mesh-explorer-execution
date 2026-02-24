@@ -31,12 +31,22 @@ export function chooseInitialSyncCursor(input: {
   serverCursor: Cursor | null;
   minReadableCursor: Cursor | null;
   snapshotCursor: Cursor | null;
+  projectionEmpty: boolean;
 }): Cursor {
   const persisted = sanitizeCursor(input.persistedCursor);
+  const snapshot = sanitizeCursor(input.snapshotCursor);
+  const minReadable = sanitizeCursor(input.minReadableCursor);
+  const server = sanitizeCursor(input.serverCursor);
+
+  if (input.projectionEmpty) {
+    if (snapshot) return snapshot;
+    if (minReadable) return minReadable;
+    return ZERO_CURSOR;
+  }
+
   if (persisted) return persisted;
 
-  const candidates = [input.serverCursor, input.minReadableCursor, input.snapshotCursor]
-    .map(sanitizeCursor)
+  const candidates = [server, minReadable, snapshot]
     .filter((cursor): cursor is Cursor => cursor !== null);
   if (candidates.length === 0) return ZERO_CURSOR;
   return candidates.reduce((max, cursor) => (compareCursor(cursor, max) > 0 ? cursor : max), candidates[0]!);

@@ -482,16 +482,18 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     canvasRenderer?.clearTransientUiState();
     resetAutoFitState();
     setConnectionStatus("connecting");
+    const projectionEmpty = store.getState().nodesById.size === 0 && store.getState().linksById.size === 0;
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
     const persistedCursor = readCursor(storageKey);
     const serverBootstrap = await fetchServerBootstrapCursor(normalizedPrincipal);
-    const snapshotCursor = persistedCursor ? null : await bootstrapFromSnapshot(normalizedPrincipal);
+    const snapshotCursor = await bootstrapFromSnapshot(normalizedPrincipal);
     const initialCursor = chooseInitialSyncCursor({
       persistedCursor,
       serverCursor: serverBootstrap.serverCursor,
       minReadableCursor: serverBootstrap.minReadableCursor,
-      snapshotCursor
+      snapshotCursor,
+      projectionEmpty
     });
     store.setCursor(initialCursor);
     emitUiDebugLog("sync.bootstrap.cursor_choice", {
@@ -499,6 +501,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       localCursorKey: storageKey,
       persistedCursor,
       serverCursor: serverBootstrap.serverCursor,
+      snapshotCursor,
+      projectionEmpty,
       chosenCursor: initialCursor
     });
     console.info("[mesh-ui] sync bootstrap cursor choice", {
@@ -506,6 +510,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       localCursorKey: storageKey,
       persistedCursor,
       serverCursor: serverBootstrap.serverCursor,
+      snapshotCursor,
+      projectionEmpty,
       chosenCursor: initialCursor
     });
 
