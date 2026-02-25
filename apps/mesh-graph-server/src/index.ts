@@ -12,6 +12,7 @@ const GRAPH_SPACE_ID = "00000000-0000-4000-8000-000000000001";
 const UUID_V4ISH_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PRINCIPAL_HEADER = "x-mesh-principal";
 const IDEMPOTENCY_HEADER = "x-idempotency-key";
+const DEBUG_TOKEN_HEADER = "x-mesh-debug-token";
 const DEBUG_AUTH_ENABLED = process.env.MESH_DEBUG_AUTH === "1";
 const RETENTION_JOB_ENABLED = process.env.MESH_RETENTION_JOB_ENABLED !== "0";
 const RETENTION_JOB_INTERVAL_MS = Number(process.env.MESH_RETENTION_JOB_INTERVAL_MS ?? (process.env.NODE_ENV === "production" ? 60 * 60_000 : 5 * 60_000));
@@ -133,6 +134,13 @@ type LocalSyncGatewayLike = {
       graphLimitBytes?: number;
     }
   ): Promise<{ meta: unknown[]; graph: unknown[]; cursorAfter: Cursor }>;
+};
+
+type AdvanceMinReadableRequest = {
+  projectId?: unknown;
+  graphSpaceId?: unknown;
+  newMinReadableCursor?: unknown;
+  dryRun?: unknown;
 };
 
 export interface MeshGraphServerOptions {
@@ -412,6 +420,73 @@ async function handleRequest(
     const projectId = randomUUID();
     const project = await deps.ensureProject(projectId, body.name);
     writeJson(res, 201, { id: project.id, projectId: project.id, name: project.name, graphSpaceId: graphSpaceIdFromProjectId(project.id) });
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/debug/advance-min-readable-cursor") {
+    if (!debugEndpointsEnabled()) {
+      writeJson(res, 403, { status: "rejected", category: "PERMISSION", reasonCode: "DEBUG_ENDPOINTS.DISABLED" });
+      return;
+    }
+    if (!hasValidDebugToken(req)) {
+      writeJson(res, 403, { status: "rejected", category: "PERMISSION", reasonCode: "DEBUG_ENDPOINTS.INVALID_TOKEN" });
+      return;
+    }
+    const body = (await readJsonBody(req)) as AdvanceMinReadableRequest;
+    const projectId = typeof body.projectId === "string" ? body.projectId : "";
+    const graphSpaceId = typeof body.graphSpaceId === "string" ? body.graphSpaceId : "";
+    if (!projectId || !graphSpaceId || !isUuid(projectId) || !isUuid(graphSpaceId)) {
+      writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "PROJECT_SCOPE.INVALID" });
+      return;
+    }
+    if (graphSpaceIdFromProjectId(projectId) !== graphSpaceId) {
+      writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "PROJECT_SCOPE.MISMATCH" });
+      return;
+    }
+    const project = deps.catalog.projects[projectId];
+    if (!project) {
+      writeJson(res, 404, { status: "error", category: "NOT_FOUND", reasonCode: "PROJECT.NOT_FOUND", projectId, graphSpaceId });
+      return;
+    }
+    const nextCursor = parseCursorFromBody(body.newMinReadableCursor);
+    if (!nextCursor) {
+      writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "CURSOR.INVALID", projectId, graphSpaceId });
+      return;
+    }
+    const dryRun = body.dryRun !== false;
+    await deps.refreshProjectHead(projectId);
+    if (compareCursor(nextCursor, project.headCursor) > 0) {
+      writeJson(res, 400, {
+        status: "rejected",
+        category: "VALIDATION",
+        reasonCode: "CURSOR.BEYOND_HEAD",
+        projectId,
+        graphSpaceId,
+        headCursor: project.headCursor,
+        proposedMinReadableCursor: nextCursor
+      });
+      return;
+    }
+    const previous = project.minReadableCursor;
+    const advanced = compareCursor(nextCursor, previous) > 0;
+    if (!dryRun && advanced) {
+      project.minReadableCursor = nextCursor;
+      project.updatedAt = Date.now();
+      await saveCatalog(deps.catalogPath, deps.catalog);
+    }
+    const latestSnapshot = deps.catalog.snapshots[projectId]?.[0] ?? null;
+    writeJson(res, 200, {
+      projectId,
+      graphSpaceId,
+      dryRun,
+      previousMinReadableCursor: previous,
+      proposedMinReadableCursor: nextCursor,
+      appliedMinReadableCursor: !dryRun && advanced ? project.minReadableCursor : previous,
+      advanced,
+      headCursor: project.headCursor,
+      latestSnapshotCursor: latestSnapshot?.cursor ?? null,
+      cutSnapshotId: latestSnapshot?.snapshotId ?? null
+    });
     return;
   }
 
@@ -887,7 +962,38 @@ function parsePrincipal(req: IncomingMessage): PrincipalContext | null {
 function applyCorsHeaders(res: ServerResponse): void {
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
-  res.setHeader("access-control-allow-headers", "content-type,x-mesh-principal,x-idempotency-key");
+  res.setHeader("access-control-allow-headers", "content-type,x-mesh-principal,x-idempotency-key,x-mesh-debug-token");
+}
+
+function debugEndpointsEnabled(): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  return process.env.ENABLE_DEBUG_ENDPOINTS !== "0";
+}
+
+function hasValidDebugToken(req: IncomingMessage): boolean {
+  const raw = req.headers[DEBUG_TOKEN_HEADER];
+  const token = (Array.isArray(raw) ? raw[0] : raw)?.trim();
+  const expected = (process.env.MESH_DEBUG_ENDPOINT_TOKEN ?? "mesh-dev-debug-token").trim();
+  return Boolean(token) && token === expected;
+}
+
+function parseCursorFromBody(input: unknown): Cursor | null {
+  if (!input || typeof input !== "object") return null;
+  const candidate = input as { metaSeq?: unknown; graphSeq?: unknown };
+  const metaSeq = toNonNegativeInteger(candidate.metaSeq);
+  const graphSeq = toNonNegativeInteger(candidate.graphSeq);
+  if (metaSeq == null || graphSeq == null) return null;
+  return { metaSeq, graphSeq };
+}
+
+function compareCursor(left: Cursor, right: Cursor): number {
+  if (left.metaSeq !== right.metaSeq) return left.metaSeq - right.metaSeq;
+  return left.graphSeq - right.graphSeq;
+}
+
+function toNonNegativeInteger(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return null;
+  return value;
 }
 
 function maskForOtherPrincipal(principal: string): Record<string, "mask"> {

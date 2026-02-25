@@ -221,6 +221,131 @@ describe("projects + snapshots + retention", () => {
     expect(heads.some((head) => head >= 150)).toBe(true);
   });
 
+  it("gates debug cursor endpoint in production mode", async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevDebugEnabled = process.env.ENABLE_DEBUG_ENDPOINTS;
+    const prevDebugToken = process.env.MESH_DEBUG_ENDPOINT_TOKEN;
+    process.env.NODE_ENV = "production";
+    process.env.ENABLE_DEBUG_ENDPOINTS = "1";
+    process.env.MESH_DEBUG_ENDPOINT_TOKEN = "debug-token";
+
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-debug-gate-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    const response = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
+      method: "POST",
+      headers: { ...headers, "x-mesh-debug-token": "debug-token" },
+      body: JSON.stringify({
+        projectId: server.graphSpaceId,
+        graphSpaceId: server.graphSpaceId,
+        newMinReadableCursor: { metaSeq: 0, graphSeq: 1 },
+        dryRun: true
+      })
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ reasonCode: "DEBUG_ENDPOINTS.DISABLED" });
+
+    process.env.NODE_ENV = prevNodeEnv;
+    process.env.ENABLE_DEBUG_ENDPOINTS = prevDebugEnabled;
+    process.env.MESH_DEBUG_ENDPOINT_TOKEN = prevDebugToken;
+  });
+
+  it("supports dry-run, monotonic minReadable advance, and scope validation", async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevDebugEnabled = process.env.ENABLE_DEBUG_ENDPOINTS;
+    const prevDebugToken = process.env.MESH_DEBUG_ENDPOINT_TOKEN;
+    process.env.NODE_ENV = "test";
+    process.env.ENABLE_DEBUG_ENDPOINTS = "1";
+    process.env.MESH_DEBUG_ENDPOINT_TOKEN = "debug-token";
+
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-debug-min-readable-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ id: "D-1", label: "D-1" })
+    });
+
+    const dryRun = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
+      method: "POST",
+      headers: { ...headers, "x-mesh-debug-token": "debug-token" },
+      body: JSON.stringify({
+        projectId: server.graphSpaceId,
+        graphSpaceId: server.graphSpaceId,
+        newMinReadableCursor: { metaSeq: 0, graphSeq: 1 },
+        dryRun: true
+      })
+    });
+    expect(dryRun.status).toBe(200);
+    const dryRunBody = (await dryRun.json()) as { advanced: boolean; previousMinReadableCursor: { graphSeq: number }; appliedMinReadableCursor: { graphSeq: number } };
+    expect(dryRunBody.advanced).toBe(true);
+    expect(dryRunBody.previousMinReadableCursor.graphSeq).toBe(0);
+    expect(dryRunBody.appliedMinReadableCursor.graphSeq).toBe(0);
+
+    const apply = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
+      method: "POST",
+      headers: { ...headers, "x-mesh-debug-token": "debug-token" },
+      body: JSON.stringify({
+        projectId: server.graphSpaceId,
+        graphSpaceId: server.graphSpaceId,
+        newMinReadableCursor: { metaSeq: 0, graphSeq: 1 },
+        dryRun: false
+      })
+    });
+    expect(apply.status).toBe(200);
+    await expect(apply.json()).resolves.toMatchObject({ advanced: true, appliedMinReadableCursor: { graphSeq: 1 } });
+
+    const nonMonotonic = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
+      method: "POST",
+      headers: { ...headers, "x-mesh-debug-token": "debug-token" },
+      body: JSON.stringify({
+        projectId: server.graphSpaceId,
+        graphSpaceId: server.graphSpaceId,
+        newMinReadableCursor: { metaSeq: 0, graphSeq: 1 },
+        dryRun: false
+      })
+    });
+    await expect(nonMonotonic.json()).resolves.toMatchObject({ advanced: false, appliedMinReadableCursor: { graphSeq: 1 } });
+
+
+    const beyondHead = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
+      method: "POST",
+      headers: { ...headers, "x-mesh-debug-token": "debug-token" },
+      body: JSON.stringify({
+        projectId: server.graphSpaceId,
+        graphSpaceId: server.graphSpaceId,
+        newMinReadableCursor: { metaSeq: 0, graphSeq: 2 },
+        dryRun: false
+      })
+    });
+    expect(beyondHead.status).toBe(400);
+    await expect(beyondHead.json()).resolves.toMatchObject({ reasonCode: "CURSOR.BEYOND_HEAD" });
+
+    const stalePoll = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:poll?cursor=${encodeURIComponent(JSON.stringify({ metaSeq: 0, graphSeq: 0 }))}`, { headers });
+    expect(stalePoll.status).toBe(410);
+    await expect(stalePoll.json()).resolves.toMatchObject({ kind: "cursor_too_old", minReadableCursor: { graphSeq: 1 } });
+
+    const missingScope = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
+      method: "POST",
+      headers: { ...headers, "x-mesh-debug-token": "debug-token" },
+      body: JSON.stringify({
+        projectId: "00000000-0000-4000-8000-000000000099",
+        graphSpaceId: "00000000-0000-4000-8000-000000000099",
+        newMinReadableCursor: { metaSeq: 0, graphSeq: 1 },
+        dryRun: true
+      })
+    });
+    expect(missingScope.status).toBe(404);
+
+    process.env.NODE_ENV = prevNodeEnv;
+    process.env.ENABLE_DEBUG_ENDPOINTS = prevDebugEnabled;
+    process.env.MESH_DEBUG_ENDPOINT_TOKEN = prevDebugToken;
+  });
+
   it("purges history and returns cursor_too_old", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-retention-"));
     const server = await startMeshGraphServer({ storageDir, port: 0 });
