@@ -455,10 +455,22 @@ async function handleRequest(
     }
     const dryRun = body.dryRun !== false;
     await deps.refreshProjectHead(projectId);
+    if (compareCursor(nextCursor, project.headCursor) > 0) {
+      writeJson(res, 400, {
+        status: "rejected",
+        category: "VALIDATION",
+        reasonCode: "CURSOR.BEYOND_HEAD",
+        projectId,
+        graphSpaceId,
+        headCursor: project.headCursor,
+        proposedMinReadableCursor: nextCursor
+      });
+      return;
+    }
     const previous = project.minReadableCursor;
     const advanced = compareCursor(nextCursor, previous) > 0;
     if (!dryRun && advanced) {
-      project.minReadableCursor = boundedMinReadableCursor(nextCursor, project.headCursor);
+      project.minReadableCursor = nextCursor;
       project.updatedAt = Date.now();
       await saveCatalog(deps.catalogPath, deps.catalog);
     }

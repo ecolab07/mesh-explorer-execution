@@ -104,7 +104,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             <label>metaSeq <input id="debugMinReadableMetaSeq" style="width:100%" type="number" min="0" value="0"/></label>
             <label>graphSeq <input id="debugMinReadableGraphSeq" style="width:100%" type="number" min="0" value="0"/></label>
             <button id="debugMinReadableDryRun">Set minReadable (dry run)</button>
-            <button id="debugMinReadableApply" style="margin-left:8px;">Apply</button>
+            <button id="debugMinReadableSuggest" style="margin-left:8px;">Use snapshot+1</button><button id="debugMinReadableApply" style="margin-left:8px;">Apply</button>
           </div>
           <div id="projectReport" style="margin-top:6px;font-size:12px;color:#374151;"></div>
           <div style="margin-top:6px;font-size:12px;color:#6b7280;"><strong>App preferences (local only)</strong>: layout and debug options in the panel below.</div>
@@ -247,6 +247,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   };
   el.debugMinReadableDryRun.onclick = () => {
     void advanceMinReadableCursor(true);
+  };
+  el.debugMinReadableSuggest.onclick = () => {
+    suggestSnapshotPlusOne();
   };
   el.debugMinReadableApply.onclick = () => {
     void advanceMinReadableCursor(false);
@@ -494,21 +497,55 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     el.projectReport.textContent = `purge report: ${await response.text()}`;
   }
 
+  let latestDebugScopeState: { headCursor: Cursor; latestSnapshotCursor: Cursor | null } | null = null;
+
   async function refreshMinReadableDebugState(): Promise<void> {
     if (!isDevRuntime()) return;
     try {
-      const response = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}`, {
-        headers: headers(el.principal.value)
-      });
-      if (!response.ok) return;
-      const payload = (await response.json()) as { minReadableCursor?: Cursor; projectId?: string; graphSpaceId?: string };
+      const [projectResponse, snapshotsResponse] = await Promise.all([
+        fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}`, {
+          headers: headers(el.principal.value)
+        }),
+        fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/snapshots`, {
+          headers: headers(el.principal.value)
+        })
+      ]);
+      if (!projectResponse.ok) return;
+      const payload = (await projectResponse.json()) as { minReadableCursor?: Cursor; projectId?: string; graphSpaceId?: string; headCursor?: Cursor };
+      const snapshots = snapshotsResponse.ok
+        ? (await snapshotsResponse.json()) as Array<{ cursor?: Cursor }>
+        : [];
       const minReadable = payload.minReadableCursor ?? { metaSeq: 0, graphSeq: 0 };
-      el.debugScopeInfo.textContent = `scope projectId=${payload.projectId ?? el.graphSpaceId.value}, graphSpaceId=${payload.graphSpaceId ?? el.graphSpaceId.value}, current minReadable=(${minReadable.metaSeq}, ${minReadable.graphSeq})`;
+      const headCursor = payload.headCursor ?? { metaSeq: 0, graphSeq: 0 };
+      const latestSnapshotCursor = snapshots[0]?.cursor ?? null;
+      latestDebugScopeState = { headCursor, latestSnapshotCursor };
+      el.debugScopeInfo.textContent = `scope projectId=${payload.projectId ?? el.graphSpaceId.value}, graphSpaceId=${payload.graphSpaceId ?? el.graphSpaceId.value}, minReadable=(${minReadable.metaSeq}, ${minReadable.graphSeq}), head=(${headCursor.metaSeq}, ${headCursor.graphSeq}), latestSnapshot=${latestSnapshotCursor ? `(${latestSnapshotCursor.metaSeq}, ${latestSnapshotCursor.graphSeq})` : "none"}`;
       el.debugMinReadableMetaSeq.value = String(minReadable.metaSeq);
       el.debugMinReadableGraphSeq.value = String(minReadable.graphSeq);
     } catch (error) {
       console.error("[mesh-ui] refreshMinReadableDebugState failed", error);
     }
+  }
+
+  function suggestSnapshotPlusOne(): void {
+    if (!latestDebugScopeState?.latestSnapshotCursor) {
+      console.error("[mesh-ui] suggestSnapshotPlusOne unavailable: no snapshot for scope");
+      return;
+    }
+    const suggested: Cursor = {
+      metaSeq: latestDebugScopeState.latestSnapshotCursor.metaSeq,
+      graphSeq: latestDebugScopeState.latestSnapshotCursor.graphSeq + 1
+    };
+    if (compareCursor(suggested, latestDebugScopeState.headCursor) > 0) {
+      console.error("[mesh-ui] cannot suggest snapshot+1 beyond head; create at least one event after latest snapshot", {
+        suggested,
+        headCursor: latestDebugScopeState.headCursor,
+        latestSnapshotCursor: latestDebugScopeState.latestSnapshotCursor
+      });
+      return;
+    }
+    el.debugMinReadableMetaSeq.value = String(suggested.metaSeq);
+    el.debugMinReadableGraphSeq.value = String(suggested.graphSeq);
   }
 
   async function advanceMinReadableCursor(dryRun: boolean): Promise<void> {
@@ -1416,6 +1453,7 @@ type UiElements = {
   debugMinReadableMetaSeq: HTMLInputElement;
   debugMinReadableGraphSeq: HTMLInputElement;
   debugMinReadableDryRun: HTMLButtonElement;
+  debugMinReadableSuggest: HTMLButtonElement;
   debugMinReadableApply: HTMLButtonElement;
   projectReport: HTMLDivElement;
 };
@@ -1461,6 +1499,7 @@ function byId(container: HTMLElement): UiElements {
     debugMinReadableMetaSeq: container.querySelector("#debugMinReadableMetaSeq") as HTMLInputElement,
     debugMinReadableGraphSeq: container.querySelector("#debugMinReadableGraphSeq") as HTMLInputElement,
     debugMinReadableDryRun: container.querySelector("#debugMinReadableDryRun") as HTMLButtonElement,
+    debugMinReadableSuggest: container.querySelector("#debugMinReadableSuggest") as HTMLButtonElement,
     debugMinReadableApply: container.querySelector("#debugMinReadableApply") as HTMLButtonElement,
     projectReport: container.querySelector("#projectReport") as HTMLDivElement
   };

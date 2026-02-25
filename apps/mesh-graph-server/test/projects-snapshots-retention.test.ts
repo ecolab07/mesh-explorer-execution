@@ -311,6 +311,20 @@ describe("projects + snapshots + retention", () => {
     });
     await expect(nonMonotonic.json()).resolves.toMatchObject({ advanced: false, appliedMinReadableCursor: { graphSeq: 1 } });
 
+
+    const beyondHead = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
+      method: "POST",
+      headers: { ...headers, "x-mesh-debug-token": "debug-token" },
+      body: JSON.stringify({
+        projectId: server.graphSpaceId,
+        graphSpaceId: server.graphSpaceId,
+        newMinReadableCursor: { metaSeq: 0, graphSeq: 2 },
+        dryRun: false
+      })
+    });
+    expect(beyondHead.status).toBe(400);
+    await expect(beyondHead.json()).resolves.toMatchObject({ reasonCode: "CURSOR.BEYOND_HEAD" });
+
     const stalePoll = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:poll?cursor=${encodeURIComponent(JSON.stringify({ metaSeq: 0, graphSeq: 0 }))}`, { headers });
     expect(stalePoll.status).toBe(410);
     await expect(stalePoll.json()).resolves.toMatchObject({ kind: "cursor_too_old", minReadableCursor: { graphSeq: 1 } });
