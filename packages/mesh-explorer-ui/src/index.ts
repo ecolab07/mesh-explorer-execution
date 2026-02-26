@@ -8,7 +8,7 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
-import { chooseInitialSyncCursor, nextMonotonicCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
+import { chooseInitialSyncCursorWithDiagnostics, nextMonotonicCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
 import {
@@ -585,21 +585,25 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const persistedCursor = readCursor(storageKey);
     const serverBootstrap = await fetchServerBootstrapCursor(normalizedPrincipal);
     const snapshotCursor = await bootstrapFromSnapshot(normalizedPrincipal);
-    const initialCursor = chooseInitialSyncCursor({
+    const cursorChoice = chooseInitialSyncCursorWithDiagnostics({
       persistedCursor,
       serverCursor: serverBootstrap.serverCursor,
       minReadableCursor: serverBootstrap.minReadableCursor,
       snapshotCursor,
       projectionEmpty
     });
+    const initialCursor = cursorChoice.chosenCursor;
     store.setCursor(initialCursor);
     emitUiDebugLog("sync.bootstrap.cursor_choice", {
       graphSpaceId: el.graphSpaceId.value,
       localCursorKey: storageKey,
       persistedCursor,
       serverCursor: serverBootstrap.serverCursor,
+      minReadableCursor: serverBootstrap.minReadableCursor,
+      floorCursor: cursorChoice.floorCursor,
       snapshotCursor,
       projectionEmpty,
+      candidateDiagnostics: cursorChoice.candidateDiagnostics,
       chosenCursor: initialCursor
     });
     console.info("[mesh-ui] sync bootstrap cursor choice", {
@@ -607,8 +611,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       localCursorKey: storageKey,
       persistedCursor,
       serverCursor: serverBootstrap.serverCursor,
+      minReadableCursor: serverBootstrap.minReadableCursor,
+      floorCursor: cursorChoice.floorCursor,
       snapshotCursor,
       projectionEmpty,
+      candidateDiagnostics: cursorChoice.candidateDiagnostics,
       chosenCursor: initialCursor
     });
 
