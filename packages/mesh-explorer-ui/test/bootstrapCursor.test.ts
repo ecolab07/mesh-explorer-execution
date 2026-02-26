@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { cursorStorageKey } from "../src/cursorStorage.js";
 import {
   chooseInitialSyncCursor,
+  chooseInitialSyncCursorWithDiagnostics,
   isStoreEmpty,
   nextMonotonicCursor,
   resolveBootstrapFromCursor,
@@ -57,34 +58,71 @@ describe("mesh explorer bootstrap cursor", () => {
     })).toEqual({ metaSeq: 0, graphSeq: 100 });
   });
 
-  it("uses server cursor only when persisted cursor is missing", () => {
+  it("falls back to floor when persisted/snapshot are missing", () => {
     expect(chooseInitialSyncCursor({
       persistedCursor: null,
       serverCursor: { metaSeq: 0, graphSeq: 76 },
-      minReadableCursor: null,
+      minReadableCursor: { metaSeq: 0, graphSeq: 12 },
       snapshotCursor: null,
       projectionEmpty: false
-    })).toEqual({ metaSeq: 0, graphSeq: 76 });
+    })).toEqual({ metaSeq: 0, graphSeq: 12 });
   });
 
-  it("prefers snapshot cursor when projection is empty", () => {
+  it("bootstrap respects minReadable floor even when projectionEmpty=true and snapshotCursor < minReadable", () => {
     expect(chooseInitialSyncCursor({
-      persistedCursor: { metaSeq: 0, graphSeq: 18 },
+      persistedCursor: { metaSeq: 0, graphSeq: 6 },
       serverCursor: { metaSeq: 0, graphSeq: 18 },
-      minReadableCursor: { metaSeq: 0, graphSeq: 0 },
-      snapshotCursor: { metaSeq: 0, graphSeq: 10 },
+      minReadableCursor: { metaSeq: 0, graphSeq: 6 },
+      snapshotCursor: { metaSeq: 0, graphSeq: 5 },
       projectionEmpty: true
-    })).toEqual({ metaSeq: 0, graphSeq: 10 });
+    })).toEqual({ metaSeq: 0, graphSeq: 6 });
   });
 
-  it("falls back to minReadable when projection is empty and snapshot is missing", () => {
+  it("falls back to minReadable when projection is empty and all candidates are below floor", () => {
     expect(chooseInitialSyncCursor({
-      persistedCursor: { metaSeq: 0, graphSeq: 18 },
+      persistedCursor: { metaSeq: 0, graphSeq: 5 },
       serverCursor: { metaSeq: 0, graphSeq: 18 },
-      minReadableCursor: { metaSeq: 0, graphSeq: 7 },
-      snapshotCursor: null,
+      minReadableCursor: { metaSeq: 0, graphSeq: 6 },
+      snapshotCursor: { metaSeq: 0, graphSeq: 4 },
       projectionEmpty: true
-    })).toEqual({ metaSeq: 0, graphSeq: 7 });
+    })).toEqual({ metaSeq: 0, graphSeq: 6 });
+  });
+
+  it("no repeated 410 loop after recovery when persistedCursor is updated to minReadable", () => {
+    const firstLoad = chooseInitialSyncCursor({
+      persistedCursor: null,
+      serverCursor: null,
+      minReadableCursor: { metaSeq: 0, graphSeq: 6 },
+      snapshotCursor: { metaSeq: 0, graphSeq: 5 },
+      projectionEmpty: true
+    });
+    expect(firstLoad.graphSeq).toBeGreaterThanOrEqual(6);
+
+    const refreshLoad = chooseInitialSyncCursor({
+      persistedCursor: { metaSeq: 0, graphSeq: 6 },
+      serverCursor: null,
+      minReadableCursor: null,
+      snapshotCursor: { metaSeq: 0, graphSeq: 5 },
+      projectionEmpty: true
+    });
+    expect(refreshLoad.graphSeq).toBeGreaterThanOrEqual(6);
+  });
+
+  it("emits diagnostics including rejected candidates under minReadable floor", () => {
+    const result = chooseInitialSyncCursorWithDiagnostics({
+      persistedCursor: { metaSeq: 0, graphSeq: 5 },
+      serverCursor: { metaSeq: 0, graphSeq: 9 },
+      minReadableCursor: { metaSeq: 0, graphSeq: 6 },
+      snapshotCursor: { metaSeq: 0, graphSeq: 4 },
+      projectionEmpty: true
+    });
+
+    expect(result.floorCursor).toEqual({ metaSeq: 0, graphSeq: 6 });
+    expect(result.chosenCursor).toEqual({ metaSeq: 0, graphSeq: 6 });
+    expect(result.candidateDiagnostics).toEqual([
+      { source: "persistedCursor", cursor: { metaSeq: 0, graphSeq: 5 }, accepted: false, reason: "below_min_readable_floor" },
+      { source: "snapshotCursor", cursor: { metaSeq: 0, graphSeq: 4 }, accepted: false, reason: "below_min_readable_floor" }
+    ]);
   });
 
 });

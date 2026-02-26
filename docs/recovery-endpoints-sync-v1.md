@@ -21,6 +21,7 @@
   - `sync:poll` / `events:read`: event-sequence cursors (`metaSeq`, `graphSeq`).
   - `sync:subscribe` / `sync:pull`: principal-visible transaction cursor (`from`, `cursorVisible`).
 - Always keep a durable local event cursor (`metaSeq`, `graphSeq`) for recovery and call `sync:poll` on reconnect, uncertainty, duplicate ambiguity, or cursor mismatch.
+- Client bootstrap rule: initial `chosenCursor` must be bounded by `minReadableCursor` when provided by `GET /v1/:graphSpaceId`; never start poll/subscribe below that floor, even when reusing a snapshot cursor.
 
 ## Gap / mismatch handling
 

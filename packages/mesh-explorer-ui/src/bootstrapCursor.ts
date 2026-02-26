@@ -33,23 +33,54 @@ export function chooseInitialSyncCursor(input: {
   snapshotCursor: Cursor | null;
   projectionEmpty: boolean;
 }): Cursor {
+  return chooseInitialSyncCursorWithDiagnostics(input).chosenCursor;
+}
+
+export function chooseInitialSyncCursorWithDiagnostics(input: {
+  persistedCursor: Cursor | null;
+  serverCursor: Cursor | null;
+  minReadableCursor: Cursor | null;
+  snapshotCursor: Cursor | null;
+  projectionEmpty: boolean;
+}): {
+  chosenCursor: Cursor;
+  floorCursor: Cursor;
+  candidateDiagnostics: Array<{ source: "persistedCursor" | "snapshotCursor"; cursor: Cursor | null; accepted: boolean; reason: string }>;
+} {
   const persisted = sanitizeCursor(input.persistedCursor);
   const snapshot = sanitizeCursor(input.snapshotCursor);
   const minReadable = sanitizeCursor(input.minReadableCursor);
-  const server = sanitizeCursor(input.serverCursor);
+  const floor = minReadable ?? ZERO_CURSOR;
 
-  if (input.projectionEmpty) {
-    if (snapshot) return snapshot;
-    if (minReadable) return minReadable;
-    return ZERO_CURSOR;
+  const candidateDiagnostics: Array<{ source: "persistedCursor" | "snapshotCursor"; cursor: Cursor | null; accepted: boolean; reason: string }> = [
+    { source: "persistedCursor", cursor: persisted, accepted: false, reason: "missing_or_invalid" },
+    { source: "snapshotCursor", cursor: snapshot, accepted: false, reason: "missing_or_invalid" }
+  ];
+
+  const validCandidates = candidateDiagnostics.flatMap((candidate) => {
+    if (!candidate.cursor) return [];
+    if (compareCursor(candidate.cursor, floor) < 0) {
+      candidate.reason = "below_min_readable_floor";
+      return [];
+    }
+    candidate.accepted = true;
+    candidate.reason = "admissible";
+    return [candidate.cursor];
+  });
+
+  if (validCandidates.length > 0) {
+    return {
+      chosenCursor: validCandidates.reduce((max, cursor) => (compareCursor(cursor, max) > 0 ? cursor : max), validCandidates[0]!),
+      floorCursor: floor,
+      candidateDiagnostics
+    };
   }
 
-  if (persisted) return persisted;
-
-  const candidates = [server, minReadable, snapshot]
-    .filter((cursor): cursor is Cursor => cursor !== null);
-  if (candidates.length === 0) return ZERO_CURSOR;
-  return candidates.reduce((max, cursor) => (compareCursor(cursor, max) > 0 ? cursor : max), candidates[0]!);
+  return {
+    chosenCursor: floor,
+    floorCursor: floor,
+    candidateDiagnostics
+  };
 }
 
 function sanitizeCursor(cursor: Cursor | null): Cursor | null {
