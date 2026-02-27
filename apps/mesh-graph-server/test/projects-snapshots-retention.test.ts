@@ -326,8 +326,10 @@ describe("projects + snapshots + retention", () => {
     await expect(beyondHead.json()).resolves.toMatchObject({ reasonCode: "CURSOR.BEYOND_HEAD" });
 
     const stalePoll = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:poll?cursor=${encodeURIComponent(JSON.stringify({ metaSeq: 0, graphSeq: 0 }))}`, { headers });
-    expect(stalePoll.status).toBe(410);
-    await expect(stalePoll.json()).resolves.toMatchObject({ kind: "cursor_too_old", minReadableCursor: { graphSeq: 1 } });
+    expect(stalePoll.status).toBe(200);
+    const stalePollBody = (await stalePoll.json()) as { graph: Array<{ seq: number }>; cursorAfter: { graphSeq: number } };
+    expect(stalePollBody.graph[0]?.seq).toBe(1);
+    expect(stalePollBody.cursorAfter.graphSeq).toBeGreaterThanOrEqual(1);
 
     const missingScope = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
       method: "POST",
@@ -370,4 +372,78 @@ describe("projects + snapshots + retention", () => {
     expect(oldPoll.status).toBe(410);
     await expect(oldPoll.json()).resolves.toMatchObject({ kind: "cursor_too_old" });
   });
+
+  it("enforces minReadable as startSeq for poll and subscribe without off-by-one", async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevDebugEnabled = process.env.ENABLE_DEBUG_ENDPOINTS;
+    const prevDebugToken = process.env.MESH_DEBUG_ENDPOINT_TOKEN;
+    process.env.NODE_ENV = "development";
+    process.env.ENABLE_DEBUG_ENDPOINTS = "1";
+    process.env.MESH_DEBUG_ENDPOINT_TOKEN = "debug-token";
+
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-min-readable-off-by-one-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    for (let idx = 1; idx <= 8; idx += 1) {
+      const createNode = await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ id: `MR-${idx}`, label: `MR-${idx}` })
+      });
+      expect(createNode.status).toBe(200);
+    }
+
+    const snapshot = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots:create`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ label: "pre-min-readable" })
+    });
+    const snapshotBody = (await snapshot.json()) as { snapshotId: string };
+    expect(snapshotBody.snapshotId).toBeTruthy();
+
+    const applyMinReadable = await fetch(`${server.url}/debug/advance-min-readable-cursor`, {
+      method: "POST",
+      headers: { ...headers, "x-mesh-debug-token": "debug-token" },
+      body: JSON.stringify({
+        projectId: server.graphSpaceId,
+        graphSpaceId: server.graphSpaceId,
+        newMinReadableCursor: { metaSeq: 0, graphSeq: 6 },
+        dryRun: false
+      })
+    });
+    expect(applyMinReadable.status).toBe(200);
+
+    const allowedPoll = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:poll?cursor=${encodeURIComponent(JSON.stringify({ metaSeq: 0, graphSeq: 5 }))}`, { headers });
+    expect(allowedPoll.status).toBe(200);
+    const allowedPollBody = (await allowedPoll.json()) as { graph: Array<{ seq: number }>; cursorAfter: { graphSeq: number } };
+    expect(allowedPollBody.graph.length).toBeGreaterThan(0);
+    expect(allowedPollBody.graph[0]?.seq).toBe(6);
+    expect(allowedPollBody.cursorAfter.graphSeq).toBeGreaterThanOrEqual(6);
+
+    const stalePoll = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:poll?cursor=${encodeURIComponent(JSON.stringify({ metaSeq: 0, graphSeq: 4 }))}`, { headers });
+    expect(stalePoll.status).toBe(410);
+    await expect(stalePoll.json()).resolves.toMatchObject({
+      kind: "cursor_too_old",
+      minReadableCursor: { graphSeq: 6 },
+      recommendedSnapshotId: snapshotBody.snapshotId
+    });
+
+    const allowedSubscribe = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:subscribe?from=5`, { headers });
+    expect(allowedSubscribe.status).toBe(200);
+    await allowedSubscribe.body?.cancel();
+
+    const staleSubscribe = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:subscribe?from=4`, { headers });
+    expect(staleSubscribe.status).toBe(410);
+    await expect(staleSubscribe.json()).resolves.toMatchObject({
+      kind: "cursor_too_old",
+      minReadableCursor: { graphSeq: 6 },
+      recommendedSnapshotId: snapshotBody.snapshotId
+    });
+
+    process.env.NODE_ENV = prevNodeEnv;
+    process.env.ENABLE_DEBUG_ENDPOINTS = prevDebugEnabled;
+    process.env.MESH_DEBUG_ENDPOINT_TOKEN = prevDebugToken;
+  });
+
 });
