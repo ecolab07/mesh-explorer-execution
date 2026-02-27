@@ -448,6 +448,8 @@ async function handleRequest(
       writeJson(res, 404, { status: "error", category: "NOT_FOUND", reasonCode: "PROJECT.NOT_FOUND", projectId, graphSpaceId });
       return;
     }
+    // minReadableCursor is the minimal readable *start* sequence (inclusive).
+    // For sync:poll/sync:subscribe, callers provide the last applied cursor and read from +1.
     const nextCursor = parseCursorFromBody(body.newMinReadableCursor);
     if (!nextCursor) {
       writeJson(res, 400, { status: "rejected", category: "VALIDATION", reasonCode: "CURSOR.INVALID", projectId, graphSpaceId });
@@ -636,7 +638,7 @@ async function handleRequest(
   if (req.method === "GET" && pollMatch) {
     const cursor = parseCursor(requestUrl.searchParams.get("cursor"));
     const project = deps.catalog.projects[projectId]!;
-    if (isCursorTooOld(cursor, project.minReadableCursor)) {
+    if (isPollCursorTooOld(cursor, project.minReadableCursor)) {
       const recommendedSnapshotId = deps.catalog.snapshots[projectId]?.[0]?.snapshotId;
       writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
       return;
@@ -650,12 +652,12 @@ async function handleRequest(
   if (req.method === "GET" && subscribeMatch) {
     const from = Number.parseInt(requestUrl.searchParams.get("from") ?? "0", 10) || 0;
     const project = deps.catalog.projects[projectId]!;
-    if (from < project.minReadableCursor.graphSeq) {
+    if (isSubscribeFromTooOld(from, project.minReadableCursor.graphSeq)) {
       const recommendedSnapshotId = deps.catalog.snapshots[projectId]?.[0]?.snapshotId;
       writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
       return;
     }
-    await streamSubscribe(res, async (cursor) => gateway.syncPull(graphSpaceId, principal, cursor));
+    await streamSubscribe(res, async (cursor) => gateway.syncPull(graphSpaceId, principal, cursor), from);
     return;
   }
 
@@ -832,8 +834,14 @@ function parseCursor(raw: string | null): Cursor {
   }
 }
 
-function isCursorTooOld(requested: Cursor, minReadable: Cursor): boolean {
-  return requested.metaSeq < minReadable.metaSeq || requested.graphSeq < minReadable.graphSeq;
+function isPollCursorTooOld(lastAppliedCursor: Cursor, minReadableStartCursor: Cursor): boolean {
+  // sync:poll uses "cursor" as the last applied event position and reads from cursor+1,
+  // so staleness is determined against the effective start sequence, not the cursor itself.
+  return lastAppliedCursor.metaSeq + 1 < minReadableStartCursor.metaSeq || lastAppliedCursor.graphSeq + 1 < minReadableStartCursor.graphSeq;
+}
+
+function isSubscribeFromTooOld(fromLastAppliedGraphSeq: number, minReadableGraphStartSeq: number): boolean {
+  return fromLastAppliedGraphSeq + 1 < minReadableGraphStartSeq;
 }
 
 function boundedMinReadableCursor(minReadable: Cursor, head: Cursor): Cursor {
@@ -845,12 +853,13 @@ function boundedMinReadableCursor(minReadable: Cursor, head: Cursor): Cursor {
 
 async function streamSubscribe(
   res: ServerResponse,
-  syncPull: (fromCursorVisible: number) => Promise<{ txBundlesVisible: Array<{ principalCursor: number; txBundle: { graphEvents: unknown[] } }>; cursorAfterVisible: number }>
+  syncPull: (fromCursorVisible: number) => Promise<{ txBundlesVisible: Array<{ principalCursor: number; txBundle: { graphEvents: unknown[] } }>; cursorAfterVisible: number }>,
+  initialCursorVisible: number
 ): Promise<void> {
   res.statusCode = 200;
   res.setHeader("content-type", "text/event-stream");
   res.setHeader("cache-control", "no-cache");
-  let cursor = 0;
+  let cursor = initialCursorVisible;
   const timer = setInterval(async () => {
     const pulled = await syncPull(cursor);
     if (pulled.txBundlesVisible.length > 0) {

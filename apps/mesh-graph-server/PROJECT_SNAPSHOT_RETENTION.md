@@ -29,7 +29,11 @@ The graph server now treats each project as an isolated graph space with its own
 - `GET /v1/:projectId/sync:poll`
 - `GET /v1/:projectId/sync:subscribe`
 
-`sync:poll` and `sync:subscribe` return `cursor_too_old` (HTTP 410) when requesting below `minReadableCursor`.
+`sync:poll` cursor semantics are `lastApplied`, so events are returned for `(cursor, cursorAfter]`.
+`minReadableCursor` is interpreted as the minimal readable **start** seq (inclusive).
+
+- `sync:poll` rejects with `cursor_too_old` (HTTP 410) when `cursor + 1 < minReadableCursor`.
+- `sync:subscribe?from=...` uses the same exclusive semantics (`start = from + 1`) and rejects when `from + 1 < minReadableCursor`.
 
 ## Retention job
 
