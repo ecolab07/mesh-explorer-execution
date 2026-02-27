@@ -6,6 +6,7 @@ import {
   chooseInitialSyncCursorWithDiagnostics,
   isStoreEmpty,
   nextMonotonicCursor,
+  resolveBootstrapReplayPlan,
   resolveBootstrapFromCursor,
   shouldPersistBootstrapCursor,
   ZERO_CURSOR
@@ -123,6 +124,49 @@ describe("mesh explorer bootstrap cursor", () => {
       { source: "persistedCursor", cursor: { metaSeq: 0, graphSeq: 5 }, accepted: false, reason: "below_min_readable_floor" },
       { source: "snapshotCursor", cursor: { metaSeq: 0, graphSeq: 4 }, accepted: false, reason: "below_min_readable_floor" }
     ]);
+  });
+
+  it("projectionEmpty replay plan uses snapshot baseline but polls from floor when snapshot is below floor", () => {
+    const targetCursor = chooseInitialSyncCursor({
+      persistedCursor: { metaSeq: 0, graphSeq: 8 },
+      serverCursor: { metaSeq: 0, graphSeq: 8 },
+      minReadableCursor: { metaSeq: 0, graphSeq: 6 },
+      snapshotCursor: { metaSeq: 0, graphSeq: 5 },
+      projectionEmpty: true
+    });
+
+    expect(targetCursor).toEqual({ metaSeq: 0, graphSeq: 8 });
+    expect(resolveBootstrapReplayPlan({
+      projectionEmpty: true,
+      floorCursor: { metaSeq: 0, graphSeq: 6 },
+      snapshotCursor: { metaSeq: 0, graphSeq: 5 },
+      targetCursor
+    })).toEqual({
+      bootstrapStartCursor: { metaSeq: 0, graphSeq: 5 },
+      bootstrapTargetCursor: { metaSeq: 0, graphSeq: 8 },
+      pollFromCursor: { metaSeq: 0, graphSeq: 6 }
+    });
+  });
+
+  it("projectionEmpty replay plan without snapshot starts and polls from floor", () => {
+    const targetCursor = chooseInitialSyncCursor({
+      persistedCursor: { metaSeq: 0, graphSeq: 8 },
+      serverCursor: { metaSeq: 0, graphSeq: 8 },
+      minReadableCursor: { metaSeq: 0, graphSeq: 6 },
+      snapshotCursor: null,
+      projectionEmpty: true
+    });
+
+    expect(resolveBootstrapReplayPlan({
+      projectionEmpty: true,
+      floorCursor: { metaSeq: 0, graphSeq: 6 },
+      snapshotCursor: null,
+      targetCursor
+    })).toEqual({
+      bootstrapStartCursor: { metaSeq: 0, graphSeq: 6 },
+      bootstrapTargetCursor: { metaSeq: 0, graphSeq: 8 },
+      pollFromCursor: { metaSeq: 0, graphSeq: 6 }
+    });
   });
 
 });

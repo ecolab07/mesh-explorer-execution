@@ -8,7 +8,7 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
-import { chooseInitialSyncCursorWithDiagnostics, nextMonotonicCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
+import { chooseInitialSyncCursorWithDiagnostics, nextMonotonicCursor, resolveBootstrapReplayPlan, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
 import {
@@ -584,7 +584,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
     const persistedCursor = readCursor(storageKey);
     const serverBootstrap = await fetchServerBootstrapCursor(normalizedPrincipal);
-    const snapshotCursor = await bootstrapFromSnapshot(normalizedPrincipal);
+    const snapshotBootstrap = await bootstrapFromSnapshot(normalizedPrincipal);
+    const snapshotCursor = snapshotBootstrap.cursor;
     const cursorChoice = chooseInitialSyncCursorWithDiagnostics({
       persistedCursor,
       serverCursor: serverBootstrap.serverCursor,
@@ -592,8 +593,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       snapshotCursor,
       projectionEmpty
     });
-    const initialCursor = cursorChoice.chosenCursor;
-    store.setCursor(initialCursor);
+    const bootstrapPlan = resolveBootstrapReplayPlan({
+      projectionEmpty,
+      floorCursor: cursorChoice.floorCursor,
+      snapshotCursor,
+      targetCursor: cursorChoice.chosenCursor
+    });
+    store.setCursor(bootstrapPlan.bootstrapStartCursor);
     emitUiDebugLog("sync.bootstrap.cursor_choice", {
       graphSpaceId: el.graphSpaceId.value,
       localCursorKey: storageKey,
@@ -603,8 +609,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       floorCursor: cursorChoice.floorCursor,
       snapshotCursor,
       projectionEmpty,
+      bootstrapStartCursor: bootstrapPlan.bootstrapStartCursor,
+      bootstrapTargetCursor: bootstrapPlan.bootstrapTargetCursor,
+      pollFromCursor: bootstrapPlan.pollFromCursor,
       candidateDiagnostics: cursorChoice.candidateDiagnostics,
-      chosenCursor: initialCursor
+      chosenCursor: bootstrapPlan.bootstrapTargetCursor
     });
     console.info("[mesh-ui] sync bootstrap cursor choice", {
       graphSpaceId: el.graphSpaceId.value,
@@ -615,23 +624,27 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       floorCursor: cursorChoice.floorCursor,
       snapshotCursor,
       projectionEmpty,
+      bootstrapStartCursor: bootstrapPlan.bootstrapStartCursor,
+      bootstrapTargetCursor: bootstrapPlan.bootstrapTargetCursor,
+      pollFromCursor: bootstrapPlan.pollFromCursor,
       candidateDiagnostics: cursorChoice.candidateDiagnostics,
-      chosenCursor: initialCursor
+      chosenCursor: bootstrapPlan.bootstrapTargetCursor
     });
 
-    const replayResult = await pollReplayFromCursor(initialCursor, sessionId, activeAbort.signal);
+    const replayResult = await pollReplayFromCursor(bootstrapPlan.pollFromCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
     emitBootstrapDiagnostics("sync.bootstrap.poll_result", {
-      cursorBefore: initialCursor,
+      cursorBefore: bootstrapPlan.pollFromCursor,
       cursorAfter: replayResult.cursor,
       pollMetaEventsRead: replayResult.metaEventsRead,
       pollGraphEventsRead: replayResult.graphEventsRead,
       pollGraphEventTypesHead: replayResult.graphEventTypesHead,
       appliedGraphEventsCount: replayResult.graphEventsApplied,
+      reachedCursor: replayResult.cursor,
       resultingNodesCount: store.getState().nodesById.size,
       resultingLinksCount: store.getState().linksById.size
     });
-    persistBootstrapCursor(storageKey, initialCursor, replayResult.cursor);
+    persistBootstrapCursor(storageKey, bootstrapPlan.pollFromCursor, replayResult.cursor);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
 
@@ -646,7 +659,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       });
     }
 
-    function applyGraphEventsWithDiagnostics(source: "poll" | "sse", events: GraphEvent[]): void {
+    function applyGraphEventsWithDiagnostics(source: "snapshot" | "poll" | "sse", events: GraphEvent[]): void {
       if (events.length === 0) return;
       store.applyGraphEvents(events);
       emitBootstrapDiagnostics("sync.graph.apply", {
@@ -661,22 +674,22 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       const nodes = snapshot.payload?.nodes ?? [];
       const links = snapshot.payload?.links ?? [];
       store.resetProjection();
-      applyGraphEventsWithDiagnostics("poll", nodes.map((node) => ({ type: "graph.node.created", node } as GraphEvent)));
-      applyGraphEventsWithDiagnostics("poll", links.map((link) => ({ type: "graph.link.created", link } as GraphEvent)));
+      applyGraphEventsWithDiagnostics("snapshot", nodes.map((node) => ({ type: "graph.node.created", node } as GraphEvent)));
+      applyGraphEventsWithDiagnostics("snapshot", links.map((link) => ({ type: "graph.link.created", link } as GraphEvent)));
       const cursor = snapshot.cursor ?? { metaSeq: 0, graphSeq: 0 };
       store.setCursor(cursor);
       return cursor;
     }
 
-    async function bootstrapFromSnapshot(principalValue: string): Promise<Cursor> {
+    async function bootstrapFromSnapshot(principalValue: string): Promise<{ cursor: Cursor | null }> {
       const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:snapshot`, { headers: headers(principalValue) }, {
         principal: principalValue,
         transport: "fetch",
         debugAuth,
         onNetworkResult: (status) => markNetworkConnectivity(status, "snapshot-bootstrap")
       });
-      if (!response.ok) return { metaSeq: 0, graphSeq: 0 };
-      return applySnapshot((await response.json()) as SnapshotPayloadResponse);
+      if (!response.ok) return { cursor: null };
+      return { cursor: applySnapshot((await response.json()) as SnapshotPayloadResponse) };
     }
 
     async function fetchServerBootstrapCursor(principalValue: string): Promise<{ serverCursor: Cursor | null; minReadableCursor: Cursor | null }> {
@@ -826,7 +839,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           );
           if (!response.ok) {
             if (response.status === 410) {
-              const nextCursor = await bootstrapFromSnapshot(normalizedPrincipal);
+              const nextCursor = (await bootstrapFromSnapshot(normalizedPrincipal)).cursor ?? cursor;
               return { cursor: nextCursor, graphEventsApplied, graphEventsRead, metaEventsRead, graphEventTypesHead };
             }
             markNetworkConnectivity(response.status === 0 ? "offline" : "degraded", "poll-non-ok");

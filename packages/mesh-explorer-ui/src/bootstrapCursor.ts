@@ -83,6 +83,33 @@ export function chooseInitialSyncCursorWithDiagnostics(input: {
   };
 }
 
+export function resolveBootstrapReplayPlan(input: {
+  projectionEmpty: boolean;
+  floorCursor: Cursor;
+  snapshotCursor: Cursor | null;
+  targetCursor: Cursor;
+}): { bootstrapStartCursor: Cursor; bootstrapTargetCursor: Cursor; pollFromCursor: Cursor } {
+  const snapshot = sanitizeCursor(input.snapshotCursor);
+  const floor = sanitizeCursor(input.floorCursor) ?? ZERO_CURSOR;
+  const target = sanitizeCursor(input.targetCursor) ?? floor;
+
+  if (!input.projectionEmpty) {
+    return {
+      bootstrapStartCursor: target,
+      bootstrapTargetCursor: target,
+      pollFromCursor: target
+    };
+  }
+
+  const bootstrapStartCursor = snapshot ?? floor;
+  const pollFromCursor = snapshot && compareCursor(snapshot, floor) > 0 ? snapshot : floor;
+  return {
+    bootstrapStartCursor,
+    bootstrapTargetCursor: target,
+    pollFromCursor
+  };
+}
+
 function sanitizeCursor(cursor: Cursor | null): Cursor | null {
   if (!cursor) return null;
   if (!Number.isFinite(cursor.metaSeq) || !Number.isFinite(cursor.graphSeq)) return null;
