@@ -253,10 +253,10 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
     const project = await ensureProject(projectId);
     const context = await getProjectContext(projectId);
     const principal = { principalId: "system" };
-    const view = await readGraphView(context.gateway, projectId, principal);
+    const snapshotBuild = await readGraphView(context.gateway, projectId, principal);
     const cursor = await context.store.getCursorHead(projectId);
     project.headCursor = cursor;
-    const payload: SnapshotPayload = { nodes: view.nodes, links: view.links, version: 1 };
+    const payload: SnapshotPayload = { nodes: snapshotBuild.view.nodes, links: snapshotBuild.view.links, version: 1 };
     const serialized = JSON.stringify(payload);
     const record: SnapshotRecord = {
       snapshotId: randomUUID(),
@@ -278,6 +278,19 @@ export async function startMeshGraphServer(options: MeshGraphServerOptions): Pro
       projectId,
       graphSpaceId: graphSpaceIdFromProjectId(projectId),
       reason: label === "auto" ? "auto" : "manual"
+    });
+    console.info("SNAPSHOT_BUILD", {
+      snapshotId: record.snapshotId,
+      projectId,
+      graphSpaceId: graphSpaceIdFromProjectId(projectId),
+      reason: label === "auto" ? "auto" : "manual",
+      buildStrategy: "replay",
+      baseCursor: snapshotBuild.baseCursor,
+      replayedEventsCount: snapshotBuild.replayedEventsCount,
+      snapshotCursor: cursor,
+      sizeBytes: record.sizeBytes,
+      nodeCount: record.nodeCount,
+      linkCount: record.linkCount
     });
     await saveCatalog(catalogPath, catalog);
     return record;
@@ -556,7 +569,7 @@ async function handleRequest(
   const { gateway } = await deps.getProjectContext(projectId);
 
   if (req.method === "GET" && requestUrl.pathname === `/v1/${encodeURIComponent(projectId)}/graph:view`) {
-    writeJson(res, 200, await readGraphView(gateway, graphSpaceId, principal));
+    writeJson(res, 200, (await readGraphView(gateway, graphSpaceId, principal)).view);
     return;
   }
 
@@ -920,19 +933,32 @@ async function submitGraphCommand(
   return gateway.submit(graphSpaceId, principal, command, idempotencyKey).final;
 }
 
-async function readGraphView(gateway: LocalSyncGatewayLike, graphSpaceId: string, principal: PrincipalContext): Promise<GraphView> {
+async function readGraphView(
+  gateway: LocalSyncGatewayLike,
+  graphSpaceId: string,
+  principal: PrincipalContext
+): Promise<{ view: GraphView; replayedEventsCount: number; baseCursor: Cursor }> {
   const nodes = new Map<string, GraphNode>();
   const links = new Map<string, GraphLink>();
+  const baseCursor: Cursor = { metaSeq: 0, graphSeq: 0 };
+  let replayedEventsCount = 0;
   let cursor = 0;
   while (true) {
     const pulled = await gateway.syncPull(graphSpaceId, principal, cursor, { limitTx: 64, limitBytes: 128 * 1024 });
     for (const bundle of pulled.txBundlesVisible) {
-      for (const rawEvent of bundle.txBundle.graphEvents) applyGraphEvent(nodes, links, rawEvent as GraphEvent);
+      for (const rawEvent of bundle.txBundle.graphEvents) {
+        applyGraphEvent(nodes, links, rawEvent as GraphEvent);
+        replayedEventsCount += 1;
+      }
     }
     if (pulled.cursorAfterVisible === cursor) break;
     cursor = pulled.cursorAfterVisible;
   }
-  return { nodes: Array.from(nodes.values()), links: Array.from(links.values()).filter((link) => nodes.has(link.source) && nodes.has(link.target)) };
+  return {
+    view: { nodes: Array.from(nodes.values()), links: Array.from(links.values()).filter((link) => nodes.has(link.source) && nodes.has(link.target)) },
+    replayedEventsCount,
+    baseCursor
+  };
 }
 
 function applyGraphEvent(nodes: Map<string, GraphNode>, links: Map<string, GraphLink>, event: GraphEvent): void {

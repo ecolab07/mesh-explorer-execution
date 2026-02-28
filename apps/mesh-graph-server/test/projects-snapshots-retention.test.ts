@@ -446,4 +446,66 @@ describe("projects + snapshots + retention", () => {
     process.env.MESH_DEBUG_ENDPOINT_TOKEN = prevDebugToken;
   });
 
+
+  it("logs replay snapshot build telemetry when creating snapshots", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-snapshot-telemetry-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, { method: "POST", headers, body: JSON.stringify({ id: "S-1", label: "S-1" }) });
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots:create`, { method: "POST", headers, body: JSON.stringify({ label: "baseline" }) });
+    await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, { method: "POST", headers, body: JSON.stringify({ id: "S-2", label: "S-2" }) });
+
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const created = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots:create`, { method: "POST", headers, body: JSON.stringify({ label: "manual" }) });
+    expect(created.status).toBe(200);
+
+    expect(infoSpy).toHaveBeenCalledWith("SNAPSHOT_BUILD", expect.objectContaining({
+      buildStrategy: "replay",
+      baseCursor: { metaSeq: 0, graphSeq: 0 },
+      replayedEventsCount: expect.any(Number)
+    }));
+
+    const telemetryCall = infoSpy.mock.calls.find((call) => call[0] === "SNAPSHOT_BUILD");
+    const telemetryPayload = telemetryCall?.[1] as { replayedEventsCount?: number; snapshotCursor?: { graphSeq: number } } | undefined;
+    expect(telemetryPayload?.replayedEventsCount).toBeGreaterThan(0);
+    expect(telemetryPayload?.snapshotCursor?.graphSeq).toBeGreaterThan(0);
+
+    infoSpy.mockRestore();
+  });
+
+  it("does not advance minReadable or compact history on snapshot commit", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-snapshot-commit-order-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    for (let idx = 0; idx < 3; idx += 1) {
+      await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ id: `C-${idx}`, label: `C-${idx}` })
+      });
+    }
+
+    const before = await fetch(`${server.url}/v1/${server.graphSpaceId}`, { headers });
+    const beforeBody = (await before.json()) as { minReadableCursor: { graphSeq: number } };
+    expect(beforeBody.minReadableCursor.graphSeq).toBe(0);
+
+    const snapshot = await fetch(`${server.url}/v1/${server.graphSpaceId}/snapshots:create`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ label: "commit-check" })
+    });
+    expect(snapshot.status).toBe(200);
+
+    const after = await fetch(`${server.url}/v1/${server.graphSpaceId}`, { headers });
+    const afterBody = (await after.json()) as { minReadableCursor: { graphSeq: number } };
+    expect(afterBody.minReadableCursor.graphSeq).toBe(0);
+
+    const pollFromZero = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:poll?cursor=${encodeURIComponent(JSON.stringify({ metaSeq: 0, graphSeq: 0 }))}`, { headers });
+    expect(pollFromZero.status).toBe(200);
+    const pollBody = (await pollFromZero.json()) as { graph: Array<{ seq: number }> };
+    expect(pollBody.graph.length).toBeGreaterThan(0);
+  });
+
 });
