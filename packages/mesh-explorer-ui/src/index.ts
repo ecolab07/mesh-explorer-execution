@@ -611,7 +611,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       projectionEmpty,
       bootstrapStartCursor: bootstrapPlan.bootstrapStartCursor,
       bootstrapTargetCursor: bootstrapPlan.bootstrapTargetCursor,
-      pollFromCursor: bootstrapPlan.pollFromCursor,
+      pollStartCursor: bootstrapPlan.pollStartCursor,
+      pollCursorParam: bootstrapPlan.pollCursorParam,
       candidateDiagnostics: cursorChoice.candidateDiagnostics,
       chosenCursor: bootstrapPlan.bootstrapTargetCursor
     });
@@ -626,15 +627,17 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       projectionEmpty,
       bootstrapStartCursor: bootstrapPlan.bootstrapStartCursor,
       bootstrapTargetCursor: bootstrapPlan.bootstrapTargetCursor,
-      pollFromCursor: bootstrapPlan.pollFromCursor,
+      pollStartCursor: bootstrapPlan.pollStartCursor,
+      pollCursorParam: bootstrapPlan.pollCursorParam,
       candidateDiagnostics: cursorChoice.candidateDiagnostics,
       chosenCursor: bootstrapPlan.bootstrapTargetCursor
     });
 
-    const replayResult = await pollReplayFromCursor(bootstrapPlan.pollFromCursor, sessionId, activeAbort.signal);
+    const replayResult = await pollReplayFromCursor(bootstrapPlan.pollCursorParam, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
     emitBootstrapDiagnostics("sync.bootstrap.poll_result", {
-      cursorBefore: bootstrapPlan.pollFromCursor,
+      pollStartCursor: bootstrapPlan.pollStartCursor,
+      cursorBefore: bootstrapPlan.pollCursorParam,
       cursorAfter: replayResult.cursor,
       pollMetaEventsRead: replayResult.metaEventsRead,
       pollGraphEventsRead: replayResult.graphEventsRead,
@@ -644,7 +647,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       resultingNodesCount: store.getState().nodesById.size,
       resultingLinksCount: store.getState().linksById.size
     });
-    persistBootstrapCursor(storageKey, bootstrapPlan.pollFromCursor, replayResult.cursor);
+    persistBootstrapCursor(storageKey, bootstrapPlan.pollCursorParam, replayResult.cursor);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
 
@@ -750,7 +753,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       try {
         while (activeSessionId === syncSession) {
           try {
-            const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
+            const reachedCursor = store.getState().cursor.graphSeq;
+            const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${reachedCursor}`;
             const response = await meshFetch(url, { headers: headers(normalizedPrincipal), signal }, {
               principal: normalizedPrincipal,
               transport: "fetch-sse",

@@ -6,6 +6,7 @@ import {
   chooseInitialSyncCursorWithDiagnostics,
   isStoreEmpty,
   nextMonotonicCursor,
+  decrementCursorByOne,
   resolveBootstrapReplayPlan,
   resolveBootstrapFromCursor,
   shouldPersistBootstrapCursor,
@@ -144,7 +145,8 @@ describe("mesh explorer bootstrap cursor", () => {
     })).toEqual({
       bootstrapStartCursor: { metaSeq: 0, graphSeq: 5 },
       bootstrapTargetCursor: { metaSeq: 0, graphSeq: 8 },
-      pollFromCursor: { metaSeq: 0, graphSeq: 6 }
+      pollStartCursor: { metaSeq: 0, graphSeq: 6 },
+      pollCursorParam: { metaSeq: 0, graphSeq: 5 }
     });
   });
 
@@ -165,8 +167,28 @@ describe("mesh explorer bootstrap cursor", () => {
     })).toEqual({
       bootstrapStartCursor: { metaSeq: 0, graphSeq: 6 },
       bootstrapTargetCursor: { metaSeq: 0, graphSeq: 8 },
-      pollFromCursor: { metaSeq: 0, graphSeq: 6 }
+      pollStartCursor: { metaSeq: 0, graphSeq: 6 },
+      pollCursorParam: { metaSeq: 0, graphSeq: 5 }
     });
   });
+
+  it("decrements poll cursor params without going negative", () => {
+    expect(decrementCursorByOne({ metaSeq: 0, graphSeq: 0 })).toEqual({ metaSeq: 0, graphSeq: 0 });
+    expect(decrementCursorByOne({ metaSeq: 0, graphSeq: 1 })).toEqual({ metaSeq: 0, graphSeq: 0 });
+    expect(decrementCursorByOne({ metaSeq: 2, graphSeq: 10 })).toEqual({ metaSeq: 1, graphSeq: 9 });
+  });
+
+  it("projectionEmpty replay plan computes poll start and cursor param from floor", () => {
+    const plan = resolveBootstrapReplayPlan({
+      projectionEmpty: true,
+      floorCursor: { metaSeq: 0, graphSeq: 0 },
+      snapshotCursor: null,
+      targetCursor: { metaSeq: 0, graphSeq: 2 }
+    });
+
+    expect(plan.pollStartCursor).toEqual({ metaSeq: 0, graphSeq: 0 });
+    expect(plan.pollCursorParam).toEqual({ metaSeq: 0, graphSeq: 0 });
+  });
+
 
 });

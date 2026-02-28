@@ -88,7 +88,7 @@ export function resolveBootstrapReplayPlan(input: {
   floorCursor: Cursor;
   snapshotCursor: Cursor | null;
   targetCursor: Cursor;
-}): { bootstrapStartCursor: Cursor; bootstrapTargetCursor: Cursor; pollFromCursor: Cursor } {
+}): { bootstrapStartCursor: Cursor; bootstrapTargetCursor: Cursor; pollStartCursor: Cursor; pollCursorParam: Cursor } {
   const snapshot = sanitizeCursor(input.snapshotCursor);
   const floor = sanitizeCursor(input.floorCursor) ?? ZERO_CURSOR;
   const target = sanitizeCursor(input.targetCursor) ?? floor;
@@ -97,16 +97,25 @@ export function resolveBootstrapReplayPlan(input: {
     return {
       bootstrapStartCursor: target,
       bootstrapTargetCursor: target,
-      pollFromCursor: target
+      pollStartCursor: target,
+      pollCursorParam: target
     };
   }
 
   const bootstrapStartCursor = snapshot ?? floor;
-  const pollFromCursor = snapshot && compareCursor(snapshot, floor) > 0 ? snapshot : floor;
+  const pollStartCursor = snapshot && compareCursor(snapshot, floor) > 0 ? snapshot : floor;
   return {
     bootstrapStartCursor,
     bootstrapTargetCursor: target,
-    pollFromCursor
+    pollStartCursor,
+    pollCursorParam: decrementCursorByOne(pollStartCursor)
+  };
+}
+
+export function decrementCursorByOne(cursor: Cursor): Cursor {
+  return {
+    metaSeq: Math.max(0, cursor.metaSeq - 1),
+    graphSeq: Math.max(0, cursor.graphSeq - 1)
   };
 }
 
