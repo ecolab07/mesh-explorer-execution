@@ -4,6 +4,32 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { startMeshGraphServer, type MeshGraphServerHandle } from "../src/index";
 
+async function readSseFrame(response: Response, timeoutMs = 5000): Promise<unknown> {
+  if (!response.body) throw new Error("missing SSE body");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const timeout = Date.now() + timeoutMs;
+
+  while (Date.now() < timeout) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const boundary = buffer.indexOf("\n\n");
+    if (boundary === -1) continue;
+    const frameText = buffer.slice(0, boundary);
+    buffer = buffer.slice(boundary + 2);
+    const dataLine = frameText
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.startsWith("data:"));
+    if (!dataLine) continue;
+    return JSON.parse(dataLine.slice("data:".length));
+  }
+
+  throw new Error("timed out waiting for SSE frame");
+}
+
 describe("projects + snapshots + retention", () => {
   const startedServers: MeshGraphServerHandle[] = [];
   const headers = { "content-type": "application/json", "x-mesh-principal": "local-dev" };
@@ -98,5 +124,38 @@ describe("projects + snapshots + retention", () => {
     const oldPoll = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:poll?cursor=${encodeURIComponent(JSON.stringify({ metaSeq: 0, graphSeq: 0 }))}`, { headers });
     expect(oldPoll.status).toBe(410);
     await expect(oldPoll.json()).resolves.toMatchObject({ kind: "cursor_too_old" });
+  });
+
+  it("applies subscribe from cursor and does not replay history", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-server-subscribe-from-"));
+    const server = await startMeshGraphServer({ storageDir, port: 0 });
+    startedServers.push(server);
+
+    for (let idx = 1; idx <= 5; idx += 1) {
+      await fetch(`${server.url}/v1/${server.graphSpaceId}/graph:nodes`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ id: `N-${idx}`, label: `N-${idx}` })
+      });
+    }
+
+    const subscribeAbort = new AbortController();
+    const subscribe = await fetch(`${server.url}/v1/${server.graphSpaceId}/sync:subscribe?from=3`, {
+      headers,
+      signal: subscribeAbort.signal
+    });
+    expect(subscribe.status).toBe(200);
+
+    let frame = await readSseFrame(subscribe);
+    while ((frame as { kind?: string }).kind !== "txBundles") {
+      frame = await readSseFrame(subscribe);
+    }
+
+    const txBundles = (frame as { txBundlesVisible: Array<{ principalCursor: number }> }).txBundlesVisible;
+    expect(txBundles.length).toBeGreaterThan(0);
+    expect(txBundles[0]?.principalCursor).toBe(4);
+    expect(txBundles.every((bundle) => bundle.principalCursor > 3)).toBe(true);
+
+    subscribeAbort.abort();
   });
 });

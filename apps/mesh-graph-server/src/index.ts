@@ -480,7 +480,7 @@ async function handleRequest(
       writeJson(res, 410, { kind: "cursor_too_old", minReadableCursor: project.minReadableCursor, recommendedSnapshotId });
       return;
     }
-    await streamSubscribe(res, async (cursor) => gateway.syncPull(projectId, principal, cursor));
+    await streamSubscribe(res, from, async (cursor) => gateway.syncPull(projectId, principal, cursor));
     return;
   }
 
@@ -590,15 +590,26 @@ function isCursorTooOld(requested: Cursor, minReadable: Cursor): boolean {
 
 async function streamSubscribe(
   res: ServerResponse,
+  fromCursorVisible: number,
   syncPull: (fromCursorVisible: number) => Promise<{ txBundlesVisible: Array<{ principalCursor: number; txBundle: { graphEvents: unknown[] } }>; cursorAfterVisible: number }>
 ): Promise<void> {
   res.statusCode = 200;
   res.setHeader("content-type", "text/event-stream");
   res.setHeader("cache-control", "no-cache");
-  let cursor = 0;
+  let cursor = fromCursorVisible;
+  let subscribeFromLogged = false;
   const timer = setInterval(async () => {
     const pulled = await syncPull(cursor);
     if (pulled.txBundlesVisible.length > 0) {
+      if (process.env.NODE_ENV !== "production" && !subscribeFromLogged) {
+        subscribeFromLogged = true;
+        console.log(JSON.stringify({
+          kind: "SUBSCRIBE_FROM_APPLIED",
+          fromRaw: fromCursorVisible,
+          fromNormalized: cursor,
+          firstBundleCursor: pulled.txBundlesVisible[0]?.principalCursor ?? null
+        }));
+      }
       res.write(`data:${JSON.stringify({ kind: "txBundles", txBundlesVisible: pulled.txBundlesVisible })}\n\n`);
       cursor = pulled.cursorAfterVisible;
       res.write(`data:${JSON.stringify({ kind: "cursor", cursorVisible: cursor })}\n\n`);
