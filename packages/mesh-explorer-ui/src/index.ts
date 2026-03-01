@@ -8,7 +8,7 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
-import { nextMonotonicCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
+import { nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
 import {
@@ -356,8 +356,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
+    const savedCursor = readCursor(storageKey);
     const snapshotCursor = await bootstrapFromSnapshot(normalizedPrincipal);
-    const replayResult = await pollReplayFromCursor(snapshotCursor, sessionId, activeAbort.signal);
+    const bootstrapCursor = resolveBootstrapFromCursor(savedCursor, { cursor: snapshotCursor });
+    const replayResult = await pollReplayFromCursor(bootstrapCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
     persistBootstrapCursor(storageKey, snapshotCursor, replayResult.cursor);
     setConnectionStatus("connected (poll-only)");

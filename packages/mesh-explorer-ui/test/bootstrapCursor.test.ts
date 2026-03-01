@@ -1,28 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import { cursorStorageKey } from "../src/cursorStorage.js";
-import { isStoreEmpty, nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor, ZERO_CURSOR } from "../src/bootstrapCursor.js";
+import { nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor, ZERO_CURSOR } from "../src/bootstrapCursor.js";
 
 describe("mesh explorer bootstrap cursor", () => {
-  it("uses {0,0} when no local cursor exists (fresh browser)", () => {
-    expect(resolveBootstrapFromCursor(null, { nodesCount: 1, linksCount: 0 })).toEqual({ metaSeq: 0, graphSeq: 0 });
+  it("uses {0,0} when neither snapshot nor local cursor exists", () => {
+    expect(resolveBootstrapFromCursor(null, { cursor: null })).toEqual({ metaSeq: 0, graphSeq: 0 });
   });
 
-  it("keeps replaying history from {0,0} across refresh when local cursor is still absent", () => {
-    expect(resolveBootstrapFromCursor(null, { nodesCount: 0, linksCount: 0 })).toEqual(ZERO_CURSOR);
+  it("uses persisted cursor when snapshot cursor is behind", () => {
+    expect(resolveBootstrapFromCursor({ metaSeq: 2, graphSeq: 8 }, { cursor: { metaSeq: 1, graphSeq: 6 } })).toEqual({ metaSeq: 2, graphSeq: 8 });
   });
 
-  it("uses {0,0} when store is empty even when persisted cursor exists", () => {
-    expect(resolveBootstrapFromCursor({ metaSeq: 2, graphSeq: 8 }, { nodesCount: 0, linksCount: 0 })).toEqual(ZERO_CURSOR);
+  it("uses snapshot cursor when persisted cursor is absent", () => {
+    expect(resolveBootstrapFromCursor(null, { cursor: { metaSeq: 2, graphSeq: 8 } })).toEqual({ metaSeq: 2, graphSeq: 8 });
   });
 
-  it("uses persisted cursor when store is not empty", () => {
-    expect(resolveBootstrapFromCursor({ metaSeq: 2, graphSeq: 8 }, { nodesCount: 1, linksCount: 0 })).toEqual({ metaSeq: 2, graphSeq: 8 });
-  });
-
-  it("detects when store snapshot is empty", () => {
-    expect(isStoreEmpty({ nodesCount: 0, linksCount: 0 })).toBe(true);
-    expect(isStoreEmpty({ nodesCount: 1, linksCount: 0 })).toBe(false);
+  it("uses max(savedCursor, snapshotCursor) to guarantee durable resume monotonicity", () => {
+    expect(resolveBootstrapFromCursor({ metaSeq: 3, graphSeq: 10 }, { cursor: { metaSeq: 4, graphSeq: 9 } })).toEqual({ metaSeq: 4, graphSeq: 9 });
   });
 
   it("writes exact storage key format mesh.cursor.<principal>.<graphSpaceId>", () => {
@@ -38,5 +33,9 @@ describe("mesh explorer bootstrap cursor", () => {
     expect(shouldPersistBootstrapCursor({ metaSeq: 0, graphSeq: 0 }, { metaSeq: 0, graphSeq: 5 }, { metaSeq: 0, graphSeq: 5 })).toBe(true);
     expect(shouldPersistBootstrapCursor({ metaSeq: 0, graphSeq: 5 }, { metaSeq: 0, graphSeq: 5 }, { metaSeq: 0, graphSeq: 5 })).toBe(false);
     expect(shouldPersistBootstrapCursor({ metaSeq: 0, graphSeq: 0 }, { metaSeq: 0, graphSeq: 5 }, { metaSeq: 0, graphSeq: 6 })).toBe(false);
+  });
+
+  it("normalizes negative cursors to zero cursor", () => {
+    expect(resolveBootstrapFromCursor({ metaSeq: -1, graphSeq: -5 }, { cursor: ZERO_CURSOR })).toEqual(ZERO_CURSOR);
   });
 });
