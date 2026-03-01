@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { startMeshGraphServer, type MeshGraphServerHandle } from "../../apps/mesh-graph-server/src/index.js";
 import { createGraphStore, type Cursor, type GraphEvent, type GraphStore } from "../../packages/mesh-explorer-ui/src/graphStore.js";
+import { resolveBootstrapCursorDecision } from "../../packages/mesh-explorer-ui/src/bootstrapCursor.js";
 
 describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -54,6 +55,39 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     const links = Array.from(store.getState().linksById.values());
     expect(links.length).toBe(1);
     expect(links[0]).toMatchObject({ source: nodeIds[0], target: nodeIds[1], type: "depends" });
+  });
+
+  it("refresh preserves graph when saved cursor exists without durable state", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-ui-"));
+    cleanups.push(async () => rm(storageDir, { recursive: true, force: true }));
+
+    const server: MeshGraphServerHandle = await startMeshGraphServer({ storageDir, port: 0 });
+    cleanups.push(async () => server.close());
+
+    await createNode(server.url, "alice", "refresh-a");
+    await createNode(server.url, "alice", "refresh-b");
+
+    const seededStore = createGraphStore();
+    const seededReplay = await bootstrapReplay(server.url, "alice", seededStore, { metaSeq: 0, graphSeq: 0 });
+    const nodeIds = Array.from(seededStore.getState().nodesById.keys());
+    await createLink(server.url, "alice", nodeIds[0]!, nodeIds[1]!, "depends");
+
+    const persistedCursor = seededReplay.cursor;
+    const snapshotCursor: Cursor = { metaSeq: 0, graphSeq: 0 };
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: persistedCursor,
+      snapshot: { cursor: snapshotCursor },
+      stateDigest: null
+    });
+
+    expect(decision.bootstrapFrom).toEqual(snapshotCursor);
+
+    const refreshedStore = createGraphStore();
+    const replayed = await bootstrapReplay(server.url, "alice", refreshedStore, decision.bootstrapFrom);
+
+    expect(replayed.graphEventsApplied).toBeGreaterThanOrEqual(3);
+    expect(refreshedStore.getState().nodesById.size).toBe(2);
+    expect(refreshedStore.getState().linksById.size).toBe(1);
   });
 
   it("reload bootstrap rebuilds nodes/links before subscribe", async () => {
