@@ -8,7 +8,7 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
-import { nextMonotonicCursor, resolveBootstrapFromCursor, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
+import { nextMonotonicCursor, resolveBootstrapCursorDecision, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
 import {
@@ -358,7 +358,17 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
     const savedCursor = readCursor(storageKey);
     const snapshotCursor = await bootstrapFromSnapshot(normalizedPrincipal);
-    const bootstrapCursor = resolveBootstrapFromCursor(savedCursor, { cursor: snapshotCursor });
+    const bootstrapDecision = resolveBootstrapCursorDecision({ savedCursor, snapshot: { cursor: snapshotCursor }, stateDigest: null });
+    const bootstrapCursor = bootstrapDecision.bootstrapFrom;
+    emitMeshDebugLog("BOOTSTRAP_DECISION", {
+      graphSpaceId: el.graphSpaceId.value,
+      principal: normalizedPrincipal,
+      savedCursor,
+      snapshotCursor,
+      bootstrapCursor,
+      decisionReason: bootstrapDecision.reason,
+      usedSavedCursor: bootstrapDecision.usedSavedCursor
+    });
     const replayResult = await pollReplayFromCursor(bootstrapCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
     persistBootstrapCursor(storageKey, snapshotCursor, replayResult.cursor);
@@ -420,6 +430,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
                   if (advanced) {
                     store.applyGraphEvents(extractGraphEventsFromTxBundles(txBundles));
                     setLastSyncNow();
+                  } else {
+                    emitMeshDebugLog("SUBSCRIBE_DROP", {
+                      reason: "cursor-not-advanced",
+                      from: store.getState().cursor,
+                      candidate: next,
+                      txBundleCount: txBundles.length
+                    });
                   }
                   continue;
                 }
@@ -477,6 +494,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           const nextCursor = payload.cursorAfter ?? cursor;
           const nextMonotonic = nextMonotonicCursor(cursor, nextCursor);
           const cursorUnchanged = cursorEq(nextMonotonic, cursor);
+          emitMeshDebugLog("APPLY_BATCH", {
+            source: "poll",
+            fromCursor: cursor,
+            toCursor: nextMonotonic,
+            graphEvents: graphEvents.length,
+            metaEvents: payload.meta?.length ?? 0,
+            cursorUnchanged
+          });
           if (!cursorUnchanged && graphEvents.length > 0) {
             graphEventsApplied += graphEvents.length;
             store.applyGraphEvents(graphEvents);
