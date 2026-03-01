@@ -31,6 +31,7 @@ import { deriveLayoutParams, loadLayoutUiState, saveLayoutUiState, type LayoutUi
 import { exportGraphFromState, parseExportedGraph, type ExportedGraphV1 } from "./devtools/graphIo.js";
 import { buildMultiDeletePlan } from "./deleteSelection.js";
 import { emitMeshDebugLogToSinks } from "./meshDebugLog.js";
+import { evaluateSubscribeConvergence } from "./syncConvergenceGuard.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -424,28 +425,39 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
               if (data.kind === "heartbeat") continue;
               if (data.kind === "txBundles") {
                 const txBundles = data.txBundlesVisible ?? [];
-                const cursorFromBundles = readCursorFromTxBundles(txBundles);
-                if (cursorFromBundles !== null) {
-                  const next = { ...store.getState().cursor, graphSeq: cursorFromBundles };
-                  const advanced = applyCursorIfAdvanced(storageKey, next, "sse");
-                  if (advanced) {
-                    store.applyGraphEvents(extractGraphEventsFromTxBundles(txBundles));
-                    setLastSyncNow();
-                  } else {
-                    emitMeshDebugLog("SUBSCRIBE_DROP", {
-                      reason: "cursor-not-advanced",
-                      from: store.getState().cursor,
-                      candidate: next,
-                      txBundleCount: txBundles.length
-                    });
-                  }
+                const fromCursor = store.getState().cursor;
+                const decision = evaluateSubscribeConvergence(fromCursor.graphSeq, txBundles);
+                if (decision.action === "fallback-poll") {
+                  emitMeshDebugLog("SUBSCRIBE_CURSOR_GUARD", {
+                    reason: decision.reason,
+                    fromCursor,
+                    expectedGraphSeq: decision.expectedGraphSeq,
+                    subscribePrincipalCursor: decision.subscribePrincipalCursor,
+                    txBundleCount: txBundles.length,
+                    graphEventsCount: decision.graphEventsCount
+                  });
+                  const replayResult = await pollReplayFromCursor(fromCursor, activeSessionId, signal);
+                  if (activeSessionId !== syncSession) return;
+                  persistBootstrapCursor(storageKey, fromCursor, replayResult.cursor);
                   continue;
                 }
-                const events = extractGraphEventsFromTxBundles(txBundles);
-                if (events.length > 0) {
-                  store.applyGraphEvents(events);
+
+                const graphEvents = extractGraphEventsFromTxBundles(txBundles);
+                const next = { ...fromCursor, graphSeq: decision.expectedGraphSeq };
+                const advanced = applyCursorIfAdvanced(storageKey, next, "sse");
+                if (advanced) {
+                  store.applyGraphEvents(graphEvents);
                   setLastSyncNow();
+                } else {
+                  emitMeshDebugLog("SUBSCRIBE_DROP", {
+                    reason: "cursor-not-advanced",
+                    from: fromCursor,
+                    candidate: next,
+                    txBundleCount: txBundles.length,
+                    graphEventsCount: graphEvents.length
+                  });
                 }
+                continue;
               }
             }
             if (activeSessionId === syncSession) {
@@ -1381,15 +1393,6 @@ function installTestHook(store: GraphStore, readContext: () => { projectId: stri
     }
   };
   (window as Window & { __meshDebug?: MeshDebugApi }).__meshDebug = meshDebug;
-}
-
-function readCursorFromTxBundles(txBundles: SyncTxBundle[]): number | null {
-  let maxCursor: number | null = null;
-  for (const bundle of txBundles) {
-    if (typeof bundle.principalCursor !== "number") continue;
-    maxCursor = maxCursor === null ? bundle.principalCursor : Math.max(maxCursor, bundle.principalCursor);
-  }
-  return maxCursor;
 }
 
 function cursorEq(a: Cursor, b: Cursor): boolean {
