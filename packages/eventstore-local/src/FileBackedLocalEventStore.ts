@@ -141,13 +141,27 @@ export class FileBackedLocalEventStore implements LocalEventStore {
     this.hitHook(hooks, "AFTER_IDEMPOTENCY_UPSERT");
     this.hitHook(hooks, "BEFORE_IDB_COMMIT");
 
-    space.meta.push(...meta);
-    space.graph.push(...graph);
-    space.txIndex.push(txIndexEntry);
-    this.txIndexBySpace.delete(graphSpaceId);
-    space.idempotency[idempotencySlot] = { payloadHash: idempotencyCtx.payloadHash, receipt };
+    const stagedSpace: SpaceState = {
+      meta: [...space.meta, ...meta],
+      graph: [...space.graph, ...graph],
+      txIndex: [...space.txIndex, txIndexEntry],
+      idempotency: {
+        ...space.idempotency,
+        [idempotencySlot]: { payloadHash: idempotencyCtx.payloadHash, receipt }
+      }
+    };
 
-    await this.persistState();
+    if (!this.state) {
+      throw new Error("Store state not loaded");
+    }
+    this.state.spaces[graphSpaceId] = stagedSpace;
+    try {
+      await this.persistState();
+    } catch (error) {
+      this.state.spaces[graphSpaceId] = space;
+      throw error;
+    }
+    this.txIndexBySpace.delete(graphSpaceId);
     return receipt;
     });
   }
