@@ -30,6 +30,7 @@ import { LayoutPanel } from "./ui/LayoutPanel.js";
 import { deriveLayoutParams, loadLayoutUiState, saveLayoutUiState, type LayoutUiState } from "./ui/layoutSettings.js";
 import { exportGraphFromState, parseExportedGraph, type ExportedGraphV1 } from "./devtools/graphIo.js";
 import { buildMultiDeletePlan } from "./deleteSelection.js";
+import { emitMeshDebugLogToSinks } from "./meshDebugLog.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -1407,8 +1408,8 @@ async function wait(ms: number): Promise<void> {
 }
 
 function emitMeshDebugLog(message: string, detail?: unknown): void {
-  const dbgObj = (window as Window & { __meshDebug?: { log?: (message: string, detail?: unknown) => void } }).__meshDebug;
-  dbgObj?.log?.(message, detail);
+  const devMode = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
+  emitMeshDebugLogToSinks(window, message, detail, { devMode });
 }
 
 function resolveConnectivityState(browserHint: ConnectivityStatus, networkHint: ConnectivityStatus): ConnectivityStatus {
