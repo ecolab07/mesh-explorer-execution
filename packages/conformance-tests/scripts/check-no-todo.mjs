@@ -1,7 +1,10 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const targetDir = new URL("../src", import.meta.url);
+const scriptPath = fileURLToPath(import.meta.url);
+const scriptDir = dirname(scriptPath);
+const sourceDir = resolve(scriptDir, "../src");
 const violations = [];
 
 const bannedPatterns = [
@@ -36,7 +39,14 @@ async function walk(dir) {
   }
 }
 
-const sourceDir = targetDir.pathname;
+if (!isAbsolute(sourceDir)) {
+  throw new Error(`Expected absolute source path, got: ${sourceDir}`);
+}
+
+if (process.platform === "win32" && sourceDir.includes("C:\\C:\\")) {
+  throw new Error(`Invalid Windows source path: ${sourceDir}`);
+}
+
 const sourceStats = await stat(sourceDir);
 if (!sourceStats.isDirectory()) {
   throw new Error(`Expected directory not found: ${sourceDir}`);
