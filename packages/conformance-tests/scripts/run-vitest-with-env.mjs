@@ -21,11 +21,28 @@ const env = {
   MESH_TX_VISIBILITY_POLICY: "acl",
 };
 
-const result = spawnSync(vitestBin, ["run", ...process.argv.slice(2)], {
-  stdio: "inherit",
-  env,
-  shell: process.platform === "win32",
-});
+const args = ["run", ...process.argv.slice(2)];
+const result =
+  process.platform === "win32"
+    ? spawnSync(
+        process.env.ComSpec || "cmd.exe",
+        [
+          "/d",
+          "/s",
+          "/c",
+          [vitestBin, ...args].map((arg) => `"${arg.replaceAll('"', '""')}"`).join(" "),
+        ],
+        {
+          stdio: "inherit",
+          env,
+          shell: false,
+        },
+      )
+    : spawnSync(vitestBin, args, {
+        stdio: "inherit",
+        env,
+        shell: false,
+      });
 
 if (result.error) {
   console.error(result.error);
