@@ -239,12 +239,12 @@ describe.each(getConformanceBackends())("CT-HTTP-RECOVERY-* (%s)", (backend: Con
     }
   });
 
-  it("[INV:CT-SYNC-4][SURF:Transport] sync:poll never exposes cross-stream partial tx visibility", async ({ task }) => {
-    task.meta.invariantId = "CT-SYNC-4";
+  it("[INV:CT-HTTP-POLL-1][SURF:Transport] sync:poll never exposes cross-stream partial tx visibility", async ({ task }) => {
+    task.meta.invariantId = "CT-HTTP-POLL-1";
     task.meta.surface = "Transport";
     task.meta.oracle =
       "sync:poll must keep meta/graph co-visible per tx and never advance cursor beyond a tx whose other stream part is missing.";
-    task.meta.criticality = "Critical";
+    task.meta.criticality = "Regression";
 
     const graphSpaceId = "space-http-recovery-cross-stream-atomicity";
     const kernel = new KernelMinimalImpl(store);
