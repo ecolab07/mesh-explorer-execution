@@ -16,6 +16,8 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10
+      - name: Prune pnpm store
+        run: pnpm store prune
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Verify lockfile is clean after install
