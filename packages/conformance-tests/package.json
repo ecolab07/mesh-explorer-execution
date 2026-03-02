@@ -8,8 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "check:artifacts-clean": "node ./scripts/check-artifacts-clean.mjs",
     "check:critical": "node ./scripts/check-critical-gate.mjs",
-    "test": "node ./scripts/run-vitest-with-env.mjs",
-    "pretest": "node ./scripts/check-no-todo.mjs",
+    "test": "node ./scripts/run-vitest-with-env.mjs --config ./vitest.config.mjs",
+    "pretest": "node ./scripts/pretest.mjs",
     "posttest": "node ./scripts/generate-evidence.mjs"
   },
   "dependencies": {
