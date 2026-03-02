@@ -291,14 +291,14 @@ async function poll(
   graphSpaceId: string,
   cursor: { metaSeq: number; graphSeq: number },
   limits: { meta: number; graph: number }
-): Promise<{ graph: Array<{ txId: string; seq: number }>; cursorAfter: { metaSeq: number; graphSeq: number } }> {
+): Promise<{ meta: Array<{ txId: string; seq: number }>; graph: Array<{ txId: string; seq: number }>; cursorAfter: { metaSeq: number; graphSeq: number } }> {
   const cursorParam = encodeURIComponent(JSON.stringify(cursor));
   const limitsParam = encodeURIComponent(JSON.stringify(limits));
   const response = await fetch(`${baseUrl}/v1/${graphSpaceId}/sync:poll?cursor=${cursorParam}&limits=${limitsParam}`, {
     headers: { "x-mesh-principal": "alice" }
   });
   expect(response.status).toBe(200);
-  return (await response.json()) as { graph: Array<{ txId: string; seq: number }>; cursorAfter: { metaSeq: number; graphSeq: number } };
+  return (await response.json()) as { meta: Array<{ txId: string; seq: number }>; graph: Array<{ txId: string; seq: number }>; cursorAfter: { metaSeq: number; graphSeq: number } };
 }
 
 async function appendRawTx(
