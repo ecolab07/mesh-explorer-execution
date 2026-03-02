@@ -1,1 +1,51 @@
 artifacts/conformance-evidence.runtime.*
+
+# build outputs
+apps/mesh-notes-server/dist/
+
+# test/build artifacts
+artifacts/
+conformance-evidence*.md
+
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build outputs
+dist/
+build/
+out/
+lib/
+*.tsbuildinfo
+
+# caches / tool dirs
+.turbo/
+.vite/
+.vitest/
+.eslintcache
+.cache/
+.temp/
+.tmp/
+tmp/
+
+# test outputs
+coverage/
+*.lcov
+.junit*.xml
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# env files
+.env
+.env.*
