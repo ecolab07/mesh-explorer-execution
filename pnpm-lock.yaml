@@ -137,10 +137,6 @@ importers:
       '@mesh/sync-local':
         specifier: workspace:*
         version: link:../sync-local
-    devDependencies:
-      cross-env:
-        specifier: ^7.0.3
-        version: 7.0.3
 
   packages/eventstore-local:
     dependencies:
@@ -433,31 +429,6 @@ packages:
         optional: true
       terser:
         optional: true
-
-  cross-env@7.0.3:
-    dependencies:
-      cross-spawn: 7.0.6
-
-  cross-spawn@7.0.6:
-    dependencies:
-      path-key: 3.1.1
-      shebang-command: 2.0.0
-      which: 2.0.2
-
-  isexe@2.0.0: {}
-
-  path-key@3.1.1: {}
-
-  shebang-command@2.0.0:
-    dependencies:
-      shebang-regex: 3.0.0
-
-  shebang-regex@3.0.0: {}
-
-  which@2.0.2:
-    dependencies:
-      isexe: 2.0.0
-
   vitest@2.1.9:
     resolution: {integrity: sha512-MSmPM9REYqDGBI8439mA4mWhV5sKmDlBKWIYbA3lRb2PTHACE0mgKwA8yQ2xq9vxDTuk4iPrECBAEW2aoFXY0Q==}
     engines: {node: ^18.0.0 || >=20.0.0}
@@ -651,35 +622,6 @@ snapshots:
       esbuild: 0.21.5
       postcss: 8.5.6
       rollup: 4.57.1
-
-  cross-env@7.0.3:
-    resolution: {integrity: sha512-i3M0jDq6n8YyK0d2fD8s5aY9vWXTjhBMWrMUR3pvN8MPmMXxMvmXrKE+g6u40qCMgfHdCqkfNNpJBWlAbIYW/w==}
-    engines: {node: '>=10.14'}
-    hasBin: true
-
-  cross-spawn@7.0.6:
-    resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
-    engines: {node: '>= 8'}
-
-  isexe@2.0.0:
-    resolution: {integrity: sha512-RHxMLpKx7rYxQ4Y7A9wM+7B7GS6A0M6QbYKT1eZq9VHtV6nRvWmvMRGsiE9zraFMvx6bMpiKFFitvolG/G5hTA==}
-
-  path-key@3.1.1:
-    resolution: {integrity: sha512-91nXQXn95rrNTFnYWc4V85+HLn6auutC+3arofS+jdkrY5S2sHPyU6CI9+VFeReyqYhB1tWEDQhS6M8J0Q9v5A==}
-    engines: {node: '>=8'}
-
-  shebang-command@2.0.0:
-    resolution: {integrity: sha512-kH5v3wz4YfGLwRoTSesFiNUFDXL9uBeb5GsyhQOdE31E4n4t4DccNI0YvrFica8FWHZcizxgxYkWwaP42Qik4A==}
-    engines: {node: '>=8'}
-
-  shebang-regex@3.0.0:
-    resolution: {integrity: sha512-7Q0q8eV7N0eZZ+j9RnBbTK1ZBOqVakiobP6KyHR+Y6z3n0JVpaz6RtWLpmjHtkobaN6D+PfYZ7RUTpujISiF7Q==}
-    engines: {node: '>=8'}
-
-  which@2.0.2:
-    resolution: {integrity: sha512-B0fIYCDq5ZPkNcaUVbnVClKiWkjOfE7wsBhb1kKEuWiRiwXQDq6rYmD93WfBsB1bt0osLOYTdSd5quN4iQFQ==}
-    engines: {node: '>= 8'}
-    hasBin: true
 
   vitest@2.1.9:
     dependencies:
