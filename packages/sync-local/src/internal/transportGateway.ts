@@ -276,14 +276,70 @@ export class LocalSyncGateway {
   ): Promise<SyncPollResultV1> {
     this.assertGraphSpaceScope(graphSpaceId);
 
-    const meta = await this.eventsRead(graphSpaceId, principal, "meta", cursor.metaSeq, {
-      limitEvents: options.metaLimitEvents,
-      limitBytes: options.metaLimitBytes
-    });
-    const graph = await this.eventsRead(graphSpaceId, principal, "graph", cursor.graphSeq, {
-      limitEvents: options.graphLimitEvents,
-      limitBytes: options.graphLimitBytes
-    });
+    const metaLimitEvents = Math.max(0, options.metaLimitEvents ?? DEFAULT_LIMIT_TX);
+    const graphLimitEvents = Math.max(0, options.graphLimitEvents ?? DEFAULT_LIMIT_TX);
+    const metaLimitBytes = Math.max(1, options.metaLimitBytes ?? DEFAULT_LIMIT_BYTES);
+    const graphLimitBytes = Math.max(1, options.graphLimitBytes ?? DEFAULT_LIMIT_BYTES);
+
+    const { txs } = await this.eventStore.readPrincipalTxRange(graphSpaceId, 0, Number.MAX_SAFE_INTEGER, principal);
+
+    const meta: EventEnvelope[] = [];
+    const graph: EventEnvelope[] = [];
+    let consumedMetaBytes = 0;
+    let consumedGraphBytes = 0;
+    let metaSeq = 0;
+    let graphSeq = 0;
+
+    for (const tx of txs) {
+      const txMeta = tx.meta.map((event) => {
+        metaSeq += 1;
+        return { ...event, seq: metaSeq };
+      });
+      const txGraph = tx.graph.map((event) => {
+        graphSeq += 1;
+        return { ...event, seq: graphSeq };
+      });
+
+      const hasMeta = txMeta.length > 0;
+      const hasGraph = txGraph.length > 0;
+      const wantsMeta = hasMeta && txMeta[txMeta.length - 1]!.seq > cursor.metaSeq;
+      const wantsGraph = hasGraph && txGraph[txGraph.length - 1]!.seq > cursor.graphSeq;
+
+      if (!wantsMeta && !wantsGraph) {
+        continue;
+      }
+
+      if ((wantsMeta && hasGraph && !wantsGraph) || (wantsGraph && hasMeta && !wantsMeta)) {
+        break;
+      }
+
+      const txMetaBytes = txMeta.length > 0 ? utf8Encoder.encode(canonicalString(txMeta)).length : 0;
+      const txGraphBytes = txGraph.length > 0 ? utf8Encoder.encode(canonicalString(txGraph)).length : 0;
+
+      const nextMetaCount = meta.length + txMeta.length;
+      const nextGraphCount = graph.length + txGraph.length;
+      const exceedsMetaEvents = nextMetaCount > metaLimitEvents;
+      const exceedsGraphEvents = nextGraphCount > graphLimitEvents;
+      const exceedsMetaBytes = consumedMetaBytes + txMetaBytes > metaLimitBytes;
+      const exceedsGraphBytes = consumedGraphBytes + txGraphBytes > graphLimitBytes;
+      const isFirstOutput = meta.length === 0 && graph.length === 0;
+
+      const cannotEmitBecauseZeroLimit =
+        (metaLimitEvents === 0 && txMeta.length > 0) ||
+        (graphLimitEvents === 0 && txGraph.length > 0);
+
+      if (
+        cannotEmitBecauseZeroLimit ||
+        (!isFirstOutput && (exceedsMetaEvents || exceedsGraphEvents || exceedsMetaBytes || exceedsGraphBytes))
+      ) {
+        break;
+      }
+
+      meta.push(...txMeta);
+      graph.push(...txGraph);
+      consumedMetaBytes += txMetaBytes;
+      consumedGraphBytes += txGraphBytes;
+    }
 
     const result = {
       meta,

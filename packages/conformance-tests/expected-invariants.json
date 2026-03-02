@@ -25,6 +25,11 @@
     "criticality": "Critical"
   },
   {
+    "invariantId": "CT-HTTP-POLL-1",
+    "surface": "Transport",
+    "criticality": "Regression"
+  },
+  {
     "invariantId": "CT-HTTP-RECOVERY-1",
     "surface": "Transport",
     "criticality": "Critical"

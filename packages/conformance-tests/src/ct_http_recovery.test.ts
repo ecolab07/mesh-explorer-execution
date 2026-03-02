@@ -238,6 +238,35 @@ describe.each(getConformanceBackends())("CT-HTTP-RECOVERY-* (%s)", (backend: Con
       await maskedScope.cleanup();
     }
   });
+
+  it("[INV:CT-HTTP-POLL-1][SURF:Transport] sync:poll never exposes cross-stream partial tx visibility", async ({ task }) => {
+    task.meta.invariantId = "CT-HTTP-POLL-1";
+    task.meta.surface = "Transport";
+    task.meta.oracle =
+      "sync:poll must keep meta/graph co-visible per tx and never advance cursor beyond a tx whose other stream part is missing.";
+    task.meta.criticality = "Regression";
+
+    const graphSpaceId = "space-http-recovery-cross-stream-atomicity";
+    const kernel = new KernelMinimalImpl(store);
+    const Gateway = await loadLocalSyncGatewayCtor();
+    const gateway = new Gateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
+    const server = new SyncHttpReferenceServer({ graphSpaceId, gateway });
+
+    await appendRawTx(store, graphSpaceId, "raw-tx-both-streams", {
+      metaEvents: [{ kind: "tag", value: "m1" }],
+      graphEvents: [{ n: 1 }]
+    });
+
+    const { url } = await server.listen();
+    try {
+      const polled = await poll(url, graphSpaceId, { metaSeq: 0, graphSeq: 1 }, { meta: 1, graph: 1 });
+      expect(polled.meta).toEqual([]);
+      expect(polled.graph).toEqual([]);
+      expect(polled.cursorAfter).toEqual({ metaSeq: 0, graphSeq: 1 });
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 async function readEvents(
@@ -262,14 +291,14 @@ async function poll(
   graphSpaceId: string,
   cursor: { metaSeq: number; graphSeq: number },
   limits: { meta: number; graph: number }
-): Promise<{ graph: Array<{ txId: string; seq: number }>; cursorAfter: { metaSeq: number; graphSeq: number } }> {
+): Promise<{ meta: Array<{ txId: string; seq: number }>; graph: Array<{ txId: string; seq: number }>; cursorAfter: { metaSeq: number; graphSeq: number } }> {
   const cursorParam = encodeURIComponent(JSON.stringify(cursor));
   const limitsParam = encodeURIComponent(JSON.stringify(limits));
   const response = await fetch(`${baseUrl}/v1/${graphSpaceId}/sync:poll?cursor=${cursorParam}&limits=${limitsParam}`, {
     headers: { "x-mesh-principal": "alice" }
   });
   expect(response.status).toBe(200);
-  return (await response.json()) as { graph: Array<{ txId: string; seq: number }>; cursorAfter: { metaSeq: number; graphSeq: number } };
+  return (await response.json()) as { meta: Array<{ txId: string; seq: number }>; graph: Array<{ txId: string; seq: number }>; cursorAfter: { metaSeq: number; graphSeq: number } };
 }
 
 async function appendRawTx(

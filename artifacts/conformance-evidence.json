@@ -85,6 +85,17 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-HTTP-POLL-1",
+          "surface": "Transport",
+          "backend": "InMemory",
+          "testName": "[INV:CT-HTTP-POLL-1][SURF:Transport] sync:poll never exposes cross-stream partial tx visibility",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "sync:poll must keep meta/graph co-visible per tx and never advance cursor beyond a tx whose other stream part is missing.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-http-recovery-cross-stream-atomicity\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-HTTP-RECOVERY-1",
           "surface": "Transport",
           "backend": "InMemory",
@@ -770,7 +781,7 @@
       "criticalitySummary": {
         "Critical": 37,
         "Structural": 20,
-        "Regression": 10
+        "Regression": 11
       },
       "criticalInvariantIds": [
         "CT-COMP-1",
@@ -871,6 +882,17 @@
           "limitations": ""
         },
         {
+          "invariantId": "CT-HTTP-POLL-1",
+          "surface": "Transport",
+          "backend": "Persistent",
+          "testName": "[INV:CT-HTTP-POLL-1][SURF:Transport] sync:poll never exposes cross-stream partial tx visibility",
+          "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+          "oracle": "sync:poll must keep meta/graph co-visible per tx and never advance cursor beyond a tx whose other stream part is missing.",
+          "criticality": "Regression",
+          "setup": "const graphSpaceId = \"space-http-recovery-cross-stream-atomicity\"; const kernel = new KernelMinimalImpl(store)",
+          "limitations": ""
+        },
+        {
           "invariantId": "CT-HTTP-RECOVERY-1",
           "surface": "Transport",
           "backend": "Persistent",
@@ -1556,7 +1578,7 @@
       "criticalitySummary": {
         "Critical": 37,
         "Structural": 20,
-        "Regression": 10
+        "Regression": 11
       },
       "criticalInvariantIds": [
         "CT-COMP-1",
@@ -1654,6 +1676,17 @@
       "oracle": "Compacting historical tx does not break idempotent re-submission semantics for compacted tx ids.",
       "criticality": "Critical",
       "setup": "const graphSpaceId = \"space-comp-2\"; const txBundle = { txId: \"tx-idem\", metaEvents: [{ m: 1 }], graphEvents: [{ g: 1 }] }",
+      "limitations": ""
+    },
+    {
+      "invariantId": "CT-HTTP-POLL-1",
+      "surface": "Transport",
+      "backend": "InMemory",
+      "testName": "[INV:CT-HTTP-POLL-1][SURF:Transport] sync:poll never exposes cross-stream partial tx visibility",
+      "file": "packages/conformance-tests/src/ct_http_recovery.test.ts",
+      "oracle": "sync:poll must keep meta/graph co-visible per tx and never advance cursor beyond a tx whose other stream part is missing.",
+      "criticality": "Regression",
+      "setup": "const graphSpaceId = \"space-http-recovery-cross-stream-atomicity\"; const kernel = new KernelMinimalImpl(store)",
       "limitations": ""
     },
     {
@@ -2342,7 +2375,7 @@
   "criticalitySummary": {
     "Critical": 37,
     "Structural": 20,
-    "Regression": 10
+    "Regression": 11
   },
   "criticalInvariantIds": [
     "CT-COMP-1",
