@@ -238,6 +238,35 @@ describe.each(getConformanceBackends())("CT-HTTP-RECOVERY-* (%s)", (backend: Con
       await maskedScope.cleanup();
     }
   });
+
+  it("[INV:CT-SYNC-4][SURF:Transport] sync:poll never exposes cross-stream partial tx visibility", async ({ task }) => {
+    task.meta.invariantId = "CT-SYNC-4";
+    task.meta.surface = "Transport";
+    task.meta.oracle =
+      "sync:poll must keep meta/graph co-visible per tx and never advance cursor beyond a tx whose other stream part is missing.";
+    task.meta.criticality = "Critical";
+
+    const graphSpaceId = "space-http-recovery-cross-stream-atomicity";
+    const kernel = new KernelMinimalImpl(store);
+    const Gateway = await loadLocalSyncGatewayCtor();
+    const gateway = new Gateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
+    const server = new SyncHttpReferenceServer({ graphSpaceId, gateway });
+
+    await appendRawTx(store, graphSpaceId, "raw-tx-both-streams", {
+      metaEvents: [{ kind: "tag", value: "m1" }],
+      graphEvents: [{ n: 1 }]
+    });
+
+    const { url } = await server.listen();
+    try {
+      const polled = await poll(url, graphSpaceId, { metaSeq: 0, graphSeq: 1 }, { meta: 1, graph: 1 });
+      expect(polled.meta).toEqual([]);
+      expect(polled.graph).toEqual([]);
+      expect(polled.cursorAfter).toEqual({ metaSeq: 0, graphSeq: 1 });
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 async function readEvents(
