@@ -22,6 +22,7 @@ const env = {
 };
 
 const args = ["run", ...process.argv.slice(2)];
+const quoteForCmd = (arg) => `"${arg.replaceAll('"', '""')}"`;
 const result =
   process.platform === "win32"
     ? spawnSync(
@@ -30,7 +31,7 @@ const result =
           "/d",
           "/s",
           "/c",
-          [vitestBin, ...args].map((arg) => `"${arg.replaceAll('"', '""')}"`).join(" "),
+          `"${[quoteForCmd(vitestBin), ...args.map(quoteForCmd)].join(" ")}"`,
         ],
         {
           stdio: "inherit",
