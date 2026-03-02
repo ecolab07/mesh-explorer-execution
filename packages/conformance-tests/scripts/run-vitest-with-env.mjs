@@ -24,6 +24,7 @@ const env = {
 const result = spawnSync(vitestBin, ["run", ...process.argv.slice(2)], {
   stdio: "inherit",
   env,
+  shell: process.platform === "win32",
 });
 
 if (result.error) {
