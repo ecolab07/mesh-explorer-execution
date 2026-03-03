@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { join } from "node:path";
 import { FileBackedLocalEventStore } from "@mesh/eventstore-local";
 import { KernelMinimalImpl } from "@mesh/kernel-minimal";
-import { LocalSyncGateway } from "@mesh/sync-local/internal";
+import { LocalSyncGateway } from "@mesh/sync-local";
 import type { Command, CommandOutcome, Cursor, PrincipalContext } from "@mesh/shared";
 
 const GRAPH_SPACE_ID = "mesh-explorer-graph-v1";

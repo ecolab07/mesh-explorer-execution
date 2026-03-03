@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { FileBackedLocalEventStore } from "@mesh/eventstore-local";
 import { KernelMinimalImpl } from "@mesh/kernel-minimal";
 import { SyncHttpReferenceServer } from "@mesh/sync-http";
-import { LocalSyncGateway } from "@mesh/sync-local/internal";
+import { LocalSyncGateway } from "@mesh/sync-local";
 import type { Command, CommandOutcome, PrincipalContext } from "@mesh/shared";
 
 const GRAPH_SPACE_ID = "notes-app-shared-space-v1";
