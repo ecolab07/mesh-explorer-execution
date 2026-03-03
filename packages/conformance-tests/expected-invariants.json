@@ -290,6 +290,26 @@
     "criticality": "Critical"
   },
   {
+    "invariantId": "CT-SD-5",
+    "surface": "Sync",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-SD-6",
+    "surface": "Sync",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-SD-7",
+    "surface": "Sync",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-SD-8",
+    "surface": "Sync",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-SNAP-1",
     "surface": "Snapshot",
     "criticality": "Structural"
