@@ -24,8 +24,15 @@ function parseArgs(argv) {
 
 async function run(cmd, args, cwd = repoRoot) {
   await new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, stdio: "inherit", env: process.env });
-    child.on("exit", (code) => {
+    const child = spawn(cmd, args, {
+      cwd,
+      stdio: "inherit",
+      env: process.env,
+      shell: process.platform === "win32",
+    });
+
+    child.once("error", reject);
+    child.once("exit", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`Command failed: ${cmd} ${args.join(" ")} (exit ${code ?? "null"})`));
     });
