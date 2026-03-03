@@ -23,7 +23,12 @@ async function run(cmd, args, cwd = repoRoot) {
 }
 
 async function readText(filePath) {
-  return fs.readFile(filePath, "utf8");
+  return normalizeText(await fs.readFile(filePath, "utf8"));
+}
+
+function normalizeText(s) {
+  if (s.startsWith("\uFEFF")) s = s.slice(1);
+  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
 function simpleDiff(expected, actual, maxChanges = 20) {
