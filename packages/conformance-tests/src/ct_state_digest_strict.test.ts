@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryLocalEventStore } from "@mesh/eventstore-local";
-import { LocalSyncGateway, StateDigestSyncClient, computeCanonicalStateDigest } from "@mesh/sync-local";
+import { LocalSyncGateway } from "@mesh/sync-local";
+import { StateDigestSyncClient, computeCanonicalStateDigest } from "@mesh/sync-local/internal";
 import type { PrincipalContext, TxBundle } from "@mesh/shared";
 
 async function pollAll(
