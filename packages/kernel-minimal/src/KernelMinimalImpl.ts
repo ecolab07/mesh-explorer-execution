@@ -44,6 +44,7 @@ export class KernelMinimalImpl implements KernelMinimal {
       };
     }
 
+    let requiredBaseCursor: { metaSeq: number; graphSeq: number } | undefined;
     if (command.requireBaseRevision) {
       const resolvedBaseRevision = await this.eventStore.resolveRevision(command.graphSpaceId, command.requireBaseRevision);
       if (!resolvedBaseRevision) {
@@ -54,6 +55,7 @@ export class KernelMinimalImpl implements KernelMinimal {
           reasonCode: REASON_CODES.INVALID_BASE_REVISION
         };
       }
+      requiredBaseCursor = resolvedBaseRevision;
     }
 
     const authorization = await this.authorizer.authorize(command);
@@ -64,7 +66,8 @@ export class KernelMinimalImpl implements KernelMinimal {
     const idempotencyCtx: IdempotencyCtx = {
       actorId: command.actorId,
       idempotencyKey: command.idempotencyKey,
-      payloadHash: sha256Hex(canonicalStringify({ payload: command.payload, requireBaseRevision: command.requireBaseRevision }))
+      payloadHash: sha256Hex(canonicalStringify({ payload: command.payload, requireBaseRevision: command.requireBaseRevision })),
+      requiredBaseCursor
     };
 
     return this.eventStore.appendTx(

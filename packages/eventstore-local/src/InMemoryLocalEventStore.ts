@@ -26,6 +26,7 @@ import {
   type TxVisibilityDecider
 } from "./internal/txVisibility.js";
 import { recordEventsScanned, recordRangeRead, recordTxIndexLookup } from "./internal/readCost.js";
+import { resolveRevisionTokenToCursor } from "./revisionTokens.js";
 
 /**
  * In-memory conformance implementation for LocalEventStore.
@@ -92,6 +93,18 @@ export class InMemoryLocalEventStore implements LocalEventStore {
         };
       }
       return existing.receipt;
+    }
+
+    if (
+      idempotencyCtx.requiredBaseCursor &&
+      (idempotencyCtx.requiredBaseCursor.metaSeq !== current.meta.length || idempotencyCtx.requiredBaseCursor.graphSeq !== current.graph.length)
+    ) {
+      return {
+        status: "rejected",
+        category: "PRECONDITION",
+        reasonCode: REASON_CODES.REVISION_MISMATCH,
+        commandId: txBundle.txId
+      };
     }
 
     this.hitHook(hooks, "BEFORE_ANY_WRITE");
@@ -273,8 +286,9 @@ export class InMemoryLocalEventStore implements LocalEventStore {
     return countVisibleTxs(txs, toVisibilityContext(principal), this.txVisibilityDecider);
   }
 
-  async resolveRevision(_graphSpaceId: string, _revisionToken: string): Promise<Cursor | null> {
-    return null;
+  async resolveRevision(graphSpaceId: string, revisionToken: string): Promise<Cursor | null> {
+    const current = this.bySpace.get(graphSpaceId);
+    return resolveRevisionTokenToCursor(revisionToken, current?.txIndex ?? []);
   }
 
   async compactUpToCursor(params: { graphSpaceId: string; cursorExclusive: number }): Promise<void> {
