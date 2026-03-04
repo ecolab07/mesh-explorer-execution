@@ -106,7 +106,7 @@ if (!hasBuildStep && !hasBuildInTest) {
 
 checkRequiredPattern(
   workflowContent,
-  /pnpm\s+(?:--filter\s+@mesh\/conformance-tests\s+test|test)\b/m,
+  /pnpm\s+(?:(?:-r\s+)?--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+test|test)\b/m,
   'Missing step: pnpm test OR pnpm --filter @mesh/conformance-tests test',
 );
 
@@ -185,7 +185,7 @@ if (workflowFiles.includes(NIGHTLY_FILE)) {
 
   checkRequiredPattern(
     nightlyContent,
-    /pnpm\s+(?:--filter\s+@mesh\/conformance-tests\s+test|test)\b/m,
+    /pnpm\s+(?:(?:-r\s+)?--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+test|test)\b/m,
     'Missing step in conformance-nightly.yml: pnpm test OR pnpm --filter @mesh/conformance-tests test',
   );
 

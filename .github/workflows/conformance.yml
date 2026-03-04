@@ -14,17 +14,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: Enable corepack
+        run: corepack enable
       - name: Validate conformance workflow invariants
         run: pnpm ci:validate-workflows
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         mesh_backend: [inmemory, persistent]
     env:
       MESH_BACKEND: ${{ matrix.mesh_backend }}
@@ -37,9 +37,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: Enable corepack
+        run: corepack enable
       - name: Prune pnpm store
         run: pnpm store prune
       - name: Install
@@ -55,26 +54,36 @@ jobs:
       - name: Check reasonCodes policy
         run: pnpm check:reasoncodes-policy
       - name: Enforce conformance test hygiene
-        if: matrix.mesh_backend == 'inmemory'
+        if: matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest'
         run: node tools/ci/check-patterns.mjs --root packages/conformance-tests/src --no-default-patterns --pattern "TODO" --pattern "skip\("
-      - name: Test (${{ matrix.mesh_backend }})
-        run: pnpm test
+      - name: Run conformance tests (${{ matrix.mesh_backend }})
+        run: pnpm -r --filter @mesh/conformance-tests... test
+      - name: Generate conformance evidence (${{ matrix.mesh_backend }})
+        run: pnpm --filter @mesh/conformance-tests posttest
+      - name: Mirror evidence paths for CI artifacts (${{ matrix.mesh_backend }})
+        shell: bash
+        run: |
+          mkdir -p packages/conformance-tests
+          cp artifacts/conformance-evidence.runtime.json packages/conformance-tests/conformance-evidence.runtime.json
+          cp artifacts/conformance-evidence.critical.md packages/conformance-tests/conformance-evidence.critical.md
       - name: Critical gate (${{ matrix.mesh_backend }})
         run: pnpm --filter @mesh/conformance-tests check:critical
       - name: Artifacts up-to-date
-        if: matrix.mesh_backend == 'inmemory'
+        if: matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest'
         run: pnpm --filter @mesh/conformance-tests check:artifacts-clean
       - name: Upload conformance evidence artifacts
         if: always() && matrix.mesh_backend == 'inmemory'
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-artifacts
+          name: conformance-artifacts-${{ matrix.os }}-${{ matrix.mesh_backend }}
           path: |
             artifacts/conformance-evidence.md
             artifacts/conformance-evidence.critical.md
             artifacts/conformance-evidence.json
             artifacts/conformance-evidence.persistent.md
             artifacts/conformance-evidence.runtime.json
+            packages/conformance-tests/conformance-evidence.critical.md
+            packages/conformance-tests/conformance-evidence.runtime.json
             **/*.log
             **/*dump*.json
             **/vitest*.xml
