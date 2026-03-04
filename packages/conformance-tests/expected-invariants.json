@@ -260,6 +260,26 @@
     "criticality": "Structural"
   },
   {
+    "invariantId": "CT-REPLICA-PASSIVE-1",
+    "surface": "Replica",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-REPLICA-PASSIVE-2",
+    "surface": "Replica",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-REPLICA-PASSIVE-3",
+    "surface": "Replica",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-REPLICA-PASSIVE-4",
+    "surface": "Replica",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-RS-1",
     "surface": "V2-RemoteSync",
     "criticality": "Structural"
