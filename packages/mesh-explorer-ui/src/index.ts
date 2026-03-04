@@ -7,9 +7,9 @@ import {
   type GraphState,
   type GraphStore
 } from "./graphStore.js";
-import { compareCursor, persistCursorSafely, rotateAbortController } from "./syncGuards.js";
+import { compareCursor, rotateAbortController } from "./syncGuards.js";
 import { nextMonotonicCursor, resolveBootstrapCursorDecision, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
-import { cursorStorageKey } from "./cursorStorage.js";
+import { bootstrapCacheStorageKey, cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
 import {
   SUBSCRIBE_ERROR_LOG_THROTTLE_MS,
@@ -32,6 +32,14 @@ import { exportGraphFromState, parseExportedGraph, type ExportedGraphV1 } from "
 import { buildMultiDeletePlan } from "./deleteSelection.js";
 import { emitMeshDebugLogToSinks } from "./meshDebugLog.js";
 import { evaluateSubscribeConvergence } from "./syncConvergenceGuard.js";
+import {
+  clearBootstrapCacheRecord,
+  createProjectionSnapshot,
+  hydrateStoreFromProjection,
+  makeBootstrapCacheRecord,
+  persistBootstrapCacheRecord,
+  readBootstrapCacheRecord
+} from "./bootstrapCache.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -358,9 +366,22 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     setConnectionStatus("connecting");
     const normalizedPrincipal = normalizePrincipal(el.principal.value);
     const storageKey = cursorStorageKey(normalizedPrincipal, el.graphSpaceId.value);
+    const bootstrapCacheKey = bootstrapCacheStorageKey(normalizedPrincipal, el.graphSpaceId.value);
     const savedCursor = readCursor(storageKey);
-    const snapshotCursor = await bootstrapFromSnapshot(normalizedPrincipal);
-    const bootstrapDecision = resolveBootstrapCursorDecision({ savedCursor, snapshot: { cursor: snapshotCursor }, stateDigest: null });
+    const bootstrapCache = readBootstrapCacheRecord(bootstrapCacheKey, (key) => localStorage.getItem(key));
+    const snapshot = await fetchSnapshot(normalizedPrincipal);
+    const snapshotCursor = snapshot.cursor;
+    const bootstrapDecision = resolveBootstrapCursorDecision({ savedCursor, snapshot: { cursor: snapshotCursor }, bootstrapCache });
+    if (bootstrapDecision.invalidateBootstrapCache) {
+      clearBootstrapCacheRecord(bootstrapCacheKey, (key) => localStorage.removeItem(key));
+    }
+    if (bootstrapDecision.usedSavedCursor && bootstrapCache) {
+      hydrateStoreFromProjection(store, bootstrapCache.projection);
+      store.setCursor(bootstrapDecision.bootstrapFrom);
+    } else {
+      bootstrapFromSnapshot(snapshot);
+    }
+
     const bootstrapCursor = bootstrapDecision.bootstrapFrom;
     emitMeshDebugLog("BOOTSTRAP_DECISION", {
       graphSpaceId: el.graphSpaceId.value,
@@ -373,28 +394,30 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     });
     const replayResult = await pollReplayFromCursor(bootstrapCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) return;
-    persistBootstrapCursor(storageKey, snapshotCursor, replayResult.cursor);
+    persistBootstrapCursor(storageKey, bootstrapCacheKey, snapshotCursor, replayResult.cursor);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
 
 
-    async function bootstrapFromSnapshot(principalValue: string): Promise<Cursor> {
+    async function fetchSnapshot(principalValue: string): Promise<{ payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor: Cursor }> {
       const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:snapshot`, { headers: headers(principalValue) }, {
         principal: principalValue,
         transport: "fetch",
         debugAuth,
         onNetworkResult: (status) => markNetworkConnectivity(status, "snapshot-bootstrap")
       });
-      if (!response.ok) return { metaSeq: 0, graphSeq: 0 };
+      if (!response.ok) return { payload: { nodes: [], links: [] }, cursor: { metaSeq: 0, graphSeq: 0 } };
       const snapshot = (await response.json()) as { payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor?: Cursor };
+      return { payload: snapshot.payload, cursor: snapshot.cursor ?? { metaSeq: 0, graphSeq: 0 } };
+    }
+
+    function bootstrapFromSnapshot(snapshot: { payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor: Cursor }): void {
       const nodes = snapshot.payload?.nodes ?? [];
       const links = snapshot.payload?.links ?? [];
       store.resetProjection();
       store.applyGraphEvents(nodes.map((node) => ({ type: "graph.node.created", node } as GraphEvent)));
       store.applyGraphEvents(links.map((link) => ({ type: "graph.link.created", link } as GraphEvent)));
-      const cursor = snapshot.cursor ?? { metaSeq: 0, graphSeq: 0 };
-      store.setCursor(cursor);
-      return cursor;
+      store.setCursor(snapshot.cursor);
     }
 
     async function subscribeLoop(activeSessionId: number, signal: AbortSignal): Promise<void> {
@@ -438,15 +461,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
                   });
                   const replayResult = await pollReplayFromCursor(fromCursor, activeSessionId, signal);
                   if (activeSessionId !== syncSession) return;
-                  persistBootstrapCursor(storageKey, fromCursor, replayResult.cursor);
+                  persistBootstrapCursor(storageKey, bootstrapCacheKey, fromCursor, replayResult.cursor);
                   continue;
                 }
 
                 const graphEvents = extractGraphEventsFromTxBundles(txBundles);
                 const next = { ...fromCursor, graphSeq: decision.expectedGraphSeq };
-                const advanced = applyCursorIfAdvanced(storageKey, next, "sse");
+                const advanced = applyCursorIfAdvanced(storageKey, bootstrapCacheKey, next, "sse", graphEvents);
                 if (advanced) {
-                  store.applyGraphEvents(graphEvents);
                   setLastSyncNow();
                 } else {
                   emitMeshDebugLog("SUBSCRIBE_DROP", {
@@ -494,8 +516,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           );
           if (!response.ok) {
             if (response.status === 410) {
-              const nextCursor = await bootstrapFromSnapshot(normalizedPrincipal);
-              return { cursor: nextCursor, graphEventsApplied };
+              const nextSnapshot = await fetchSnapshot(normalizedPrincipal);
+              bootstrapFromSnapshot(nextSnapshot);
+              return { cursor: nextSnapshot.cursor, graphEventsApplied };
             }
             markNetworkConnectivity(response.status === 0 ? "offline" : "degraded", "poll-non-ok");
             reportDevError(el, `sync poll non-ok: ${response.status}`);
@@ -1031,22 +1054,31 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     store.setLastSync(new Date().toISOString());
   }
 
-  function applyCursorIfAdvanced(storageKey: string, candidate: Cursor, source: "poll" | "sse"): boolean {
+  function applyCursorIfAdvanced(
+    storageKey: string,
+    bootstrapCacheKey: string,
+    candidate: Cursor,
+    source: "poll" | "sse",
+    graphEvents: GraphEvent[]
+  ): boolean {
     const current = store.getState().cursor;
     if (compareCursor(candidate, current) <= 0) {
       emitMeshDebugLog("cursor-regression", { source, current, candidate });
       return false;
     }
+    if (graphEvents.length > 0) {
+      store.applyGraphEvents(graphEvents);
+    }
     store.setCursor(candidate);
-    persistCursor(storageKey, candidate);
+    persistDurableBootstrapState(storageKey, bootstrapCacheKey, candidate, createProjectionSnapshot(store));
     return true;
   }
 
-  function persistBootstrapCursor(storageKey: string, fromCursor: Cursor, finalCursor: Cursor): void {
+  function persistBootstrapCursor(storageKey: string, bootstrapCacheKey: string, fromCursor: Cursor, finalCursor: Cursor): void {
     const current = store.getState().cursor;
     if (!shouldPersistBootstrapCursor(fromCursor, finalCursor, current)) return;
     store.setCursor(finalCursor);
-    persistCursor(storageKey, finalCursor);
+    persistDurableBootstrapState(storageKey, bootstrapCacheKey, finalCursor, createProjectionSnapshot(store));
   }
 
   function setRendererMode(mode: "canvas-2d" | "fallback-json"): void {
@@ -1292,8 +1324,14 @@ function readCursor(storageKey: string): Cursor | null {
   }
 }
 
-function persistCursor(storageKey: string, cursor: Cursor): void {
-  persistCursorSafely(storageKey, cursor, (key, value) => localStorage.setItem(key, value));
+function persistDurableBootstrapState(
+  cursorStorage: string,
+  cacheStorage: string,
+  cursor: Cursor,
+  projection: ReturnType<typeof createProjectionSnapshot>
+): void {
+  const record = makeBootstrapCacheRecord(cursor, projection);
+  persistBootstrapCacheRecord(cacheStorage, cursorStorage, record, (key, value) => localStorage.setItem(key, value));
 }
 
 async function *parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<SyncFrame> {
