@@ -150,6 +150,26 @@
     "criticality": "Structural"
   },
   {
+    "invariantId": "CT-MW-LITE-1",
+    "surface": "V2-MultiWriter",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-MW-LITE-2",
+    "surface": "V2-MultiWriter",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-MW-LITE-3",
+    "surface": "V2-MultiWriter",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-MW-LITE-4",
+    "surface": "V2-MultiWriter",
+    "criticality": "Regression"
+  },
+  {
     "invariantId": "CT-P-1",
     "surface": "Projection",
     "criticality": "Structural"

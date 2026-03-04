@@ -106,6 +106,7 @@ export interface IdempotencyCtx {
   actorId: ActorId;
   idempotencyKey: IdempotencyKey;
   payloadHash: PayloadHash;
+  requiredBaseCursor?: Cursor;
 }
 
 export type FaultPoint =

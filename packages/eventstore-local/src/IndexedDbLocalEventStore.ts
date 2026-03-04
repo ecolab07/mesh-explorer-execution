@@ -26,6 +26,7 @@ import {
   type TxVisibilityDecider
 } from "./internal/txVisibility.js";
 import { recordEventsScanned, recordRangeRead, recordTxIndexLookup } from "./internal/readCost.js";
+import { resolveRevisionTokenToCursor } from "./revisionTokens.js";
 
 type RevisionRow = { graphSpaceId: string; revisionToken: string; cursor: Cursor };
 type IdempotencyRow = { payloadHash: string; receipt: TransactionReceipt };
@@ -88,6 +89,18 @@ export class IndexedDbLocalEventStore implements LocalEventStore {
     }
 
     const staged = cloneSpaceState(current);
+    if (
+      idempotencyCtx.requiredBaseCursor &&
+      (idempotencyCtx.requiredBaseCursor.metaSeq !== staged.heads.metaSeq || idempotencyCtx.requiredBaseCursor.graphSeq !== staged.heads.graphSeq)
+    ) {
+      return {
+        status: "rejected",
+        category: "PRECONDITION",
+        reasonCode: REASON_CODES.REVISION_MISMATCH,
+        commandId: txBundle.txId
+      };
+    }
+
     this.hitHook(hooks, "BEFORE_ANY_WRITE");
 
     const meta = txBundle.metaEvents.map((payload, idx) => ({
@@ -256,8 +269,7 @@ export class IndexedDbLocalEventStore implements LocalEventStore {
 
   async resolveRevision(graphSpaceId: string, revisionToken: string): Promise<Cursor | null> {
     const space = this.getDb().spaces.get(graphSpaceId);
-    if (!space) return null;
-    return space.revisions.get(revisionToken) ?? null;
+    return resolveRevisionTokenToCursor(revisionToken, space?.txIndex ?? []);
   }
 
   async compactUpToCursor(params: { graphSpaceId: string; cursorExclusive: number }): Promise<void> {
