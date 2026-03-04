@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startMeshGraphServer, type MeshGraphServerHandle } from "../../apps/mesh-graph-server/src/index.js";
 import { createGraphStore, type Cursor, type GraphEvent, type GraphStore } from "../../packages/mesh-explorer-ui/src/graphStore.js";
 import { resolveBootstrapCursorDecision } from "../../packages/mesh-explorer-ui/src/bootstrapCursor.js";
+import { BOOTSTRAP_CACHE_SCHEMA_VERSION, makeBootstrapCacheRecord } from "../../packages/mesh-explorer-ui/src/bootstrapCache.js";
 
 describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -57,7 +58,7 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     expect(links[0]).toMatchObject({ source: nodeIds[0], target: nodeIds[1], type: "depends" });
   });
 
-  it("refresh preserves graph when saved cursor exists without durable state", async () => {
+  it("CT-A1/CT-A4 valid cache enables savedCursor fast path and no blocking replay", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-ui-"));
     cleanups.push(async () => rm(storageDir, { recursive: true, force: true }));
 
@@ -72,22 +73,66 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     const nodeIds = Array.from(seededStore.getState().nodesById.keys());
     await createLink(server.url, "alice", nodeIds[0]!, nodeIds[1]!, "depends");
 
-    const persistedCursor = seededReplay.cursor;
-    const snapshotCursor: Cursor = { metaSeq: 0, graphSeq: 0 };
-    const decision = resolveBootstrapCursorDecision({
-      savedCursor: persistedCursor,
-      snapshot: { cursor: snapshotCursor },
-      stateDigest: null
+    const refreshed = await bootstrapReplay(server.url, "alice", seededStore, seededReplay.cursor);
+    const cache = makeBootstrapCacheRecord(refreshed.cursor, {
+      version: 1,
+      nodes: Array.from(seededStore.getState().nodesById.values()),
+      links: Array.from(seededStore.getState().linksById.values())
     });
 
-    expect(decision.bootstrapFrom).toEqual(snapshotCursor);
+    const snapshotCursor: Cursor = { metaSeq: 0, graphSeq: 0 };
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: refreshed.cursor,
+      snapshot: { cursor: snapshotCursor },
+      bootstrapCache: cache
+    });
 
-    const refreshedStore = createGraphStore();
-    const replayed = await bootstrapReplay(server.url, "alice", refreshedStore, decision.bootstrapFrom);
+    expect(decision.bootstrapFrom).toEqual(refreshed.cursor);
 
-    expect(replayed.graphEventsApplied).toBeGreaterThanOrEqual(3);
-    expect(refreshedStore.getState().nodesById.size).toBe(2);
-    expect(refreshedStore.getState().linksById.size).toBe(1);
+    const fastPathStore = createGraphStore();
+    fastPathStore.applyGraphEvents(cache.projection.nodes.map((node) => ({ type: "graph.node.created", node })));
+    fastPathStore.applyGraphEvents(cache.projection.links.map((link) => ({ type: "graph.link.created", link })));
+    fastPathStore.setCursor(cache.cursor);
+    const replayed = await bootstrapReplay(server.url, "alice", fastPathStore, decision.bootstrapFrom);
+
+    expect(replayed.graphEventsApplied).toBe(0);
+    expect(fastPathStore.getState().nodesById.size).toBe(2);
+    expect(fastPathStore.getState().linksById.size).toBe(1);
+  });
+
+
+  it("CT-A2 digest mismatch forces snapshot fallback", async () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 1, graphSeq: 2 },
+      { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] }
+    );
+    cache.stateDigest = "corrupted";
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 1, graphSeq: 2 },
+      snapshot: { cursor: { metaSeq: 0, graphSeq: 0 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 0, graphSeq: 0 });
+    expect(decision.reason).toBe("snapshot-only-digest-mismatch");
+  });
+
+  it("CT-A3 schemaVersion change invalidates cache", async () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 1, graphSeq: 2 },
+      { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] }
+    );
+    cache.schemaVersion = BOOTSTRAP_CACHE_SCHEMA_VERSION + 1;
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 1, graphSeq: 2 },
+      snapshot: { cursor: { metaSeq: 0, graphSeq: 0 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 0, graphSeq: 0 });
+    expect(decision.invalidateBootstrapCache).toBe(true);
   });
 
   it("reload bootstrap rebuilds nodes/links before subscribe", async () => {
