@@ -220,6 +220,26 @@
     "criticality": "Regression"
   },
   {
+    "invariantId": "CT-PROJ-DET-1",
+    "surface": "Projection",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-PROJ-DET-2",
+    "surface": "Projection",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-PROJ-DET-3",
+    "surface": "Projection",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-PROJ-DET-4",
+    "surface": "Projection",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-REPLICA-1",
     "surface": "Replica",
     "criticality": "Critical"
