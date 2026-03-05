@@ -32,6 +32,9 @@ importers:
 
   apps/mesh-explorer-desktop:
     devDependencies:
+      "@electron/get":
+        specifier: ^2.0.3
+        version: 2.0.3
       electron:
         specifier: ^31.7.7
         version: 31.7.7
@@ -220,6 +223,9 @@ importers:
 packages:
 
   '@types/node@22.18.1':
+    resolution: {}
+
+  '@electron/get@2.0.3':
     resolution: {}
 
   electron@31.7.7:
@@ -463,8 +469,11 @@ snapshots:
 
   '@types/node@22.18.1': {}
 
+  '@electron/get@2.0.3': {}
+
   electron@31.7.7:
     dependencies:
+      "@electron/get": 2.0.3
       "@types/node": 22.18.1
 
   '@esbuild/linux-x64@0.21.5':
