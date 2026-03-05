@@ -7,9 +7,6 @@ on:
   pull_request:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - "**"
 
 jobs:
   workflow-self-check:
