@@ -21,11 +21,41 @@ const ALL_BACKENDS = [
   { env: "persistent", label: "Persistent", requiredCriticalOnly: true }
 ];
 
+
+function trySpawnPnpm(args, env, stdio) {
+  const candidates = process.platform === "win32" ? ["pnpm", "pnpm.cmd"] : ["pnpm"];
+  let last = null;
+
+  for (const cmd of candidates) {
+    const result = spawnSync(cmd, args, {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio
+    });
+
+    if (!result.error || result.error.code !== "ENOENT") {
+      return { cmd, candidates, result };
+    }
+
+    last = { cmd, candidates, result };
+  }
+
+  return last;
+}
+
 function resolveBackendsFromEnv() {
+  const meshBackend = process.env.MESH_BACKEND;
+  const meshTestBackend = process.env.MESH_TEST_BACKEND;
+  const meshPersistence = process.env.MESH_PERSISTENCE;
+  console.log(
+    `[generate-evidence] backend env: MESH_BACKEND=${meshBackend ?? "<unset>"}, MESH_TEST_BACKEND=${meshTestBackend ?? "<unset>"}, MESH_PERSISTENCE=${meshPersistence ?? "<unset>"}`
+  );
+
   const candidates = [
-    ["MESH_BACKEND", process.env.MESH_BACKEND],
-    ["MESH_TEST_BACKEND", process.env.MESH_TEST_BACKEND],
-    ["MESH_PERSISTENCE", process.env.MESH_PERSISTENCE]
+    ["MESH_BACKEND", meshBackend],
+    ["MESH_TEST_BACKEND", meshTestBackend],
+    ["MESH_PERSISTENCE", meshPersistence]
   ];
   const chosen = candidates.find(([, value]) => typeof value === "string" && value.trim().length > 0);
   if (!chosen) {
@@ -88,37 +118,44 @@ function runCommand(cmd, env = {}) {
 }
 
 function collectRuntimeMeta(backendEnv) {
-  const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
   const args = ["exec", "vitest", "run", "packages/conformance-tests/src", "--reporter", reporterUrl];
-  const result = spawnSync(pnpmCmd, args, {
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      MESH_EVIDENCE_META_PATH: runtimeMetaPath,
-      MESH_BACKEND: backendEnv,
-      MESH_TX_VISIBILITY_POLICY: "acl"
-    },
-    encoding: "utf8",
-    stdio: "pipe"
-  });
+  const env = {
+    ...process.env,
+    MESH_EVIDENCE_META_PATH: runtimeMetaPath,
+    MESH_BACKEND: backendEnv,
+    MESH_TX_VISIBILITY_POLICY: "acl"
+  };
+  const useInherit = process.env.CI === "true" || process.env.CI === "1";
+  const stdio = useInherit ? "inherit" : "pipe";
+
+  const spawned = trySpawnPnpm(args, env, stdio);
+  const { cmd, candidates, result } = spawned;
 
   if (result.error || result.status !== 0) {
     const details = [
       `[generate-evidence] backend=${backendEnv}`,
-      `[generate-evidence] command=${pnpmCmd} ${args.join(" ")}`,
+      `[generate-evidence] command=${cmd} ${args.join(" ")}`,
+      `[generate-evidence] attemptedCommands=${candidates.join(", ")}`,
       `[generate-evidence] reporterPath=${reporterPath}`,
       `[generate-evidence] reporterUrl=${reporterUrl}`,
+      `[generate-evidence] process.execPath=${process.execPath}`,
+      `[generate-evidence] PATH=${process.env.PATH ?? "<unset>"}`,
       `[generate-evidence] exitCode=${String(result.status)}`,
       `[generate-evidence] signal=${String(result.signal)}`,
       `[generate-evidence] spawnError.message=${result.error?.message ?? "<none>"}`,
       `[generate-evidence] spawnError.code=${result.error?.code ?? "<none>"}`,
       `[generate-evidence] spawnError.stack=${result.error?.stack ?? "<none>"}`,
-      `[generate-evidence] stdout:\n${result.stdout?.trim() || "<empty>"}`,
-      `[generate-evidence] stderr:\n${result.stderr?.trim() || "<empty>"}`
+      useInherit
+        ? "[generate-evidence] stdio=inherit (see live vitest output above)"
+        : `[generate-evidence] stdout:\n${result.stdout ?? "<null>"}`,
+      useInherit
+        ? "[generate-evidence] stdio=inherit (see live vitest output above)"
+        : `[generate-evidence] stderr:\n${result.stderr ?? "<null>"}`
     ].join("\n\n");
     throw new Error(details);
   }
 
+  console.log(`[generate-evidence] vitest reporter collection succeeded via ${cmd}`);
   return readJson(runtimeMetaPath);
 }
 
