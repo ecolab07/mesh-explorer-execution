@@ -41,6 +41,12 @@ importers:
       fs-extra:
         specifier: ^11.2.0
         version: 11.2.0
+      graceful-fs:
+        specifier: ^4.2.11
+        version: 4.2.11
+      jsonfile:
+        specifier: ^6.1.0
+        version: 6.1.0
       universalify:
         specifier: ^2.0.1
         version: 2.0.1
@@ -238,6 +244,12 @@ packages:
     resolution: {}
 
   fs-extra@11.2.0:
+    resolution: {}
+
+  graceful-fs@4.2.11:
+    resolution: {}
+
+  jsonfile@6.1.0:
     resolution: {}
 
   universalify@2.0.1:
@@ -491,6 +503,14 @@ snapshots:
       "@types/node": 22.18.1
 
   fs-extra@11.2.0:
+    dependencies:
+      graceful-fs: 4.2.11
+      jsonfile: 6.1.0
+      universalify: 2.0.1
+
+  graceful-fs@4.2.11: {}
+
+  jsonfile@6.1.0:
     dependencies:
       universalify: 2.0.1
 
