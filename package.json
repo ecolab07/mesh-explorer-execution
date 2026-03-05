@@ -2,6 +2,10 @@
   "name": "mesh-explorer-execution",
   "private": true,
   "version": "0.1.0",
+  "engines": {
+    "node": "20.11.1"
+  },
+  "packageManager": "pnpm@9.15.4",
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r build && pnpm --filter @mesh/conformance-tests test",
@@ -32,7 +36,8 @@
     "webapp": "pnpm --dir apps/mesh-explorer-webapp dev",
     "desktop": "pnpm --dir apps/mesh-explorer-desktop start",
     "check:lockfile-clean": "node scripts/ci/check-lockfile-clean.mjs",
-    "repair:win-rollup": "node scripts/repair-windows-rollup.mjs"
+    "repair:win-rollup": "node scripts/repair-windows-rollup.mjs",
+    "ci:check-determinism": "node tools/ci/check-determinism.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
