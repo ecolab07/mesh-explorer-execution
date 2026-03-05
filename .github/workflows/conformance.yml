@@ -81,10 +81,10 @@ jobs:
         if: matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest'
         run: node tools/ci/check-patterns.mjs --root packages/conformance-tests/src --no-default-patterns --pattern "TODO" --pattern "skip\("
       - name: Run conformance tests (${{ matrix.mesh_backend }})
-        if: !(matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest')
+        if: ${{ matrix.mesh_backend != 'inmemory' || matrix.os != 'ubuntu-latest' }}
         run: pnpm -r --filter @mesh/conformance-tests... test
       - name: Generate conformance evidence (${{ matrix.mesh_backend }})
-        if: !(matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest')
+        if: ${{ matrix.mesh_backend != 'inmemory' || matrix.os != 'ubuntu-latest' }}
         run: pnpm --filter @mesh/conformance-tests posttest
       - name: Stability check (determinism)
         if: matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest'
@@ -98,7 +98,7 @@ jobs:
           cp artifacts/conformance-evidence.runtime.json packages/conformance-tests/conformance-evidence.runtime.json
           cp artifacts/conformance-evidence.critical.md packages/conformance-tests/conformance-evidence.critical.md
       - name: Critical gate (${{ matrix.mesh_backend }})
-        if: !(matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest')
+        if: ${{ matrix.mesh_backend != 'inmemory' || matrix.os != 'ubuntu-latest' }}
         run: pnpm --filter @mesh/conformance-tests check:critical
       - name: Artifacts up-to-date
         if: matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest'
