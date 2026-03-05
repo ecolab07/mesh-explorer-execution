@@ -28,7 +28,7 @@ jobs:
       - name: Prune pnpm store
         run: pnpm store prune
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --shamefully-hoist
       - name: Verify lockfile is clean after install
         run: pnpm check:lockfile-clean
       - name: Build
