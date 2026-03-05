@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { execSync, spawnSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,7 +10,6 @@ const testsRoot = path.resolve(repoRoot, "packages/conformance-tests/src");
 const artifactsDir = path.resolve(repoRoot, "artifacts");
 const expectedInvariantsPath = path.resolve(repoRoot, "packages/conformance-tests/expected-invariants.json");
 const reporterPath = path.resolve(__dirname, "evidence-meta-reporter.mjs");
-const reporterUrl = pathToFileURL(reporterPath).href;
 const runtimeMetaPath = path.resolve(artifactsDir, "conformance-evidence.runtime.meta.json");
 
 const testPattern = /it\(\s*"([^"\n]+)"\s*,/g;
@@ -64,10 +63,33 @@ function runCommand(cmd, env = {}) {
 }
 
 function collectRuntimeMeta(backendEnv) {
-  runCommand(
-    `pnpm exec vitest run packages/conformance-tests/src --reporter ${reporterUrl}`,
-    { MESH_EVIDENCE_META_PATH: runtimeMetaPath, MESH_BACKEND: backendEnv, MESH_TX_VISIBILITY_POLICY: "acl" }
+  const command = "pnpm exec vitest run packages/conformance-tests/src --reporter <path>";
+  const result = spawnSync(
+    "pnpm",
+    ["exec", "vitest", "run", "packages/conformance-tests/src", "--reporter", reporterPath],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        MESH_EVIDENCE_META_PATH: runtimeMetaPath,
+        MESH_BACKEND: backendEnv,
+        MESH_TX_VISIBILITY_POLICY: "acl"
+      },
+      encoding: "utf8"
+    }
   );
+
+  if (result.status !== 0) {
+    const details = [
+      `[generate-evidence] backend=${backendEnv}`,
+      `[generate-evidence] command=${command}`,
+      `[generate-evidence] reporterPath=${reporterPath}`,
+      `[generate-evidence] exitCode=${result.status ?? "null"}`,
+      `[generate-evidence] stdout:\n${result.stdout?.trim() || "<empty>"}`,
+      `[generate-evidence] stderr:\n${result.stderr?.trim() || "<empty>"}`
+    ].join("\n\n");
+    throw new Error(details);
+  }
 
   return readJson(runtimeMetaPath);
 }
@@ -125,6 +147,8 @@ function summarize(rows) {
 }
 
 async function main() {
+  await fs.mkdir(artifactsDir, { recursive: true });
+
   const testFiles = await listTestFiles(testsRoot);
   const expectedInvariants = await readJson(expectedInvariantsPath);
   const expectedById = new Map();
@@ -335,8 +359,6 @@ async function main() {
     backendPayloads.Persistent.criticalInvariantIds,
     "Coverage gaps: none."
   );
-
-  await fs.mkdir(artifactsDir, { recursive: true });
 
   const jsonPayload = {
     metadata: {
