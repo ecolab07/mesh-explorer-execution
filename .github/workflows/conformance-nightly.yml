@@ -16,6 +16,8 @@ jobs:
       MESH_CHAOS_BACKEND: "persistent"
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure repo temp dir exists
+        run: node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.4
