@@ -38,6 +38,9 @@ importers:
       electron:
         specifier: ^31.7.7
         version: 31.7.7
+      fs-extra:
+        specifier: ^11.2.0
+        version: 11.2.0
 
   apps/mesh-explorer-webapp:
     dependencies:
@@ -229,6 +232,9 @@ packages:
     resolution: {}
 
   electron@31.7.7:
+    resolution: {}
+
+  fs-extra@11.2.0:
     resolution: {}
 
   '@esbuild/linux-x64@0.21.5':
@@ -469,12 +475,16 @@ snapshots:
 
   '@types/node@22.18.1': {}
 
-  '@electron/get@2.0.3': {}
+  '@electron/get@2.0.3':
+    dependencies:
+      fs-extra: 11.2.0
 
   electron@31.7.7:
     dependencies:
       "@electron/get": 2.0.3
       "@types/node": 22.18.1
+
+  fs-extra@11.2.0: {}
 
   '@esbuild/linux-x64@0.21.5':
     optional: true
