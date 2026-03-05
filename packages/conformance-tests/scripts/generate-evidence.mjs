@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,15 +10,40 @@ const testsRoot = path.resolve(repoRoot, "packages/conformance-tests/src");
 const artifactsDir = path.resolve(repoRoot, "artifacts");
 const expectedInvariantsPath = path.resolve(repoRoot, "packages/conformance-tests/expected-invariants.json");
 const reporterPath = path.resolve(__dirname, "evidence-meta-reporter.mjs");
+const reporterUrl = pathToFileURL(reporterPath).href;
 const runtimeMetaPath = path.resolve(artifactsDir, "conformance-evidence.runtime.meta.json");
 
 const testPattern = /it\(\s*"([^"\n]+)"\s*,/g;
 const conformanceIdPattern = /CT-[A-Z0-9-]+/;
 const allowedCriticality = new Set(["Critical", "Structural", "Regression"]);
-const BACKENDS = [
+const ALL_BACKENDS = [
   { env: "inmemory", label: "InMemory", requiredCriticalOnly: false },
   { env: "persistent", label: "Persistent", requiredCriticalOnly: true }
 ];
+
+function resolveBackendsFromEnv() {
+  const candidates = [
+    ["MESH_BACKEND", process.env.MESH_BACKEND],
+    ["MESH_TEST_BACKEND", process.env.MESH_TEST_BACKEND],
+    ["MESH_PERSISTENCE", process.env.MESH_PERSISTENCE]
+  ];
+  const chosen = candidates.find(([, value]) => typeof value === "string" && value.trim().length > 0);
+  if (!chosen) {
+    console.log("[generate-evidence] backend source: none (running all backends)");
+    return ALL_BACKENDS;
+  }
+
+  const [source, rawValue] = chosen;
+  const normalized = rawValue.trim().toLowerCase();
+  const backend = ALL_BACKENDS.find((entry) => entry.env === normalized);
+  if (!backend) {
+    const allowed = ALL_BACKENDS.map((entry) => entry.env).join(", ");
+    throw new Error(`[generate-evidence] unsupported backend from ${source}=${rawValue}. Allowed: ${allowed}`);
+  }
+
+  console.log(`[generate-evidence] backend source: ${source}=${rawValue}; selected=${backend.env}`);
+  return [backend];
+}
 
 async function listTestFiles(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -63,28 +88,31 @@ function runCommand(cmd, env = {}) {
 }
 
 function collectRuntimeMeta(backendEnv) {
-  const command = "pnpm exec vitest run packages/conformance-tests/src --reporter <path>";
-  const result = spawnSync(
-    "pnpm",
-    ["exec", "vitest", "run", "packages/conformance-tests/src", "--reporter", reporterPath],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        MESH_EVIDENCE_META_PATH: runtimeMetaPath,
-        MESH_BACKEND: backendEnv,
-        MESH_TX_VISIBILITY_POLICY: "acl"
-      },
-      encoding: "utf8"
-    }
-  );
+  const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  const args = ["exec", "vitest", "run", "packages/conformance-tests/src", "--reporter", reporterUrl];
+  const result = spawnSync(pnpmCmd, args, {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      MESH_EVIDENCE_META_PATH: runtimeMetaPath,
+      MESH_BACKEND: backendEnv,
+      MESH_TX_VISIBILITY_POLICY: "acl"
+    },
+    encoding: "utf8",
+    stdio: "pipe"
+  });
 
-  if (result.status !== 0) {
+  if (result.error || result.status !== 0) {
     const details = [
       `[generate-evidence] backend=${backendEnv}`,
-      `[generate-evidence] command=${command}`,
+      `[generate-evidence] command=${pnpmCmd} ${args.join(" ")}`,
       `[generate-evidence] reporterPath=${reporterPath}`,
-      `[generate-evidence] exitCode=${result.status ?? "null"}`,
+      `[generate-evidence] reporterUrl=${reporterUrl}`,
+      `[generate-evidence] exitCode=${String(result.status)}`,
+      `[generate-evidence] signal=${String(result.signal)}`,
+      `[generate-evidence] spawnError.message=${result.error?.message ?? "<none>"}`,
+      `[generate-evidence] spawnError.code=${result.error?.code ?? "<none>"}`,
+      `[generate-evidence] spawnError.stack=${result.error?.stack ?? "<none>"}`,
       `[generate-evidence] stdout:\n${result.stdout?.trim() || "<empty>"}`,
       `[generate-evidence] stderr:\n${result.stderr?.trim() || "<empty>"}`
     ].join("\n\n");
@@ -201,8 +229,9 @@ async function main() {
     }
   }
 
+  const backends = resolveBackendsFromEnv();
   const backendPayloads = {};
-  for (const backend of BACKENDS) {
+  for (const backend of backends) {
     const runtimeTests = await collectRuntimeMeta(backend.env);
     const invalidConformance = [];
     const evidenceRows = [];
@@ -312,7 +341,7 @@ async function main() {
   const vitestVersion = rootPackage.devDependencies?.vitest ?? "unknown";
   const generatedAt = commandOutput("git show -s --format=%cI HEAD");
 
-  const escapedAllRows = BACKENDS.flatMap(({ label }) => backendPayloads[label].invariants).map((row) => ({
+  const escapedAllRows = backends.flatMap(({ label }) => backendPayloads[label].invariants).map((row) => ({
     ...row,
     oracle: escapeCell(row.oracle),
     criticality: escapeCell(row.criticality),
@@ -321,6 +350,9 @@ async function main() {
   }));
 
   const combinedSummary = summarize(escapedAllRows);
+  const primaryBackendLabel = backendPayloads.InMemory ? "InMemory" : backends[0].label;
+  const primaryPayload = backendPayloads[primaryBackendLabel];
+
   const markdown = buildMarkdown(
     "Conformance Evidence",
     suiteNames,
@@ -342,7 +374,7 @@ async function main() {
     "Coverage gaps: none."
   );
 
-  const persistentRows = backendPayloads.Persistent.invariants.map((row) => ({
+  const persistentRows = (backendPayloads.Persistent?.invariants ?? []).map((row) => ({
     ...row,
     oracle: escapeCell(row.oracle),
     criticality: escapeCell(row.criticality),
@@ -350,27 +382,29 @@ async function main() {
     limitations: escapeCell(row.limitations ?? "")
   }));
 
-  const persistentMarkdown = buildMarkdown(
-    "Conformance Evidence (Persistent backend)",
-    suiteNames,
-    vitestVersion,
-    persistentRows,
-    backendPayloads.Persistent.criticalitySummary,
-    backendPayloads.Persistent.criticalInvariantIds,
-    "Coverage gaps: none."
-  );
+  const persistentMarkdown = backendPayloads.Persistent
+    ? buildMarkdown(
+        "Conformance Evidence (Persistent backend)",
+        suiteNames,
+        vitestVersion,
+        persistentRows,
+        backendPayloads.Persistent.criticalitySummary,
+        backendPayloads.Persistent.criticalInvariantIds,
+        "Coverage gaps: none."
+      )
+    : "# Conformance Evidence (Persistent backend)\n\nCoverage not collected in this run.\n";
 
   const jsonPayload = {
     metadata: {
       vitestVersion,
       suites: [...new Set(suiteNames)].sort(),
-      backends: BACKENDS.map((backend) => backend.label)
+      backends: backends.map((backend) => backend.label)
     },
     backends: backendPayloads,
-    invariants: backendPayloads.InMemory.invariants,
-    criticalitySummary: backendPayloads.InMemory.criticalitySummary,
-    criticalInvariantIds: backendPayloads.InMemory.criticalInvariantIds,
-    coverageGaps: backendPayloads.InMemory.coverageGaps
+    invariants: primaryPayload.invariants,
+    criticalitySummary: primaryPayload.criticalitySummary,
+    criticalInvariantIds: primaryPayload.criticalInvariantIds,
+    coverageGaps: primaryPayload.coverageGaps
   };
 
   const runtimePayload = {
@@ -381,7 +415,7 @@ async function main() {
       pnpmVersion,
       vitestVersion,
       suites: [...new Set(suiteNames)].sort(),
-      backends: BACKENDS.map((backend) => backend.label),
+      backends: backends.map((backend) => backend.label),
       runner: {
         platform: process.platform,
         arch: process.arch
