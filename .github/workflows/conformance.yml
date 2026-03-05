@@ -14,13 +14,13 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Enable corepack
-        run: corepack enable
-      - name: Activate pnpm from packageManager
-        run: corepack install
+          cache: pnpm
       - name: Show runtime versions
         run: |
           node --version
@@ -49,13 +49,13 @@ jobs:
       TEMP: ${{ github.workspace }}\\.tmp
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Enable corepack
-        run: corepack enable
-      - name: Activate pnpm from packageManager
-        run: corepack install
+          cache: pnpm
       - name: Show runtime versions
         run: |
           node --version
@@ -66,7 +66,7 @@ jobs:
       - name: Prune pnpm store
         run: pnpm store prune
       - name: Install
-        run: pnpm install --frozen-lockfile --filter @mesh/conformance-tests...
+        run: pnpm install --frozen-lockfile
       - name: Verify lockfile is clean after install
         run: pnpm check:lockfile-clean
       - name: Build
