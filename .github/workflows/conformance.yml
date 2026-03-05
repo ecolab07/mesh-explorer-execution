@@ -5,13 +5,15 @@ env:
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "**"
 
 jobs:
   workflow-self-check:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - name: Ensure repo temp dir exists
