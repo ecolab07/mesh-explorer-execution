@@ -16,20 +16,20 @@ jobs:
       MESH_CHAOS_BACKEND: "persistent"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
       - uses: pnpm/action-setup@v4
         with:
           version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
       - name: Prune pnpm store
         run: pnpm store prune
       - name: Install
-        run: pnpm install --frozen-lockfile --filter @mesh/conformance-tests...
+        run: pnpm install --frozen-lockfile
       - name: Verify lockfile is clean after install
         run: pnpm check:lockfile-clean
       - name: Build
-        run: pnpm -r --filter @mesh/conformance-tests... build
+        run: pnpm -r build
       - name: Check API contract v1
         run: pnpm check:api-contract
       - name: Test (nightly soak)

@@ -70,7 +70,7 @@ jobs:
       - name: Verify lockfile is clean after install
         run: pnpm check:lockfile-clean
       - name: Build
-        run: pnpm -r --filter @mesh/conformance-tests... build
+        run: pnpm -r build
       - name: Check public exports exist in dist
         run: pnpm check:public-exports-exist
       - name: Check API contract v1
