@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { execSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -9,7 +9,8 @@ const repoRoot = path.resolve(__dirname, "../../..");
 const testsRoot = path.resolve(repoRoot, "packages/conformance-tests/src");
 const artifactsDir = path.resolve(repoRoot, "artifacts");
 const expectedInvariantsPath = path.resolve(repoRoot, "packages/conformance-tests/expected-invariants.json");
-const evidenceReporterPath = path.resolve(repoRoot, "packages/conformance-tests/scripts/evidence-meta-reporter.mjs");
+const reporterPath = path.resolve(__dirname, "evidence-meta-reporter.mjs");
+const reporterUrl = pathToFileURL(reporterPath).href;
 const runtimeMetaPath = path.resolve(artifactsDir, "conformance-evidence.runtime.meta.json");
 
 const testPattern = /it\(\s*"([^"\n]+)"\s*,/g;
@@ -64,7 +65,7 @@ function runCommand(cmd, env = {}) {
 
 function collectRuntimeMeta(backendEnv) {
   runCommand(
-    `pnpm exec vitest run packages/conformance-tests/src --reporter ${evidenceReporterPath}`,
+    `pnpm exec vitest run packages/conformance-tests/src --reporter ${reporterUrl}`,
     { MESH_EVIDENCE_META_PATH: runtimeMetaPath, MESH_BACKEND: backendEnv, MESH_TX_VISIBILITY_POLICY: "acl" }
   );
 
