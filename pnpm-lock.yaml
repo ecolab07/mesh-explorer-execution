@@ -32,9 +32,6 @@ importers:
 
   apps/mesh-explorer-desktop:
     devDependencies:
-      '@electron/get':
-        specifier: ^2.0.3
-        version: 2.0.3
       electron:
         specifier: ^31.7.7
         version: 31.7.7

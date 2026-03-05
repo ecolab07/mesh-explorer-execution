@@ -7,7 +7,6 @@
     "start": "electron ./main.mjs"
   },
   "devDependencies": {
-    "@electron/get": "^2.0.3",
     "electron": "^31.7.7"
   }
 }
