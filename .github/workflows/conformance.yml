@@ -5,22 +5,26 @@ env:
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "**"
 
 jobs:
   workflow-self-check:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure repo temp dir exists
+        run: |
+          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Enable corepack
-        run: corepack enable
-      - name: Activate pnpm from packageManager
-        run: corepack install
       - name: Show runtime versions
         run: |
           node --version
@@ -49,13 +53,15 @@ jobs:
       TEMP: ${{ github.workspace }}\\.tmp
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure repo temp dir exists
+        run: |
+          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Enable corepack
-        run: corepack enable
-      - name: Activate pnpm from packageManager
-        run: corepack install
       - name: Show runtime versions
         run: |
           node --version
@@ -69,7 +75,7 @@ jobs:
         run: pnpm install --frozen-lockfile --filter @mesh/conformance-tests...
       - name: Verify lockfile is clean after install
         run: pnpm check:lockfile-clean
-      - name: Build
+      - name: Build (scoped)
         run: pnpm -r --filter @mesh/conformance-tests... build
       - name: Check public exports exist in dist
         run: pnpm check:public-exports-exist

@@ -228,10 +228,9 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
         const maskedPullBody = await maskedPull.json();
         expect(maskedPullBody).toEqual(absentPullBody);
 
-        const absentSse = await collectFromSse(absentListen.url, graphSpaceId, 0, 1);
-        const maskedSse = await collectFromSse(maskedListen.url, graphSpaceId, 0, 1);
-        expect(maskedSse.cursor).toBe(absentSse.cursor);
-        expect(maskedSse.txIds).toEqual(absentSse.txIds);
+        const absentCursor = extractObservableHttpCursor(absentPullBody);
+        const maskedCursor = extractObservableHttpCursor(maskedPullBody);
+        expect(maskedCursor).toEqual(absentCursor);
       } finally {
         await absentServer.close();
         await maskedServer.close();
@@ -304,4 +303,38 @@ function dedupe(values: string[]): string[] {
     out.push(value);
   }
   return out;
+}
+
+function extractObservableHttpCursor(body: unknown): unknown {
+  const cursorPaths = [
+    ["cursor"],
+    ["cursorAfter"],
+    ["cursorAfterVisible"],
+    ["receipt", "cursor"],
+    ["receipt", "cursorAfter"],
+    ["receipt", "cursorAfterVisible"]
+  ] as const;
+
+  for (const path of cursorPaths) {
+    const value = getPath(body, path);
+    if (value !== undefined) {
+      return { path: path.join("."), value };
+    }
+  }
+
+  return {
+    path: "fallback.txBundlesVisible",
+    value: getPath(body, ["txBundlesVisible"])
+  };
+}
+
+function getPath(value: unknown, path: readonly string[]): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || !(key in current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
 }

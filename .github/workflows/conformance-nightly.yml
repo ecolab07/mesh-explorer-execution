@@ -16,23 +16,26 @@ jobs:
       MESH_CHAOS_BACKEND: "persistent"
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure repo temp dir exists
+        run: |
+          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - name: Prune pnpm store
         run: pnpm store prune
       - name: Install
         run: pnpm install --frozen-lockfile --filter @mesh/conformance-tests...
       - name: Verify lockfile is clean after install
         run: pnpm check:lockfile-clean
-      - name: Build
+      - name: Build (scoped)
         run: pnpm -r --filter @mesh/conformance-tests... build
       - name: Check API contract v1
         run: pnpm check:api-contract
-      - name: Test (nightly soak)
+      - name: Run conformance tests
         run: pnpm -r --filter @mesh/conformance-tests... test
       - name: Critical gate
         run: pnpm --filter @mesh/conformance-tests check:critical

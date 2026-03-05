@@ -98,10 +98,10 @@ checkRequiredPattern(
   'Missing step: pnpm check:lockfile-clean',
 );
 
-const hasBuildStep = /pnpm\s+-r\s+build/m.test(workflowContent);
+const hasBuildStep = /pnpm\s+-r\s+(?:--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+)?build\b/m.test(workflowContent);
 const hasBuildInTest = /pnpm\s+test/m.test(workflowContent) && /"?test"?\s*:\s*"[^"]*pnpm\s+-r\s+build/m.test(readFileSync('package.json', 'utf8'));
 if (!hasBuildStep && !hasBuildInTest) {
-  fail('Missing step: pnpm -r build (or build integrated in pnpm test)');
+  fail('Missing step: pnpm -r build OR pnpm -r --filter @mesh/conformance-tests... build (or build integrated in pnpm test)');
 }
 
 checkRequiredPattern(
@@ -179,8 +179,8 @@ if (workflowFiles.includes(NIGHTLY_FILE)) {
 
   checkRequiredPattern(
     nightlyContent,
-    /pnpm\s+-r\s+build/m,
-    'Missing step in conformance-nightly.yml: pnpm -r build',
+    /pnpm\s+-r\s+(?:--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+)?build\b/m,
+    'Missing step in conformance-nightly.yml: pnpm -r build OR pnpm -r --filter @mesh/conformance-tests... build',
   );
 
   checkRequiredPattern(
