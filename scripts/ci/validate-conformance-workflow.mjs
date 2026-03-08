@@ -98,11 +98,10 @@ checkRequiredPattern(
   'Missing step: trigger pull_request',
 );
 
-checkRequiredPattern(
-  workflowContent,
-  /(^|\n)on:\s*[\s\S]*?\bpush\s*:[\s\S]*?\bbranches\s*:\s*(\[[^\]]*\bmain\b[^\]]*\]|[\s\S]*?-\s*main\b)/m,
-  'Missing step: trigger push on main',
-);
+if (/(^|\n)on:\s*[\s\S]*?\bpush\s*:/m.test(workflowContent)) {
+  fail('Forbidden trigger: push in conformance.yml');
+}
+
 
 checkRequiredPattern(
   workflowContent,
