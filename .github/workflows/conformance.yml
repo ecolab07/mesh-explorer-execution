@@ -25,7 +25,7 @@ jobs:
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
       - name: Ensure repo temp dir exists
         run: |
-          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
+          node -e 'require("fs").mkdirSync(".tmp", { recursive: true })'
       - name: Show runtime versions
         run: |
           node --version
@@ -63,13 +63,14 @@ jobs:
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
       - name: Ensure repo temp dir exists
         run: |
-          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
+          node -e 'require("fs").mkdirSync(".tmp", { recursive: true })'
       - name: Show runtime versions
         run: |
           node --version
           pnpm --version
       - name: Prepare stable temp directory
-        run: node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
+        run: |
+          node -e 'require("fs").mkdirSync(".tmp", { recursive: true })'
       - name: Prune pnpm store
         run: pnpm store prune
       - name: Install
