@@ -1,7 +1,6 @@
 name: Conformance Nightly
 
 env:
-  NODE_VERSION: 20.11.1
   PNPM_VERSION: 9.15.4
 
 on:
@@ -22,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
       - name: Enable corepack and activate pnpm
         run: |
           corepack enable
@@ -37,11 +36,11 @@ jobs:
       - name: Verify lockfile is clean after install
         run: pnpm check:lockfile-clean
       - name: Build (scoped)
-        run: pnpm -r --filter @mesh/conformance-tests... build
+        run: pnpm ci:conformance:build
       - name: Check API contract v1
         run: pnpm check:api-contract
       - name: Run conformance tests
-        run: pnpm -r --filter @mesh/conformance-tests... test
+        run: pnpm ci:conformance:test
       - name: Critical gate
         run: pnpm --filter @mesh/conformance-tests check:critical
       - name: Upload nightly conformance artifacts

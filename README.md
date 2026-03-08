@@ -17,6 +17,12 @@ pnpm --version
 
 ```bash
 pnpm install --frozen-lockfile --filter @mesh/conformance-tests...
+pnpm ci:conformance
+```
+
+Equivalent expanded form:
+
+```bash
 pnpm ci:conformance:build
 pnpm ci:conformance:test
 ```
