@@ -76,6 +76,30 @@ if (!workflowContent) {
 
 checkRequiredPattern(
   workflowContent,
+  /NODE_VERSION:\s*20\.11\.1/m,
+  'Missing or unexpected NODE_VERSION pin in conformance.yml',
+);
+
+checkRequiredPattern(
+  workflowContent,
+  /PNPM_VERSION:\s*9\.15\.4/m,
+  'Missing or unexpected PNPM_VERSION pin in conformance.yml',
+);
+
+checkRequiredPattern(
+  workflowContent,
+  /corepack\s+enable[\s\S]*corepack\s+prepare\s+pnpm@\$\{\{\s*env\.PNPM_VERSION\s*\}\}\s+--activate/m,
+  'Missing step: corepack enable + corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate',
+);
+
+checkRequiredPattern(
+  workflowContent,
+  /actions\/setup-node@v4[\s\S]*node-version:\s*\$\{\{\s*env\.NODE_VERSION\s*\}\}/m,
+  'Missing step: actions/setup-node with env.NODE_VERSION pin',
+);
+
+checkRequiredPattern(
+  workflowContent,
   /(^|\n)on:\s*[\s\S]*?\bpull_request\s*:/m,
   'Missing step: trigger pull_request',
 );
@@ -144,6 +168,30 @@ if (!/github\.event_name|\$\{\{\s*github\.event_name\s*}}/.test(workflowContent)
 
 if (workflowFiles.includes(NIGHTLY_FILE)) {
   const nightlyContent = readWorkflowContent(NIGHTLY_FILE);
+
+  checkRequiredPattern(
+    nightlyContent,
+    /NODE_VERSION:\s*20\.11\.1/m,
+    'Missing or unexpected NODE_VERSION pin in conformance-nightly.yml',
+  );
+
+  checkRequiredPattern(
+    nightlyContent,
+    /PNPM_VERSION:\s*9\.15\.4/m,
+    'Missing or unexpected PNPM_VERSION pin in conformance-nightly.yml',
+  );
+
+  checkRequiredPattern(
+    nightlyContent,
+    /corepack\s+enable[\s\S]*corepack\s+prepare\s+pnpm@\$\{\{\s*env\.PNPM_VERSION\s*\}\}\s+--activate/m,
+    'Missing step in conformance-nightly.yml: corepack enable + corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate',
+  );
+
+  checkRequiredPattern(
+    nightlyContent,
+    /actions\/setup-node@v4[\s\S]*node-version:\s*\$\{\{\s*env\.NODE_VERSION\s*\}\}/m,
+    'Missing step in conformance-nightly.yml: actions/setup-node with env.NODE_VERSION pin',
+  );
 
   checkRequiredPattern(
     nightlyContent,

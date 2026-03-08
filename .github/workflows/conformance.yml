@@ -2,6 +2,7 @@ name: Conformance
 
 env:
   NODE_VERSION: 20.11.1
+  PNPM_VERSION: 9.15.4
 
 on:
   pull_request:
@@ -16,15 +17,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure repo temp dir exists
-        run: |
-          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Enable corepack and activate pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+      - name: Ensure repo temp dir exists
+        run: |
+          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
       - name: Show runtime versions
         run: |
           node --version
@@ -53,15 +55,16 @@ jobs:
       TEMP: ${{ github.workspace }}\\.tmp
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure repo temp dir exists
-        run: |
-          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Enable corepack and activate pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+      - name: Ensure repo temp dir exists
+        run: |
+          node -e "require('fs').mkdirSync('.tmp', { recursive: true })"
       - name: Show runtime versions
         run: |
           node --version
