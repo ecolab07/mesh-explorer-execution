@@ -3,9 +3,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { startMeshGraphServer, type MeshGraphServerHandle } from "../../apps/mesh-graph-server/src/index.js";
-import { createGraphStore, type Cursor, type GraphEvent, type GraphStore } from "../../packages/mesh-explorer-ui/src/graphStore.js";
+import {
+  createGraphStore,
+  type Cursor,
+  type GraphEvent,
+  type GraphLink,
+  type GraphNode,
+  type GraphStore
+} from "../../packages/mesh-explorer-ui/src/graphStore.js";
 import { resolveBootstrapCursorDecision } from "../../packages/mesh-explorer-ui/src/bootstrapCursor.js";
-import { BOOTSTRAP_CACHE_SCHEMA_VERSION, makeBootstrapCacheRecord } from "../../packages/mesh-explorer-ui/src/bootstrapCache.js";
+import {
+  BOOTSTRAP_CACHE_SCHEMA_VERSION,
+  createProjectionSnapshot,
+  hydrateStoreFromProjection,
+  makeBootstrapCacheRecord,
+  type BootstrapCacheRecord
+} from "../../packages/mesh-explorer-ui/src/bootstrapCache.js";
 
 describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -100,22 +113,54 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     expect(fastPathStore.getState().linksById.size).toBe(1);
   });
 
+  it("CT-A1 e2e restart reuses valid digest cache and keeps cursor monotonic", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-ui-"));
+    cleanups.push(async () => rm(storageDir, { recursive: true, force: true }));
 
-  it("CT-A2 digest mismatch forces snapshot fallback", async () => {
-    const cache = makeBootstrapCacheRecord(
-      { metaSeq: 1, graphSeq: 2 },
-      { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] }
-    );
-    cache.stateDigest = "corrupted";
+    const server: MeshGraphServerHandle = await startMeshGraphServer({ storageDir, port: 0 });
+    cleanups.push(async () => server.close());
 
-    const decision = resolveBootstrapCursorDecision({
-      savedCursor: { metaSeq: 1, graphSeq: 2 },
-      snapshot: { cursor: { metaSeq: 0, graphSeq: 0 } },
-      bootstrapCache: cache
-    });
+    await createNode(server.url, "alice", "valid-a");
+    await createNode(server.url, "alice", "valid-b");
 
-    expect(decision.bootstrapFrom).toEqual({ metaSeq: 0, graphSeq: 0 });
-    expect(decision.reason).toBe("snapshot-only-digest-mismatch");
+    const firstSession = await runBootstrapSession(server.url, "alice", null);
+    expect(firstSession.decision.usedSavedCursor).toBe(false);
+    expect(firstSession.decision.reason).toBe("snapshot-only-cache-missing");
+
+    const secondSession = await runBootstrapSession(server.url, "alice", firstSession.persisted);
+    expect(secondSession.decision.usedSavedCursor).toBe(true);
+    expect(secondSession.decision.reason).toBe("saved-cursor-cache-verified");
+    expect(secondSession.replay.graphEventsApplied).toBe(0);
+    expect(secondSession.store.getState().cursor.graphSeq).toBeGreaterThanOrEqual(firstSession.store.getState().cursor.graphSeq);
+    expect(secondSession.store.getState().nodesById.size).toBe(2);
+  });
+
+  it("CT-A2 e2e digest mismatch invalidates local cache and falls back safely", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-ui-"));
+    cleanups.push(async () => rm(storageDir, { recursive: true, force: true }));
+
+    const server: MeshGraphServerHandle = await startMeshGraphServer({ storageDir, port: 0 });
+    cleanups.push(async () => server.close());
+
+    await createNode(server.url, "alice", "mismatch-a");
+    await createNode(server.url, "alice", "mismatch-b");
+
+    const firstSession = await runBootstrapSession(server.url, "alice", null);
+    const corruptedPersisted = {
+      ...firstSession.persisted,
+      bootstrapCache: { ...firstSession.persisted.bootstrapCache, stateDigest: "corrupted-digest" }
+    };
+
+    const restarted = await runBootstrapSession(server.url, "alice", corruptedPersisted);
+    expect(restarted.decision.usedSavedCursor).toBe(false);
+    expect(restarted.decision.reason).toBe("snapshot-only-digest-mismatch");
+    expect(restarted.invalidatedBootstrapCache).toBe(true);
+    expect(restarted.replay.graphEventsApplied).toBe(0);
+    expect(Array.from(restarted.store.getState().nodesById.values()).map((n) => n.label).sort()).toEqual(["mismatch-a", "mismatch-b"]);
+
+    const truthStore = createGraphStore();
+    await bootstrapReplay(server.url, "alice", truthStore, { metaSeq: 0, graphSeq: 0 });
+    expect(Array.from(restarted.store.getState().nodesById.values())).toEqual(Array.from(truthStore.getState().nodesById.values()));
   });
 
   it("CT-A3 schemaVersion change invalidates cache", async () => {
@@ -230,4 +275,64 @@ async function bootstrapReplay(baseUrl: string, principal: string, store: GraphS
       return { cursor, graphEventsApplied };
     }
   }
+}
+
+type PersistedBootstrapState = {
+  savedCursor: Cursor;
+  bootstrapCache: BootstrapCacheRecord;
+};
+
+async function runBootstrapSession(
+  baseUrl: string,
+  principal: string,
+  persisted: PersistedBootstrapState | null
+): Promise<{
+  store: GraphStore;
+  decision: ReturnType<typeof resolveBootstrapCursorDecision>;
+  replay: { cursor: Cursor; graphEventsApplied: number };
+  persisted: PersistedBootstrapState;
+  invalidatedBootstrapCache: boolean;
+}> {
+  const snapshot = await fetchSnapshot(baseUrl, principal);
+  const decision = resolveBootstrapCursorDecision({
+    savedCursor: persisted?.savedCursor ?? null,
+    snapshot: { cursor: snapshot.cursor },
+    bootstrapCache: persisted?.bootstrapCache ?? null
+  });
+
+  const store = createGraphStore();
+  const invalidatedBootstrapCache = decision.invalidateBootstrapCache;
+  if (decision.usedSavedCursor && persisted?.bootstrapCache) {
+    hydrateStoreFromProjection(store, persisted.bootstrapCache.projection);
+    store.setCursor(decision.bootstrapFrom);
+  } else {
+    bootstrapFromSnapshot(store, snapshot);
+  }
+
+  const replay = await bootstrapReplay(baseUrl, principal, store, decision.bootstrapFrom);
+  const bootstrapCache = makeBootstrapCacheRecord(replay.cursor, createProjectionSnapshot(store));
+
+  return {
+    store,
+    decision,
+    replay,
+    persisted: { savedCursor: replay.cursor, bootstrapCache },
+    invalidatedBootstrapCache
+  };
+}
+
+function bootstrapFromSnapshot(store: GraphStore, snapshot: { payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor: Cursor }): void {
+  const nodes = snapshot.payload?.nodes ?? [];
+  const links = snapshot.payload?.links ?? [];
+  store.resetProjection();
+  store.applyGraphEvents(nodes.map((node) => ({ type: "graph.node.created", node } as GraphEvent)));
+  store.applyGraphEvents(links.map((link) => ({ type: "graph.link.created", link } as GraphEvent)));
+  store.setCursor(snapshot.cursor);
+}
+
+async function fetchSnapshot(baseUrl: string, principal: string): Promise<{ payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor: Cursor }> {
+  const response = await fetch(`${baseUrl}/v1/mesh-explorer-graph-v1/graph:snapshot`, { headers: headers(principal) });
+  if (!response.ok) return { payload: { nodes: [], links: [] }, cursor: { metaSeq: 0, graphSeq: 0 } };
+  const snapshot = (await response.json()) as { payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor?: Cursor };
+  return { payload: snapshot.payload, cursor: snapshot.cursor ?? { metaSeq: 0, graphSeq: 0 } };
 }
