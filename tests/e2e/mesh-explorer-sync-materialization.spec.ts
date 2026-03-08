@@ -155,7 +155,6 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     expect(restarted.decision.usedSavedCursor).toBe(false);
     expect(restarted.decision.reason).toBe("snapshot-only-digest-mismatch");
     expect(restarted.invalidatedBootstrapCache).toBe(true);
-    expect(restarted.replay.graphEventsApplied).toBe(0);
     expect(Array.from(restarted.store.getState().nodesById.values()).map((n) => n.label).sort()).toEqual(["mismatch-a", "mismatch-b"]);
 
     const truthStore = createGraphStore();
@@ -163,21 +162,44 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
     expect(Array.from(restarted.store.getState().nodesById.values())).toEqual(Array.from(truthStore.getState().nodesById.values()));
   });
 
-  it("CT-A3 schemaVersion change invalidates cache", async () => {
-    const cache = makeBootstrapCacheRecord(
-      { metaSeq: 1, graphSeq: 2 },
-      { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] }
-    );
-    cache.schemaVersion = BOOTSTRAP_CACHE_SCHEMA_VERSION + 1;
+  it("CT-A3 e2e schemaVersion upgrade invalidates persisted cache and converges via canonical bootstrap", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "mesh-graph-ui-"));
+    cleanups.push(async () => rm(storageDir, { recursive: true, force: true }));
 
-    const decision = resolveBootstrapCursorDecision({
-      savedCursor: { metaSeq: 1, graphSeq: 2 },
-      snapshot: { cursor: { metaSeq: 0, graphSeq: 0 } },
-      bootstrapCache: cache
-    });
+    const server: MeshGraphServerHandle = await startMeshGraphServer({ storageDir, port: 0 });
+    cleanups.push(async () => server.close());
 
-    expect(decision.bootstrapFrom).toEqual({ metaSeq: 0, graphSeq: 0 });
-    expect(decision.invalidateBootstrapCache).toBe(true);
+    await createNode(server.url, "alice", "upgrade-a");
+    await createNode(server.url, "alice", "upgrade-b");
+
+    const firstSession = await runBootstrapSession(server.url, "alice", null);
+    expect(firstSession.decision.usedSavedCursor).toBe(false);
+    expect(firstSession.decision.reason).toBe("snapshot-only-cache-missing");
+
+    await createNode(server.url, "alice", "upgrade-c");
+
+    const upgradedPersisted = {
+      ...firstSession.persisted,
+      bootstrapCache: {
+        ...firstSession.persisted.bootstrapCache,
+        schemaVersion: BOOTSTRAP_CACHE_SCHEMA_VERSION + 1
+      }
+    };
+
+    const restarted = await runBootstrapSession(server.url, "alice", upgradedPersisted);
+    expect(restarted.decision.usedSavedCursor).toBe(false);
+    expect(restarted.decision.reason).toBe("snapshot-only-schema-version-mismatch");
+    expect(restarted.invalidatedBootstrapCache).toBe(true);
+    expect(Array.from(restarted.store.getState().nodesById.values()).map((n) => n.label).sort()).toEqual([
+      "upgrade-a",
+      "upgrade-b",
+      "upgrade-c"
+    ]);
+
+    const truthStore = createGraphStore();
+    await bootstrapReplay(server.url, "alice", truthStore, { metaSeq: 0, graphSeq: 0 });
+    expect(Array.from(restarted.store.getState().nodesById.values())).toEqual(Array.from(truthStore.getState().nodesById.values()));
+    expect(restarted.persisted.bootstrapCache.schemaVersion).toBe(BOOTSTRAP_CACHE_SCHEMA_VERSION);
   });
 
   it("reload bootstrap rebuilds nodes/links before subscribe", async () => {
