@@ -76,8 +76,8 @@ if (!workflowContent) {
 
 checkRequiredPattern(
   workflowContent,
-  /NODE_VERSION:\s*20\.11\.1/m,
-  'Missing or unexpected NODE_VERSION pin in conformance.yml',
+  /actions\/setup-node@v4[\s\S]*node-version-file:\s*\.nvmrc/m,
+  'Missing step: actions/setup-node with .nvmrc pin',
 );
 
 checkRequiredPattern(
@@ -90,12 +90,6 @@ checkRequiredPattern(
   workflowContent,
   /corepack\s+enable[\s\S]*corepack\s+prepare\s+pnpm@\$\{\{\s*env\.PNPM_VERSION\s*\}\}\s+--activate/m,
   'Missing step: corepack enable + corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate',
-);
-
-checkRequiredPattern(
-  workflowContent,
-  /actions\/setup-node@v4[\s\S]*node-version:\s*\$\{\{\s*env\.NODE_VERSION\s*\}\}/m,
-  'Missing step: actions/setup-node with env.NODE_VERSION pin',
 );
 
 checkRequiredPattern(
@@ -122,16 +116,15 @@ checkRequiredPattern(
   'Missing step: pnpm check:lockfile-clean',
 );
 
-const hasBuildStep = /pnpm\s+-r\s+(?:--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+)?build\b/m.test(workflowContent);
-const hasBuildInTest = /pnpm\s+test/m.test(workflowContent) && /"?test"?\s*:\s*"[^"]*pnpm\s+-r\s+build/m.test(readFileSync('package.json', 'utf8'));
-if (!hasBuildStep && !hasBuildInTest) {
-  fail('Missing step: pnpm -r build OR pnpm -r --filter @mesh/conformance-tests... build (or build integrated in pnpm test)');
+const hasBuildStep = /pnpm\s+(?:-r\s+--filter\s+@mesh\/conformance-tests\.\.\.\s+build|ci:conformance:build)\b/m.test(workflowContent);
+if (!hasBuildStep) {
+  fail('Missing step: pnpm ci:conformance:build OR pnpm -r --filter @mesh/conformance-tests... build');
 }
 
 checkRequiredPattern(
   workflowContent,
-  /pnpm\s+(?:(?:-r\s+)?--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+test|test)\b/m,
-  'Missing step: pnpm test OR pnpm --filter @mesh/conformance-tests test',
+  /pnpm\s+(?:(?:-r\s+--filter\s+@mesh\/conformance-tests\.\.\.\s+test)|(?:--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+test)|ci:conformance:test)\b/m,
+  'Missing step: pnpm ci:conformance:test OR pnpm --filter @mesh/conformance-tests... test',
 );
 
 checkRequiredPattern(
@@ -171,8 +164,8 @@ if (workflowFiles.includes(NIGHTLY_FILE)) {
 
   checkRequiredPattern(
     nightlyContent,
-    /NODE_VERSION:\s*20\.11\.1/m,
-    'Missing or unexpected NODE_VERSION pin in conformance-nightly.yml',
+    /actions\/setup-node@v4[\s\S]*node-version-file:\s*\.nvmrc/m,
+    'Missing step in conformance-nightly.yml: actions/setup-node with .nvmrc pin',
   );
 
   checkRequiredPattern(
@@ -185,12 +178,6 @@ if (workflowFiles.includes(NIGHTLY_FILE)) {
     nightlyContent,
     /corepack\s+enable[\s\S]*corepack\s+prepare\s+pnpm@\$\{\{\s*env\.PNPM_VERSION\s*\}\}\s+--activate/m,
     'Missing step in conformance-nightly.yml: corepack enable + corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate',
-  );
-
-  checkRequiredPattern(
-    nightlyContent,
-    /actions\/setup-node@v4[\s\S]*node-version:\s*\$\{\{\s*env\.NODE_VERSION\s*\}\}/m,
-    'Missing step in conformance-nightly.yml: actions/setup-node with env.NODE_VERSION pin',
   );
 
   checkRequiredPattern(
@@ -227,14 +214,14 @@ if (workflowFiles.includes(NIGHTLY_FILE)) {
 
   checkRequiredPattern(
     nightlyContent,
-    /pnpm\s+-r\s+(?:--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+)?build\b/m,
-    'Missing step in conformance-nightly.yml: pnpm -r build OR pnpm -r --filter @mesh/conformance-tests... build',
+    /pnpm\s+(?:-r\s+--filter\s+@mesh\/conformance-tests\.\.\.\s+build|ci:conformance:build)\b/m,
+    'Missing step in conformance-nightly.yml: pnpm ci:conformance:build OR pnpm -r --filter @mesh/conformance-tests... build',
   );
 
   checkRequiredPattern(
     nightlyContent,
-    /pnpm\s+(?:(?:-r\s+)?--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+test|test)\b/m,
-    'Missing step in conformance-nightly.yml: pnpm test OR pnpm --filter @mesh/conformance-tests test',
+    /pnpm\s+(?:(?:-r\s+--filter\s+@mesh\/conformance-tests\.\.\.\s+test)|(?:--filter\s+@mesh\/conformance-tests(?:\.\.\.)?\s+test)|ci:conformance:test)\b/m,
+    'Missing step in conformance-nightly.yml: pnpm ci:conformance:test OR pnpm --filter @mesh/conformance-tests... test',
   );
 
   checkRequiredPattern(
