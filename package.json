@@ -42,7 +42,9 @@
     "repair:win-rollup": "node scripts/repair-windows-rollup.mjs",
     "ci:check-determinism": "node tools/ci/check-determinism.mjs",
     "dev:transport-proxy": "node tools/mesh-transport-proxy/src/index.mjs",
-    "test:transport-proxy": "vitest run tools/mesh-transport-proxy/src/proxy.test.mjs"
+    "test:transport-proxy": "vitest run tools/mesh-transport-proxy/src/proxy.test.mjs",
+    "dev:web": "pnpm --dir apps/mesh-explorer-webapp dev:normal",
+    "dev:web:proxy": "pnpm --dir apps/mesh-explorer-webapp dev:proxy"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

@@ -17,6 +17,108 @@ export function isSubscribeMode(value) {
   return typeof value === "string" && SUBSCRIBE_MODES.includes(value);
 }
 
+
+function renderControlUiHtml() {
+  const modeButtons = SUBSCRIBE_MODES.map(
+    (mode) => `<button type="button" data-mode="${mode}" style="margin:4px 6px 0 0;padding:6px 10px;">${mode}</button>`
+  ).join("\n");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mesh Transport Proxy — Dev/Test Control</title>
+  </head>
+  <body style="font-family: ui-sans-serif, system-ui, sans-serif; margin: 20px; max-width: 760px;">
+    <h1 style="margin-bottom: 8px;">Mesh Transport Proxy — Dev/Test Control</h1>
+    <p style="margin-top: 0; color: #374151;">Dev/test only surface. Controls transport fault mode via existing proxy control API.</p>
+
+    <div style="padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; margin-bottom: 12px;">
+      <div><strong>Current subscribe mode:</strong> <span id="mode">(loading)</span></div>
+      <div><strong>Upstream:</strong> <span id="upstream">(loading)</span></div>
+      <div><strong>Last refresh:</strong> <span id="refreshed">never</span></div>
+      <div id="status" style="margin-top: 8px; color: #1f2937;"></div>
+    </div>
+
+    <div style="padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; margin-bottom: 12px;">
+      <div style="margin-bottom: 6px;"><strong>Set subscribe mode</strong></div>
+      ${modeButtons}
+      <button type="button" id="refresh" style="margin:4px 6px 0 0;padding:6px 10px;">refresh</button>
+    </div>
+
+    <p style="font-size: 12px; color: #6b7280;">
+      Endpoints: <code>GET /__test/transport/state</code> and <code>POST /__test/transport/mode</code>
+    </p>
+
+    <script>
+      const modeEl = document.getElementById('mode');
+      const upstreamEl = document.getElementById('upstream');
+      const refreshedEl = document.getElementById('refreshed');
+      const statusEl = document.getElementById('status');
+      const buttonEls = Array.from(document.querySelectorAll('button[data-mode]'));
+
+      function setStatus(message, kind = 'info') {
+        const colors = { info: '#1f2937', success: '#065f46', error: '#b91c1c' };
+        statusEl.textContent = message;
+        statusEl.style.color = colors[kind] ?? colors.info;
+      }
+
+      async function refreshState() {
+        setStatus('Refreshing state…');
+        try {
+          const response = await fetch('/__test/transport/state');
+          if (!response.ok) throw new Error('state request failed (' + response.status + ')');
+          const payload = await response.json();
+          modeEl.textContent = payload.subscribeMode ?? '(unknown)';
+          upstreamEl.textContent = payload.upstreamBaseUrl ?? '(unknown)';
+          refreshedEl.textContent = new Date().toLocaleTimeString();
+          buttonEls.forEach((button) => {
+            button.disabled = button.dataset.mode === payload.subscribeMode;
+          });
+          setStatus('State loaded.', 'success');
+        } catch (error) {
+          setStatus('Error loading state: ' + (error?.message ?? String(error)), 'error');
+        }
+      }
+
+      async function setMode(subscribeMode) {
+        setStatus('Setting mode to ' + subscribeMode + '…');
+        try {
+          const response = await fetch('/__test/transport/mode', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ subscribeMode })
+          });
+          if (!response.ok) {
+            let detail = '';
+            try {
+              const payload = await response.json();
+              detail = payload?.error?.message ? ': ' + payload.error.message : '';
+            } catch {}
+            throw new Error('mode update failed (' + response.status + ')' + detail);
+          }
+          setStatus('Mode updated to ' + subscribeMode + '.', 'success');
+          await refreshState();
+        } catch (error) {
+          setStatus('Error updating mode: ' + (error?.message ?? String(error)), 'error');
+        }
+      }
+
+      document.getElementById('refresh').addEventListener('click', () => {
+        void refreshState();
+      });
+      buttonEls.forEach((button) => {
+        button.addEventListener('click', () => {
+          void setMode(button.dataset.mode);
+        });
+      });
+
+      void refreshState();
+    </script>
+  </body>
+</html>`;
+}
+
 export class MeshTransportProxy {
   constructor(options) {
     this.options = options;
@@ -101,6 +203,11 @@ export class MeshTransportProxy {
 
     if (req.url === "/__test/transport/mode" && req.method === "POST") {
       await this.handleSetMode(req, res);
+      return;
+    }
+
+    if (req.url === "/__test/transport/ui" && req.method === "GET") {
+      this.sendHtml(res, 200, renderControlUiHtml());
       return;
     }
 
@@ -252,6 +359,14 @@ export class MeshTransportProxy {
     const body = JSON.stringify(payload);
     res.writeHead(statusCode, {
       "content-type": "application/json; charset=utf-8",
+      "content-length": Buffer.byteLength(body)
+    });
+    res.end(body);
+  }
+
+  sendHtml(res, statusCode, body) {
+    res.writeHead(statusCode, {
+      "content-type": "text/html; charset=utf-8",
       "content-length": Buffer.byteLength(body)
     });
     res.end(body);

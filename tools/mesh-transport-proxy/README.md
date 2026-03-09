@@ -7,6 +7,7 @@ Standalone local proxy that forwards traffic to canonical backend while allowing
 - Control endpoints:
   - `GET /__test/transport/state`
   - `POST /__test/transport/mode`
+  - `GET /__test/transport/ui` (minimal dev/test browser control page)
 
 Fault modes:
 - `pass`: transparent proxy
