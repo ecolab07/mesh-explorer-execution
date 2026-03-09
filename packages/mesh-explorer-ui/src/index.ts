@@ -136,6 +136,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let lastTopologySignature = "";
   let lastCurvatureByLinkId = new Map<string, number>();
   let activeSyncSubscriptions = 0;
+  let bootstrapReplayPending = false;
 
   const uiState: CanvasUiState = {
     camera: cameraInfo,
@@ -372,6 +373,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     const snapshot = await fetchSnapshot(normalizedPrincipal);
     const snapshotCursor = snapshot.cursor;
     const bootstrapDecision = resolveBootstrapCursorDecision({ savedCursor, snapshot: { cursor: snapshotCursor }, bootstrapCache });
+    bootstrapReplayPending = true;
     if (bootstrapDecision.invalidateBootstrapCache) {
       clearBootstrapCacheRecord(bootstrapCacheKey, (key) => localStorage.removeItem(key));
     }
@@ -393,8 +395,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       usedSavedCursor: bootstrapDecision.usedSavedCursor
     });
     const replayResult = await pollReplayFromCursor(bootstrapCursor, sessionId, activeAbort.signal);
-    if (sessionId !== syncSession) return;
-    persistBootstrapCursor(storageKey, bootstrapCacheKey, snapshotCursor, replayResult.cursor);
+    if (sessionId !== syncSession) {
+      bootstrapReplayPending = false;
+      return;
+    }
+    bootstrapReplayPending = false;
+    persistBootstrapCursor(storageKey, bootstrapCacheKey, snapshotCursor, replayResult.cursor, !bootstrapReplayPending);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
 
@@ -461,7 +467,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
                   });
                   const replayResult = await pollReplayFromCursor(fromCursor, activeSessionId, signal);
                   if (activeSessionId !== syncSession) return;
-                  persistBootstrapCursor(storageKey, bootstrapCacheKey, fromCursor, replayResult.cursor);
+                  persistBootstrapCursor(storageKey, bootstrapCacheKey, fromCursor, replayResult.cursor, !bootstrapReplayPending);
                   continue;
                 }
 
@@ -1061,6 +1067,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     source: "poll" | "sse",
     graphEvents: GraphEvent[]
   ): boolean {
+    if (bootstrapReplayPending) {
+      emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_DEFERRED", {
+        source,
+        candidate,
+        reason: "replay-pending"
+      });
+      return false;
+    }
     const current = store.getState().cursor;
     if (compareCursor(candidate, current) <= 0) {
       emitMeshDebugLog("cursor-regression", { source, current, candidate });
@@ -1074,9 +1088,15 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     return true;
   }
 
-  function persistBootstrapCursor(storageKey: string, bootstrapCacheKey: string, fromCursor: Cursor, finalCursor: Cursor): void {
+  function persistBootstrapCursor(
+    storageKey: string,
+    bootstrapCacheKey: string,
+    fromCursor: Cursor,
+    finalCursor: Cursor,
+    replayComplete: boolean
+  ): void {
     const current = store.getState().cursor;
-    if (!shouldPersistBootstrapCursor(fromCursor, finalCursor, current)) return;
+    if (!shouldPersistBootstrapCursor(fromCursor, finalCursor, current, replayComplete)) return;
     store.setCursor(finalCursor);
     persistDurableBootstrapState(storageKey, bootstrapCacheKey, finalCursor, createProjectionSnapshot(store));
   }
