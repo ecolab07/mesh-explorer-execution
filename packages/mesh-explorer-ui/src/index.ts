@@ -59,11 +59,14 @@ type SyncPollPayload = {
 
 export function mountMeshExplorerUi(container: HTMLElement): void {
   const initialPrincipal = readInitialPrincipal();
+  const defaultBaseUrl = resolveMeshBaseUrl();
+  const defaultSubscribeBaseUrl = resolveMeshSubscribeBaseUrl(defaultBaseUrl);
   container.innerHTML = `
     <section style="display:grid;grid-template-columns:320px 1fr;gap:12px;height:100vh;overflow:hidden;font-family:sans-serif;">
       <aside style="padding:12px;border-right:1px solid #ddd;overflow:auto;">
         <h3>Mesh Explorer</h3>
-        <label>baseUrl <input id="baseUrl" style="width:100%" value="http://127.0.0.1:8090"/></label><br/>
+        <label>baseUrl <input id="baseUrl" style="width:100%" value="${escapeHtml(defaultBaseUrl)}"/></label><br/>
+        <label>subscribeBaseUrl <input id="subscribeBaseUrl" style="width:100%" value="${escapeHtml(defaultSubscribeBaseUrl)}"/></label><br/>
         <label>graphSpaceId <input id="graphSpaceId" style="width:100%" value="mesh-explorer-graph-v1"/></label><br/>
         <label>principal <input id="principal" style="width:100%" value="${escapeHtml(initialPrincipal)}"/></label><br/>
         <button id="connect">Connect</button>
@@ -449,7 +452,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       try {
         while (activeSessionId === syncSession) {
           try {
-            const url = `${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
+            const subscribeBaseUrl = normalizeBaseUrl(el.subscribeBaseUrl.value) || normalizeBaseUrl(el.baseUrl.value);
+            const url = `${subscribeBaseUrl}/v1/${encodeURIComponent(el.graphSpaceId.value)}/sync:subscribe?from=${store.getState().cursor.graphSeq}`;
             const response = await meshFetch(url, { headers: headers(normalizedPrincipal), signal }, {
               principal: normalizedPrincipal,
               transport: "fetch-sse",
@@ -1192,6 +1196,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
 type UiElements = {
   baseUrl: HTMLInputElement;
+  subscribeBaseUrl: HTMLInputElement;
   graphSpaceId: HTMLInputElement;
   principal: HTMLInputElement;
   connect: HTMLButtonElement;
@@ -1230,6 +1235,7 @@ type UiElements = {
 function byId(container: HTMLElement): UiElements {
   return {
     baseUrl: container.querySelector("#baseUrl") as HTMLInputElement,
+    subscribeBaseUrl: container.querySelector("#subscribeBaseUrl") as HTMLInputElement,
     graphSpaceId: container.querySelector("#graphSpaceId") as HTMLInputElement,
     principal: container.querySelector("#principal") as HTMLInputElement,
     connect: container.querySelector("#connect") as HTMLButtonElement,
@@ -1537,6 +1543,27 @@ function isTextInputTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName.toLowerCase();
   return tag === "input" || tag === "textarea" || target.isContentEditable;
+}
+
+function resolveMeshBaseUrl(): string {
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env;
+  if (typeof env?.MESH_API_BASE_URL === "string" && env.MESH_API_BASE_URL.trim()) return normalizeBaseUrl(env.MESH_API_BASE_URL);
+  const processEnv = (globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  if (typeof processEnv?.MESH_API_BASE_URL === "string" && processEnv.MESH_API_BASE_URL.trim()) return normalizeBaseUrl(processEnv.MESH_API_BASE_URL);
+  return "http://127.0.0.1:8090";
+}
+
+function resolveMeshSubscribeBaseUrl(defaultBaseUrl: string): string {
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env;
+  if (typeof env?.MESH_SUBSCRIBE_BASE_URL === "string" && env.MESH_SUBSCRIBE_BASE_URL.trim()) return normalizeBaseUrl(env.MESH_SUBSCRIBE_BASE_URL);
+  const processEnv = (globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  if (typeof processEnv?.MESH_SUBSCRIBE_BASE_URL === "string" && processEnv.MESH_SUBSCRIBE_BASE_URL.trim()) return normalizeBaseUrl(processEnv.MESH_SUBSCRIBE_BASE_URL);
+  return defaultBaseUrl;
+}
+
+function normalizeBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
 }
 
 async function wait(ms: number): Promise<void> {
