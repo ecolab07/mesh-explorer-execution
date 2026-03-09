@@ -19,7 +19,7 @@ describe("mesh explorer bootstrap cursor", () => {
     expect(resolveBootstrapFromCursor(null, { cursor: { metaSeq: 2, graphSeq: 8 } })).toEqual({ metaSeq: 2, graphSeq: 8 });
   });
 
-  it("CT-A1 savedCursor + valid digest => bootstrapFrom savedCursor", () => {
+  it("CT-A1 cache+snapshot verified => bootstrapFrom snapshot cursor", () => {
     const projection = {
       version: 1 as const,
       nodes: [{ id: "n1", label: "node-1" }],
@@ -32,9 +32,9 @@ describe("mesh explorer bootstrap cursor", () => {
       bootstrapCache: cache
     });
 
-    expect(decision.bootstrapFrom).toEqual({ metaSeq: 2, graphSeq: 8 });
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 0, graphSeq: 0 });
     expect(decision.usedSavedCursor).toBe(true);
-    expect(decision.reason).toBe("saved-cursor-cache-verified");
+    expect(decision.reason).toBe("snapshot-cursor-cache-verified");
   });
 
   it("CT-A2 digest mismatch => snapshot fallback", () => {
@@ -53,6 +53,24 @@ describe("mesh explorer bootstrap cursor", () => {
     expect(decision.bootstrapFrom).toEqual({ metaSeq: 1, graphSeq: 4 });
     expect(decision.usedSavedCursor).toBe(false);
     expect(decision.reason).toBe("snapshot-only-digest-mismatch");
+    expect(decision.invalidateBootstrapCache).toBe(true);
+  });
+
+  it("CT-A2b cursor mismatch => invalidate + snapshot fallback", () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 2, graphSeq: 8 },
+      { version: 1, nodes: [{ id: "n1", label: "node-1" }], links: [] }
+    );
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 2, graphSeq: 8 },
+      snapshot: { cursor: { metaSeq: 1, graphSeq: 4 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 1, graphSeq: 4 });
+    expect(decision.usedSavedCursor).toBe(false);
+    expect(decision.reason).toBe("snapshot-only-cursor-mismatch");
     expect(decision.invalidateBootstrapCache).toBe(true);
   });
 
