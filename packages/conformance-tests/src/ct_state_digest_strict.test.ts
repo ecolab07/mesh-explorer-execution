@@ -330,6 +330,76 @@ describe("CT-SD-* StateDigest strict", () => {
       delete process.env.MESH_TX_VISIBILITY_POLICY;
     }
   });
+
+  it("[INV:CT-SD-9][SURF:Transport] duplicate/stale subscribe is ignored without cursor regression", async ({ task }) => {
+    task.meta.invariantId = "CT-SD-9";
+    task.meta.surface = "Transport";
+    task.meta.oracle = "Duplicate and stale subscribe deliveries are ignored and candidate cursor remains monotone.";
+    task.meta.criticality = "Critical";
+
+    const store = new InMemoryLocalEventStore();
+    const graphSpaceId = "space-sd-9";
+    const principal = { principalId: "alice" };
+    const gateway = new LocalSyncGateway(store, { graphSpaceId });
+    const client = new StateDigestSyncClient(gateway, graphSpaceId, principal);
+
+    for (let idx = 1; idx <= 3; idx += 1) {
+      await store.appendTx(graphSpaceId, { txId: `sd9-tx-${idx}`, metaEvents: [{ idx }], graphEvents: [{ idx }] }, makeIdem(`sd9-${idx}`));
+    }
+
+    const initial = await gateway.syncPull(graphSpaceId, principal, 0, { limitTx: 3 });
+    const before = client.ingestSubscribeTxBundles(initial.txBundlesVisible);
+    const afterDuplicate = client.ingestSubscribeTxBundles(initial.txBundlesVisible);
+    const staleOnly = client.ingestSubscribeTxBundles([initial.txBundlesVisible[0]!]);
+
+    expect(before.accepted).toBe(3);
+    expect(afterDuplicate.accepted).toBe(0);
+    expect(afterDuplicate.requiresPoll).toBe(false);
+    expect(staleOnly.accepted).toBe(0);
+    expect(staleOnly.requiresPoll).toBe(false);
+    expect(client.getCandidateCursor()).toBe(3);
+
+    const decisions = client.getDecisionLog();
+    expect(decisions.some((entry) => entry.reason === "transport_delta_ignored")).toBe(true);
+    expect(decisions.some((entry) => entry.reason === "transport_resync_required")).toBe(false);
+  });
+
+  it("[INV:CT-SD-10][SURF:Transport] txId mismatch on safe boundary forces poll recovery", async ({ task }) => {
+    task.meta.invariantId = "CT-SD-10";
+    task.meta.surface = "Transport";
+    task.meta.oracle = "A subscribe delta on the expected cursor boundary with a previously seen txId is not applied and forces poll recovery.";
+    task.meta.criticality = "Critical";
+
+    const store = new InMemoryLocalEventStore();
+    const graphSpaceId = "space-sd-10";
+    const principal = { principalId: "alice" };
+    const gateway = new LocalSyncGateway(store, { graphSpaceId });
+    const client = new StateDigestSyncClient(gateway, graphSpaceId, principal);
+
+    await store.appendTx(graphSpaceId, { txId: "sd10-tx-1", metaEvents: [], graphEvents: [{ idx: 1 }] }, makeIdem("sd10-1"));
+    await store.appendTx(graphSpaceId, { txId: "sd10-tx-2", metaEvents: [], graphEvents: [{ idx: 2 }] }, makeIdem("sd10-2"));
+
+    const first = await gateway.syncPull(graphSpaceId, principal, 0, { limitTx: 1 });
+    client.ingestSubscribeTxBundles(first.txBundlesVisible);
+
+    const forged = {
+      principalCursor: 2,
+      txBundle: {
+        txId: first.txBundlesVisible[0]!.txBundle.txId,
+        metaEvents: [],
+        graphEvents: [{ forged: true }]
+      }
+    };
+
+    const ingest = client.ingestSubscribeTxBundles([forged]);
+    expect(ingest.accepted).toBe(0);
+    expect(ingest.requiresPoll).toBe(true);
+    expect(client.getCandidateCursor()).toBe(1);
+
+    const decisions = client.getDecisionLog();
+    expect(decisions.some((entry) => entry.reason === "transport_resync_required")).toBe(true);
+    expect(decisions.some((entry) => entry.reason === "subscribe_out_of_order")).toBe(true);
+  });
 });
 
 function makeIdem(key: string) {

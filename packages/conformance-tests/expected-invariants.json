@@ -335,6 +335,11 @@
     "criticality": "Critical"
   },
   {
+    "invariantId": "CT-SD-10",
+    "surface": "Transport",
+    "criticality": "Critical"
+  },
+  {
     "invariantId": "CT-SD-2",
     "surface": "Sync",
     "criticality": "Critical"
@@ -367,6 +372,11 @@
   {
     "invariantId": "CT-SD-8",
     "surface": "Sync",
+    "criticality": "Critical"
+  },
+  {
+    "invariantId": "CT-SD-9",
+    "surface": "Transport",
     "criticality": "Critical"
   },
   {

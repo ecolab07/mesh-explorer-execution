@@ -20,7 +20,18 @@ export type StateDigestDecisionReason =
   | "digest_mismatch"
   | "validation_failed_requires_poll"
   | "poll_recovery_triggered"
-  | "poll_recovery_completed";
+  | "poll_recovery_completed"
+  | "transport_delta_decision"
+  | "transport_delta_ignored"
+  | "transport_resync_required";
+
+export type TransportDeltaDecision =
+  | { action: "APPLY_SAFE"; reason: "cursor_contiguous" }
+  | { action: "IGNORE_DUPLICATE_OR_STALE"; reason: "duplicate" | "stale" }
+  | {
+      action: "REQUIRES_POLL_RESYNC";
+      reason: "invalid_tx_bundle" | "cursor_gap" | "cursor_regression" | "txid_mismatch";
+    };
 
 export interface StateDigestDecision {
   reason: StateDigestDecisionReason;
@@ -117,28 +128,41 @@ export class StateDigestSyncClient {
     let accepted = 0;
 
     for (const bundle of txBundlesVisible) {
-      if (!isWellFormedTxBundle(bundle.txBundle)) {
-        this.triggerPollRecovery("subscribe_invalid_tx_bundle");
-        break;
-      }
+      const decision = this.evaluateTransportDelta(bundle);
+      this.recordDecision("transport_delta_decision");
+      debugTransport("TRANSPORT_DELTA_DECISION", {
+        action: decision.action,
+        reason: decision.reason,
+        candidateCursor: this.candidateCursor,
+        principalCursor: bundle.principalCursor,
+        txId: bundle.txBundle?.txId
+      });
 
-      if (bundle.principalCursor <= this.candidateCursor) {
-        if (this.seenTxIds.has(bundle.txBundle.txId)) {
-          this.recordDecision("subscribe_deduped");
-          continue;
-        }
-        this.triggerPollRecovery("subscribe_out_of_order");
-        continue;
-      }
-
-      if (bundle.principalCursor !== this.candidateCursor + 1) {
-        this.triggerPollRecovery("subscribe_gap_detected");
-        break;
-      }
-
-      if (this.seenTxIds.has(bundle.txBundle.txId)) {
+      if (decision.action === "IGNORE_DUPLICATE_OR_STALE") {
+        this.recordDecision("transport_delta_ignored");
         this.recordDecision("subscribe_deduped");
+        debugTransport("TRANSPORT_DELTA_IGNORED", {
+          reason: decision.reason,
+          principalCursor: bundle.principalCursor,
+          txId: bundle.txBundle?.txId
+        });
         continue;
+      }
+
+      if (decision.action === "REQUIRES_POLL_RESYNC") {
+        this.recordDecision("transport_resync_required");
+        const reason: StateDigestDecisionReason = decision.reason === "invalid_tx_bundle"
+          ? "subscribe_invalid_tx_bundle"
+          : decision.reason === "cursor_gap"
+            ? "subscribe_gap_detected"
+            : "subscribe_out_of_order";
+        this.triggerPollRecovery(reason);
+        debugTransport("TRANSPORT_RESYNC_REQUIRED", {
+          reason: decision.reason,
+          principalCursor: bundle.principalCursor,
+          txId: bundle.txBundle?.txId
+        });
+        break;
       }
 
       this.candidateState.push(bundle);
@@ -148,6 +172,34 @@ export class StateDigestSyncClient {
     }
 
     return { accepted, requiresPoll: this.needsPoll };
+  }
+
+  private evaluateTransportDelta(bundle: VisibleTxBundle): TransportDeltaDecision {
+    if (!isWellFormedTxBundle(bundle.txBundle)) {
+      return { action: "REQUIRES_POLL_RESYNC", reason: "invalid_tx_bundle" };
+    }
+
+    if (bundle.principalCursor < this.candidateCursor) {
+      return this.seenTxIds.has(bundle.txBundle.txId)
+        ? { action: "IGNORE_DUPLICATE_OR_STALE", reason: "stale" }
+        : { action: "REQUIRES_POLL_RESYNC", reason: "cursor_regression" };
+    }
+
+    if (bundle.principalCursor === this.candidateCursor) {
+      return this.seenTxIds.has(bundle.txBundle.txId)
+        ? { action: "IGNORE_DUPLICATE_OR_STALE", reason: "duplicate" }
+        : { action: "REQUIRES_POLL_RESYNC", reason: "txid_mismatch" };
+    }
+
+    if (bundle.principalCursor !== this.candidateCursor + 1) {
+      return { action: "REQUIRES_POLL_RESYNC", reason: "cursor_gap" };
+    }
+
+    if (this.seenTxIds.has(bundle.txBundle.txId)) {
+      return { action: "REQUIRES_POLL_RESYNC", reason: "txid_mismatch" };
+    }
+
+    return { action: "APPLY_SAFE", reason: "cursor_contiguous" };
   }
 
   async validateAndCommit(limitTx = 128): Promise<{ committed: boolean; requiresPoll: boolean; durableCursor: number }> {
@@ -240,6 +292,13 @@ export class StateDigestSyncClient {
       pollValidatedCursor: this.pollValidatedCursor
     });
   }
+}
+
+const DEBUG_TRANSPORT_SYNC = process.env.MESH_DEBUG_SYNC === "1";
+
+function debugTransport(event: "TRANSPORT_DELTA_DECISION" | "TRANSPORT_RESYNC_REQUIRED" | "TRANSPORT_DELTA_IGNORED", payload: Record<string, unknown>): void {
+  if (!DEBUG_TRANSPORT_SYNC) return;
+  console.debug("[mesh-sync]", { event, ...payload });
 }
 
 function isWellFormedTxBundle(txBundle: TxBundle): boolean {
