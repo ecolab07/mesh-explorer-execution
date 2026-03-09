@@ -8,6 +8,7 @@ import {
   type GraphStore
 } from "./graphStore.js";
 import { compareCursor, rotateAbortController } from "./syncGuards.js";
+import { applyGuardedSyncBatch, type IngestibleGraphEvent } from "./syncIngestion.js";
 import { nextMonotonicCursor, resolveBootstrapCursorDecision, shouldPersistBootstrapCursor } from "./bootstrapCursor.js";
 import { bootstrapCacheStorageKey, cursorStorageKey } from "./cursorStorage.js";
 import { buildSyncPollUrl } from "./syncPollRequest.js";
@@ -43,7 +44,7 @@ import {
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
-type SyncTxBundle = { principalCursor?: number; txBundle?: { graphEvents?: unknown[]; metaEvents?: unknown[] } };
+type SyncTxBundle = { principalCursor?: number; txBundle?: { txId?: string; graphEvents?: unknown[]; metaEvents?: unknown[] } };
 type SyncFrame =
   | { kind: "heartbeat"; cursorVisible?: number }
   | { kind: "cursor"; cursorVisible?: number }
@@ -52,7 +53,7 @@ type SyncFrame =
 
 type SyncPollPayload = {
   meta?: Array<{ payload?: unknown }>;
-  graph?: Array<{ payload?: unknown }>;
+  graph?: Array<{ eventId?: string; payload?: unknown }>;
   cursorAfter?: Cursor;
 };
 
@@ -137,6 +138,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   let lastCurvatureByLinkId = new Map<string, number>();
   let activeSyncSubscriptions = 0;
   let bootstrapReplayPending = false;
+  const syncIngestionState = { cursor: { metaSeq: 0, graphSeq: 0 }, seenEventIdsByGraphSpace: new Map<string, Set<string>>() };
 
   const uiState: CanvasUiState = {
     camera: cameraInfo,
@@ -362,6 +364,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
   async function connectAndSync(sessionId: number): Promise<void> {
     activeAbort = rotateAbortController(activeAbort);
     store.resetProjection();
+    syncIngestionState.cursor = { metaSeq: 0, graphSeq: 0 };
+    syncIngestionState.seenEventIdsByGraphSpace.clear();
     canvasRenderer?.clearTransientUiState();
     resetAutoFitState();
     setConnectionStatus("connecting");
@@ -385,6 +389,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     }
 
     const bootstrapCursor = bootstrapDecision.bootstrapFrom;
+    syncIngestionState.cursor = bootstrapCursor;
     emitMeshDebugLog("BOOTSTRAP_DECISION", {
       graphSpaceId: el.graphSpaceId.value,
       principal: normalizedPrincipal,
@@ -532,7 +537,13 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           }
           const payload = (await response.json()) as SyncPollPayload;
           markNetworkConnectivity("online", "poll-success");
-          const graphEvents = (payload.graph ?? []).map((entry) => asGraphEvent(entry.payload)).filter((event): event is GraphEvent => event !== null);
+          const graphEvents = (payload.graph ?? [])
+            .map((entry) => {
+              const event = asGraphEvent(entry.payload);
+              if (!event || typeof entry.eventId !== "string" || !entry.eventId) return null;
+              return { eventId: entry.eventId, event };
+            })
+            .filter((entry): entry is IngestibleGraphEvent => entry !== null);
           const nextCursor = payload.cursorAfter ?? cursor;
           const nextMonotonic = nextMonotonicCursor(cursor, nextCursor);
           const cursorUnchanged = cursorEq(nextMonotonic, cursor);
@@ -544,10 +555,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             metaEvents: payload.meta?.length ?? 0,
             cursorUnchanged
           });
-          if (!cursorUnchanged && graphEvents.length > 0) {
-            graphEventsApplied += graphEvents.length;
-            store.applyGraphEvents(graphEvents);
-            setLastSyncNow();
+          if (!cursorUnchanged) {
+            const advanced = applyCursorIfAdvanced(storageKey, bootstrapCacheKey, nextMonotonic, "poll", graphEvents);
+            if (advanced) {
+              graphEventsApplied += graphEvents.length;
+              setLastSyncNow();
+            }
           }
           cursor = nextMonotonic;
           if ((payload.meta?.length ?? 0) === 0 && (payload.graph?.length ?? 0) === 0 || cursorUnchanged) break;
@@ -1064,8 +1077,8 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     storageKey: string,
     bootstrapCacheKey: string,
     candidate: Cursor,
-    source: "poll" | "sse",
-    graphEvents: GraphEvent[]
+    source: "poll" | "sse" | "replay",
+    graphEvents: IngestibleGraphEvent[]
   ): boolean {
     if (bootstrapReplayPending) {
       emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_DEFERRED", {
@@ -1080,9 +1093,16 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       emitMeshDebugLog("cursor-regression", { source, current, candidate });
       return false;
     }
-    if (graphEvents.length > 0) {
-      store.applyGraphEvents(graphEvents);
-    }
+    const result = applyGuardedSyncBatch({
+      graphSpaceId: el.graphSpaceId.value,
+      state: syncIngestionState,
+      source,
+      candidateCursor: candidate,
+      events: graphEvents,
+      applyGraphEvents: (events) => store.applyGraphEvents(events),
+      log: (message, detail) => emitMeshDebugLog(message, detail)
+    });
+    if (!result.cursorAdvanced) return false;
     store.setCursor(candidate);
     persistDurableBootstrapState(storageKey, bootstrapCacheKey, candidate, createProjectionSnapshot(store));
     return true;
@@ -1380,16 +1400,29 @@ async function *parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<SyncFr
   }
 }
 
-function extractGraphEventsFromTxBundles(txBundles: SyncTxBundle[]): GraphEvent[] {
-  const output: GraphEvent[] = [];
+function extractGraphEventsFromTxBundles(txBundles: SyncTxBundle[]): IngestibleGraphEvent[] {
+  const output: IngestibleGraphEvent[] = [];
   for (const item of txBundles) {
     const graphEvents = item.txBundle?.graphEvents ?? [];
-    for (const raw of graphEvents) {
+    const txId = item.txBundle?.txId ?? "unknown";
+    for (let index = 0; index < graphEvents.length; index += 1) {
+      const raw = graphEvents[index];
       const event = asGraphEvent(raw);
-      if (event) output.push(event);
+      if (!event) continue;
+      const eventId = resolveEventId(raw, txId, index);
+      output.push({ eventId, event });
     }
   }
   return output;
+}
+
+
+function resolveEventId(value: unknown, txId: string, index: number): string {
+  if (value && typeof value === "object" && "eventId" in value) {
+    const maybeEventId = (value as { eventId?: unknown }).eventId;
+    if (typeof maybeEventId === "string" && maybeEventId) return maybeEventId;
+  }
+  return `${txId}-graph-${index + 1}`;
 }
 
 function asGraphEvent(value: unknown): GraphEvent | null {
