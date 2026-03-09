@@ -399,12 +399,23 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       decisionReason: bootstrapDecision.reason,
       usedSavedCursor: bootstrapDecision.usedSavedCursor
     });
+    emitMeshDebugLog("BOOTSTRAP_REPLAY_STARTED", {
+      graphSpaceId: el.graphSpaceId.value,
+      fromCursor: bootstrapCursor,
+      decisionReason: bootstrapDecision.reason
+    });
     const replayResult = await pollReplayFromCursor(bootstrapCursor, sessionId, activeAbort.signal);
     if (sessionId !== syncSession) {
       bootstrapReplayPending = false;
       return;
     }
     bootstrapReplayPending = false;
+    rebuildProjectionAfterBootstrap(replayResult.cursor, "poll-replay");
+    emitMeshDebugLog("BOOTSTRAP_REPLAY_COMPLETED", {
+      graphSpaceId: el.graphSpaceId.value,
+      finalCursor: replayResult.cursor,
+      graphEventsApplied: replayResult.graphEventsApplied
+    });
     persistBootstrapCursor(storageKey, bootstrapCacheKey, snapshotCursor, replayResult.cursor, !bootstrapReplayPending);
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
@@ -559,6 +570,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             const advanced = applyCursorIfAdvanced(storageKey, bootstrapCacheKey, nextMonotonic, "poll", graphEvents);
             if (advanced) {
               graphEventsApplied += graphEvents.length;
+              emitMeshDebugLog("BOOTSTRAP_REPLAY_APPLIED", {
+                graphSpaceId: el.graphSpaceId.value,
+                fromCursor: cursor,
+                toCursor: nextMonotonic,
+                appliedGraphEvents: graphEvents.length
+              });
               setLastSyncNow();
             }
           }
@@ -1080,14 +1097,6 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     source: "poll" | "sse" | "replay",
     graphEvents: IngestibleGraphEvent[]
   ): boolean {
-    if (bootstrapReplayPending) {
-      emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_DEFERRED", {
-        source,
-        candidate,
-        reason: "replay-pending"
-      });
-      return false;
-    }
     const current = store.getState().cursor;
     if (compareCursor(candidate, current) <= 0) {
       emitMeshDebugLog("cursor-regression", { source, current, candidate });
@@ -1104,8 +1113,37 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     });
     if (!result.cursorAdvanced) return false;
     store.setCursor(candidate);
+    if (bootstrapReplayPending) {
+      emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_DEFERRED", {
+        source,
+        candidate,
+        reason: "replay-pending"
+      });
+      return true;
+    }
     persistDurableBootstrapState(storageKey, bootstrapCacheKey, candidate, createProjectionSnapshot(store));
+    emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_COMMITTED", {
+      source,
+      cursor: candidate
+    });
     return true;
+  }
+
+  function rebuildProjectionAfterBootstrap(finalCursor: Cursor, reason: string): void {
+    const projection = createProjectionSnapshot(store);
+    hydrateStoreFromProjection(store, projection);
+    store.setCursor(finalCursor);
+    emitMeshDebugLog("PROJECTION_REBUILD_AFTER_BOOTSTRAP", {
+      reason,
+      cursor: finalCursor,
+      nodesCount: projection.nodes.length,
+      linksCount: projection.links.length
+    });
+    emitMeshDebugLog("VISIBLE_STATE_AFTER_BOOTSTRAP", {
+      cursor: finalCursor,
+      nodesCount: projection.nodes.length,
+      linksCount: projection.links.length
+    });
   }
 
   function persistBootstrapCursor(
@@ -1119,6 +1157,10 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     if (!shouldPersistBootstrapCursor(fromCursor, finalCursor, current, replayComplete)) return;
     store.setCursor(finalCursor);
     persistDurableBootstrapState(storageKey, bootstrapCacheKey, finalCursor, createProjectionSnapshot(store));
+    emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_COMMITTED", {
+      source: "bootstrap-finalize",
+      cursor: finalCursor
+    });
   }
 
   function setRendererMode(mode: "canvas-2d" | "fallback-json"): void {
