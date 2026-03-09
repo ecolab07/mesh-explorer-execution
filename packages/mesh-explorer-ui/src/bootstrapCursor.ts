@@ -88,7 +88,8 @@ export function nextMonotonicCursor(current: Cursor, candidate: Cursor): Cursor 
   return compareCursor(candidate, current) > 0 ? candidate : current;
 }
 
-export function shouldPersistBootstrapCursor(fromCursor: Cursor, finalCursor: Cursor, currentCursor: Cursor): boolean {
+export function shouldPersistBootstrapCursor(fromCursor: Cursor, finalCursor: Cursor, currentCursor: Cursor, replayComplete: boolean): boolean {
+  if (!replayComplete) return false;
   if (compareCursor(finalCursor, fromCursor) <= 0) return false;
   if (compareCursor(finalCursor, currentCursor) < 0) return false;
   return true;

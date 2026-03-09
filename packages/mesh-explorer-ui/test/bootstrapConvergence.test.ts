@@ -81,8 +81,11 @@ describe("bootstrap convergence guards", () => {
 
   it("does not finalize bootstrap cache state before replay completion", () => {
     const fromCursor = { metaSeq: 0, graphSeq: 2 };
-    expect(shouldPersistBootstrapCursor(fromCursor, fromCursor, fromCursor)).toBe(false);
-    expect(shouldPersistBootstrapCursor(fromCursor, { metaSeq: 0, graphSeq: 3 }, { metaSeq: 0, graphSeq: 3 })).toBe(true);
+    const convergedCursor = { metaSeq: 0, graphSeq: 3 };
+
+    expect(shouldPersistBootstrapCursor(fromCursor, fromCursor, fromCursor, true)).toBe(false);
+    expect(shouldPersistBootstrapCursor(fromCursor, convergedCursor, convergedCursor, false)).toBe(false);
+    expect(shouldPersistBootstrapCursor(fromCursor, convergedCursor, convergedCursor, true)).toBe(true);
   });
 
   it("keeps applied cursor monotonic across restart cycles", () => {
