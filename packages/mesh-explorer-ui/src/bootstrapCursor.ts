@@ -21,7 +21,7 @@ export type BootstrapCursorDecision = {
     | "snapshot-only-schema-version-mismatch"
     | "snapshot-only-cursor-mismatch"
     | "snapshot-only-digest-mismatch"
-    | "saved-cursor-cache-verified";
+    | "snapshot-cursor-cache-verified";
   invalidateBootstrapCache: boolean;
 };
 
@@ -47,12 +47,12 @@ export function resolveBootstrapCursorDecision(input: BootstrapCursorDecisionInp
     };
   }
 
-  if (compareCursor(normalizeCursor(input.bootstrapCache.cursor), normalizedSaved) !== 0) {
+  if (compareCursor(normalizeCursor(input.bootstrapCache.cursor), normalizedSnapshot) !== 0) {
     return {
       bootstrapFrom: normalizedSnapshot,
       usedSavedCursor: false,
       reason: "snapshot-only-cursor-mismatch",
-      invalidateBootstrapCache: false
+      invalidateBootstrapCache: true
     };
   }
 
@@ -67,9 +67,9 @@ export function resolveBootstrapCursorDecision(input: BootstrapCursorDecisionInp
   }
 
   return {
-    bootstrapFrom: normalizedSaved,
+    bootstrapFrom: normalizedSnapshot,
     usedSavedCursor: true,
-    reason: "saved-cursor-cache-verified",
+    reason: "snapshot-cursor-cache-verified",
     invalidateBootstrapCache: false
   };
 }
