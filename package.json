@@ -40,7 +40,9 @@
     "desktop": "pnpm --dir apps/mesh-explorer-desktop start",
     "check:lockfile-clean": "node scripts/ci/check-lockfile-clean.mjs",
     "repair:win-rollup": "node scripts/repair-windows-rollup.mjs",
-    "ci:check-determinism": "node tools/ci/check-determinism.mjs"
+    "ci:check-determinism": "node tools/ci/check-determinism.mjs",
+    "dev:transport-proxy": "node tools/mesh-transport-proxy/src/index.mjs",
+    "test:transport-proxy": "vitest run tools/mesh-transport-proxy/src/proxy.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
