@@ -30,6 +30,14 @@ pnpm dev:transport-proxy
 - Tab A: `http://127.0.0.1:5173` (API/poll/subscribe direct to `:8090`)
 - Tab B: `http://127.0.0.1:5174` (API/poll direct to `:8090`, subscribe via proxy `:8091`)
 
+## Browser control UI (dev/test only)
+Open:
+- `http://127.0.0.1:8091/__test/transport/ui`
+
+From this page you can:
+- read current `subscribeMode`
+- switch mode (`pass`/`fail`/`hang`/`close`) without `curl`
+
 ## Check current mode
 ```bash
 curl http://127.0.0.1:8091/__test/transport/state

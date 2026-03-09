@@ -124,6 +124,26 @@ describe("MeshTransportProxy control + routing", () => {
     }
   });
 
+
+
+  it("serves a minimal dev/test browser control UI", async () => {
+    const upstream = await createUpstreamServer();
+    closeables.push(upstream);
+    const { baseUrl, proxy } = await createProxy(upstream.baseUrl);
+    closeables.push(proxy);
+
+    const response = await fetch(`${baseUrl}/__test/transport/ui`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type") ?? "").toContain("text/html");
+    const html = await response.text();
+    expect(html).toContain("Mesh Transport Proxy — Dev/Test Control");
+    expect(html).toContain("/__test/transport/state");
+    expect(html).toContain("/__test/transport/mode");
+    for (const mode of ["pass", "fail", "hang", "close"]) {
+      expect(html).toContain(`data-mode="${mode}"`);
+    }
+  });
+
   it("applies runtime mode updates without restart", async () => {
     const upstream = await createUpstreamServer();
     closeables.push(upstream);
