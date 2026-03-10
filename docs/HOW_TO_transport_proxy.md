@@ -74,6 +74,10 @@ Modes:
 - `hang`
 - `close`
 
+Runtime behavior note:
+- Switching to `hang`, `fail`, or `close` immediately terminates any active `sync:subscribe` stream, so the new mode is visible right away on reconnect/new subscribe.
+- You no longer need a manual `close` pre-step before toggling between `pass` / `hang` / `fail`.
+
 ## Invariant
 
 Normal dev entry must never route subscribe through proxy.

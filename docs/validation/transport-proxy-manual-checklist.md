@@ -12,15 +12,15 @@
 4. Check proxy logs for intercepted subscribe pass-through.
 
 ## Fail mode
-1. `POST /__test/transport/mode` with `{"subscribeMode":"fail"}`.
-2. Reconnect subscribe from Tab B.
-3. Verify deterministic non-2xx response.
+1. Keep an active subscribe stream open in Tab B, then `POST /__test/transport/mode` with `{"subscribeMode":"fail"}`.
+2. Verify the active stream is terminated immediately (no manual `close` detour).
+3. Reconnect subscribe from Tab B and verify deterministic non-2xx response.
 4. Verify non-subscribe routes still work via proxy.
 
 ## Hang mode
-1. Set mode to `hang`.
-2. Trigger subscribe from Tab B.
-3. Verify request stays pending and no events delivered.
+1. Keep an active subscribe stream open in Tab B, then set mode to `hang`.
+2. Verify the active stream is terminated immediately (no manual `close` detour).
+3. Trigger subscribe from Tab B and verify request stays pending with no events delivered.
 4. Trigger mutation in Tab A; verify no pushed update in Tab B.
 5. Verify non-subscribe routes still work.
 
