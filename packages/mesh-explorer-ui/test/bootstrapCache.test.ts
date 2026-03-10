@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeStateDigest, makeBootstrapCacheRecord, readBootstrapCacheRecord } from "../src/bootstrapCache.js";
+import { BOOTSTRAP_SNAPSHOT_VERSION, computeStateDigest, makeBootstrapCacheRecord, readBootstrapCacheRecord } from "../src/bootstrapCache.js";
 
 describe("bootstrap cache digest", () => {
   it("is stable for identical projection", () => {
@@ -57,5 +57,14 @@ describe("bootstrap cache digest", () => {
     const malformed = JSON.stringify({ ...valid, projection: { version: 2, nodes: [], links: [] } });
     const read = readBootstrapCacheRecord("mesh.bootstrapCache.alice.g1", (key) => (key ? malformed : null));
     expect(read).toBeNull();
+  });
+
+  it("persists snapshotVersion in bootstrap metadata", () => {
+    const record = makeBootstrapCacheRecord(
+      { metaSeq: 1, graphSeq: 3 },
+      { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] }
+    );
+
+    expect(record.snapshotVersion).toBe(BOOTSTRAP_SNAPSHOT_VERSION);
   });
 });
