@@ -154,6 +154,9 @@ export class MeshTransportProxy {
       this.closeStream(stream);
     }
 
+    this.server.closeAllConnections?.();
+    this.server.closeIdleConnections?.();
+
     await new Promise((resolve, reject) => {
       this.server.close((error) => {
         if (error) {
@@ -181,15 +184,12 @@ export class MeshTransportProxy {
 
     const previousMode = this.subscribeMode;
     this.subscribeMode = nextMode;
-    this.logger.info(`[transport-proxy] mode ${previousMode} -> ${nextMode}`);
+    const activeCount = this.activeSubscribeStreams.size;
+    this.logger.info(`[transport-proxy] mode ${previousMode} -> ${nextMode} activeSubscribeStreams=${activeCount}`);
 
-    if (nextMode === "close") {
-      for (const stream of this.activeSubscribeStreams) {
-        if (stream.clientResponse.writableEnded || stream.clientResponse.destroyed) {
-          continue;
-        }
-        stream.closeTimer = setTimeout(() => this.closeStream(stream), this.options.closeDelayMs);
-      }
+    if (nextMode !== "pass") {
+      this.logger.info(`[transport-proxy] terminating active subscribe streams count=${activeCount} mode=${nextMode}`);
+      this.terminateActiveSubscribeStreams(`mode:${nextMode}`);
     }
 
     return { ok: true, subscribeMode: this.subscribeMode };
@@ -261,14 +261,7 @@ export class MeshTransportProxy {
           connection: "keep-alive"
         });
 
-        const stream = { clientResponse: res };
-        this.activeSubscribeStreams.add(stream);
-        req.on("close", () => {
-          this.activeSubscribeStreams.delete(stream);
-        });
-        res.on("close", () => {
-          this.activeSubscribeStreams.delete(stream);
-        });
+        this.trackSubscribeStream({ clientResponse: res, clientRequest: req });
         return;
       }
       case "close": {
@@ -286,10 +279,10 @@ export class MeshTransportProxy {
 
     let activeStream;
     if (options?.trackSubscribeStream) {
-      activeStream = { clientResponse: res, upstreamRequest: upstreamReq };
-      this.activeSubscribeStreams.add(activeStream);
-      res.on("close", () => {
-        this.activeSubscribeStreams.delete(activeStream);
+      activeStream = this.trackSubscribeStream({
+        clientRequest: req,
+        clientResponse: res,
+        upstreamRequest: upstreamReq
       });
     }
 
@@ -299,6 +292,7 @@ export class MeshTransportProxy {
 
       if (activeStream) {
         activeStream.upstreamResponse = upstreamRes;
+        upstreamRes.on("close", () => this.activeSubscribeStreams.delete(activeStream));
         if (options?.forceClose) {
           activeStream.closeTimer = setTimeout(() => this.closeStream(activeStream), this.options.closeDelayMs);
         }
@@ -336,6 +330,30 @@ export class MeshTransportProxy {
     stream.upstreamRequest?.destroy();
     stream.clientResponse.destroy();
     this.activeSubscribeStreams.delete(stream);
+  }
+
+  terminateActiveSubscribeStreams(reason) {
+    for (const stream of this.activeSubscribeStreams) {
+      if (stream.clientResponse.writableEnded || stream.clientResponse.destroyed) {
+        this.activeSubscribeStreams.delete(stream);
+        continue;
+      }
+      this.logger.info(`[transport-proxy] force-closing subscribe stream reason=${reason}`);
+      this.closeStream(stream);
+    }
+  }
+
+  trackSubscribeStream(stream) {
+    this.activeSubscribeStreams.add(stream);
+
+    const cleanup = () => {
+      this.activeSubscribeStreams.delete(stream);
+    };
+
+    stream.clientRequest?.on("aborted", cleanup);
+    stream.clientResponse?.on("close", cleanup);
+
+    return stream;
   }
 
   async readJsonBody(req) {

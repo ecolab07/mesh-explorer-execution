@@ -37,6 +37,8 @@ function createUpstreamServer() {
       resolve({
         baseUrl: `http://127.0.0.1:${server.address().port}`,
         close: async () => {
+          server.closeAllConnections?.();
+          server.closeIdleConnections?.();
           await new Promise((resolveClose, rejectClose) => {
             server.close((error) => {
               if (error) {
@@ -53,13 +55,81 @@ function createUpstreamServer() {
   });
 }
 
-async function createProxy(upstreamBaseUrl) {
+function readOneChunk(stream) {
+  return new Promise((resolve, reject) => {
+    const onData = (chunk) => {
+      cleanup();
+      resolve(chunk);
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(null);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const cleanup = () => {
+      stream.off("data", onData);
+      stream.off("end", onEnd);
+      stream.off("error", onError);
+    };
+
+    stream.on("data", onData);
+    stream.on("end", onEnd);
+    stream.on("error", onError);
+  });
+}
+
+function openRawSse(baseUrl, path = "/v1/test/sync:subscribe") {
+  const url = new URL(path, baseUrl);
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { method: "GET" }, (res) => {
+      resolve({ req, res });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+function setMode(baseUrl, subscribeMode) {
+  return fetch(`${baseUrl}/__test/transport/mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subscribeMode })
+  });
+}
+
+
+
+
+
+
+async function closeFetchResponse(response) {
+  if (response.body) {
+    await response.body.cancel();
+  }
+}
+
+async function waitForActiveStreamCount(proxy, expected, timeoutMs = 300) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (proxy.activeSubscribeStreams.size === expected) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(proxy.activeSubscribeStreams.size).toBe(expected);
+}
+
+async function createProxy(upstreamBaseUrl, logger = { info: () => undefined, warn: () => undefined, error: () => undefined }) {
   const proxy = new MeshTransportProxy({
     host: "127.0.0.1",
     port: 0,
     upstreamBaseUrl,
     closeDelayMs: 20,
-    logger: { info: () => undefined, warn: () => undefined, error: () => undefined }
+    logger
   });
 
   await proxy.listen();
@@ -124,8 +194,6 @@ describe("MeshTransportProxy control + routing", () => {
     }
   });
 
-
-
   it("serves a minimal dev/test browser control UI", async () => {
     const upstream = await createUpstreamServer();
     closeables.push(upstream);
@@ -150,22 +218,80 @@ describe("MeshTransportProxy control + routing", () => {
     const { baseUrl, proxy } = await createProxy(upstream.baseUrl);
     closeables.push(proxy);
 
-    await fetch(`${baseUrl}/__test/transport/mode`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ subscribeMode: "fail" })
-    });
+    await setMode(baseUrl, "fail");
 
     const failSubscribe = await fetch(`${baseUrl}/v1/test/sync:subscribe`);
     expect(failSubscribe.status).toBe(503);
 
-    await fetch(`${baseUrl}/__test/transport/mode`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ subscribeMode: "pass" })
-    });
+    await setMode(baseUrl, "pass");
 
     const passSubscribe = await fetch(`${baseUrl}/v1/test/sync:subscribe`);
     expect(passSubscribe.status).toBe(200);
+    await closeFetchResponse(passSubscribe);
+  });
+
+  it("terminates active subscribe streams for non-pass mode transitions", async () => {
+    const proxy = new MeshTransportProxy({
+      host: "127.0.0.1",
+      port: 0,
+      upstreamBaseUrl: "http://127.0.0.1:8090",
+      closeDelayMs: 20,
+      logger: { info: () => undefined, warn: () => undefined, error: () => undefined }
+    });
+
+    const makeStream = () => {
+      const stream = {
+        clientResponse: {
+          writableEnded: false,
+          destroyed: false,
+          destroy: () => {
+            stream.clientResponse.destroyed = true;
+          }
+        },
+        upstreamRequest: { destroy: () => undefined },
+        upstreamResponse: { destroy: () => undefined }
+      };
+      return stream;
+    };
+
+    proxy.activeSubscribeStreams.add(makeStream());
+    proxy.setMode("hang");
+    expect(proxy.activeSubscribeStreams.size).toBe(0);
+
+    proxy.activeSubscribeStreams.add(makeStream());
+    proxy.setMode("fail");
+    expect(proxy.activeSubscribeStreams.size).toBe(0);
+
+    proxy.activeSubscribeStreams.add(makeStream());
+    proxy.setMode("close");
+    expect(proxy.activeSubscribeStreams.size).toBe(0);
+  });
+
+  it("logs mode transitions with active subscribe stream handling", async () => {
+    const logs = [];
+    const logger = {
+      info: (message) => logs.push(String(message)),
+      warn: () => undefined,
+      error: () => undefined
+    };
+
+    const upstream = await createUpstreamServer();
+    closeables.push(upstream);
+    const { baseUrl, proxy } = await createProxy(upstream.baseUrl, logger);
+    closeables.push(proxy);
+
+    const active = await openRawSse(baseUrl);
+    expect(active.res.statusCode).toBe(200);
+    await readOneChunk(active.res);
+    await waitForActiveStreamCount(proxy, 1);
+
+    const modeResponse = await setMode(baseUrl, "fail");
+    expect(modeResponse.status).toBe(200);
+    await waitForActiveStreamCount(proxy, 0);
+    active.req.destroy();
+
+    expect(logs.some((line) => line.includes("mode pass -> fail activeSubscribeStreams=1"))).toBe(true);
+    expect(logs.some((line) => line.includes("terminating active subscribe streams count=1 mode=fail"))).toBe(true);
+    expect(logs.some((line) => line.includes("force-closing subscribe stream reason=mode:fail"))).toBe(true);
   });
 });
