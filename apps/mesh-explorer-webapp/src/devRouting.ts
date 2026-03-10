@@ -15,6 +15,22 @@ export const PROXY_ROUTING_DEFAULTS: DevRoutingDefaults = {
   subscribeBaseUrl: "http://127.0.0.1:8091"
 };
 
+function readModeScopedOverride(
+  env: Record<string, string | undefined>,
+  baseKey: "MESH_API_BASE_URL" | "MESH_SUBSCRIBE_BASE_URL",
+  mode: string
+): string | undefined {
+  const suffix = mode === "proxy" ? "PROXY" : "DEVELOPMENT";
+  return env[`${baseKey}_${suffix}`] ?? (mode === "proxy" ? env[baseKey] : undefined);
+}
+
+export function resolveModeScopedRoutingEnv(mode: string, env: Record<string, string | undefined>): Record<string, string | undefined> {
+  return {
+    MESH_API_BASE_URL: readModeScopedOverride(env, "MESH_API_BASE_URL", mode),
+    MESH_SUBSCRIBE_BASE_URL: readModeScopedOverride(env, "MESH_SUBSCRIBE_BASE_URL", mode)
+  };
+}
+
 export function resolveDevRoutingConfig(mode: string, env: Record<string, string | undefined>): DevRoutingDefaults {
   const defaults = mode === "proxy" ? PROXY_ROUTING_DEFAULTS : DEVELOPMENT_ROUTING_DEFAULTS;
   return {
