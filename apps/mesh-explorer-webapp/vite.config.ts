@@ -1,11 +1,12 @@
 import { defineConfig, loadEnv } from "vite";
 
-import { resolveDevRoutingConfig } from "./src/devRouting";
+import { resolveDevRoutingConfig, resolveModeScopedRoutingEnv } from "./src/devRouting";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "MESH_");
+  const routingEnv = resolveModeScopedRoutingEnv(mode, env);
   const isProxyMode = mode === "proxy";
-  const { apiBaseUrl, subscribeBaseUrl } = resolveDevRoutingConfig(mode, env);
+  const { apiBaseUrl, subscribeBaseUrl } = resolveDevRoutingConfig(mode, routingEnv);
 
   return {
     envPrefix: ["VITE_", "MESH_"],
