@@ -407,7 +407,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       fromCursor: bootstrapCursor,
       decisionReason: bootstrapDecision.reason
     });
-    const replayResult = await pollReplayFromCursor(bootstrapCursor, sessionId, activeAbort.signal);
+    const replayResult = await pollReplayFromCursor(bootstrapCursor, sessionId, activeAbort.signal, "pull");
     if (sessionId !== syncSession) {
       bootstrapReplayPending = false;
       return;
@@ -485,7 +485,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
                     txBundleCount: txBundles.length,
                     graphEventsCount: decision.graphEventsCount
                   });
-                  const replayResult = await pollReplayFromCursor(fromCursor, activeSessionId, signal);
+                  const replayResult = await pollReplayFromCursor(fromCursor, activeSessionId, signal, "pull");
                   if (activeSessionId !== syncSession) return;
                   persistBootstrapCursor(storageKey, bootstrapCacheKey, fromCursor, replayResult.cursor, !bootstrapReplayPending);
                   continue;
@@ -493,7 +493,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
                 const graphEvents = extractGraphEventsFromTxBundles(txBundles);
                 const next = { ...fromCursor, graphSeq: decision.expectedGraphSeq };
-                const advanced = applyCursorIfAdvanced(storageKey, bootstrapCacheKey, next, "sse", graphEvents);
+                const advanced = applyCursorIfAdvanced(storageKey, bootstrapCacheKey, next, "subscribe", graphEvents);
                 if (advanced) {
                   setLastSyncNow();
                 } else {
@@ -530,7 +530,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       }
     }
 
-    async function pollReplayFromCursor(initialCursor: Cursor, activeSessionId: number, signal: AbortSignal): Promise<{ cursor: Cursor; graphEventsApplied: number }> {
+    async function pollReplayFromCursor(initialCursor: Cursor, activeSessionId: number, signal: AbortSignal, source: "poll" | "pull" = "poll"): Promise<{ cursor: Cursor; graphEventsApplied: number }> {
       let cursor = initialCursor;
       let graphEventsApplied = 0;
       try {
@@ -563,7 +563,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
           const nextMonotonic = nextMonotonicCursor(cursor, nextCursor);
           const cursorUnchanged = cursorEq(nextMonotonic, cursor);
           emitMeshDebugLog("APPLY_BATCH", {
-            source: "poll",
+            source,
             fromCursor: cursor,
             toCursor: nextMonotonic,
             graphEvents: graphEvents.length,
@@ -571,7 +571,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
             cursorUnchanged
           });
           if (!cursorUnchanged) {
-            const advanced = applyCursorIfAdvanced(storageKey, bootstrapCacheKey, nextMonotonic, "poll", graphEvents);
+            const advanced = applyCursorIfAdvanced(storageKey, bootstrapCacheKey, nextMonotonic, source, graphEvents);
             if (advanced) {
               graphEventsApplied += graphEvents.length;
               emitMeshDebugLog("BOOTSTRAP_REPLAY_APPLIED", {
@@ -1098,7 +1098,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     storageKey: string,
     bootstrapCacheKey: string,
     candidate: Cursor,
-    source: "poll" | "sse" | "replay",
+    source: "poll" | "subscribe" | "pull",
     graphEvents: IngestibleGraphEvent[]
   ): boolean {
     const current = store.getState().cursor;

@@ -20,7 +20,7 @@ export type SyncIngestionResult = {
 export function applyGuardedSyncBatch(params: {
   graphSpaceId: string;
   state: SyncIngestionState;
-  source: "poll" | "sse" | "replay";
+  source: "poll" | "subscribe" | "pull";
   candidateCursor: Cursor;
   events: IngestibleGraphEvent[];
   applyGraphEvents: (events: GraphEvent[]) => void;
@@ -28,7 +28,7 @@ export function applyGuardedSyncBatch(params: {
 }): SyncIngestionResult {
   const { graphSpaceId, state, source, candidateCursor, events, applyGraphEvents, log } = params;
   if (compareCursor(candidateCursor, state.cursor) <= 0) {
-    log("SYNC_STALE_BATCH_IGNORED", { source, graphSpaceId, current: state.cursor, candidate: candidateCursor, events: events.length });
+    log("GHOST_GUARD_STALE_BATCH", { source, graphSpaceId, current: state.cursor, candidate: candidateCursor, events: events.length });
     return { appliedCount: 0, duplicateCount: 0, cursorAdvanced: false, nextCursor: state.cursor };
   }
 
@@ -39,21 +39,29 @@ export function applyGuardedSyncBatch(params: {
   for (const entry of events) {
     if (seen.has(entry.eventId)) {
       duplicateCount += 1;
-      log("SYNC_DUPLICATE_EVENT_IGNORED", { source, graphSpaceId, eventId: entry.eventId });
+      log("GHOST_GUARD_DUPLICATE_IGNORED", { source, graphSpaceId, eventId: entry.eventId });
       continue;
     }
     seen.add(entry.eventId);
     uniqueEvents.push(entry.event);
+    log("GHOST_GUARD_EVENT_APPLIED", { source, graphSpaceId, eventId: entry.eventId });
   }
 
   if (uniqueEvents.length > 0) {
     applyGraphEvents(uniqueEvents);
-    log("SYNC_EVENTS_APPLIED", { source, graphSpaceId, appliedCount: uniqueEvents.length, duplicateCount });
   }
+
+  log("GHOST_GUARD_BATCH_PROCESSED", {
+    source,
+    graphSpaceId,
+    receivedCount: events.length,
+    appliedCount: uniqueEvents.length,
+    duplicateCount
+  });
 
   const previousCursor = state.cursor;
   state.cursor = candidateCursor;
-  log("SYNC_CURSOR_ADVANCED", { source, graphSpaceId, previousCursor, nextCursor: candidateCursor });
+  log("GHOST_GUARD_CURSOR_ADVANCE", { source, graphSpaceId, previousCursor, nextCursor: candidateCursor });
 
   return {
     appliedCount: uniqueEvents.length,
