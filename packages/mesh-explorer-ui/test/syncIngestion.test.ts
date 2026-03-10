@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { GraphEvent } from "../src/graphStore.js";
 import { applyGuardedSyncBatch, type SyncIngestionState } from "../src/syncIngestion.js";
 
@@ -11,10 +11,10 @@ describe("sync ingestion dedup across transports", () => {
     const applied: GraphEvent[] = [];
     const state: SyncIngestionState = { cursor: { metaSeq: 0, graphSeq: 0 }, seenEventIdsByGraphSpace: new Map() };
 
-    const sse = applyGuardedSyncBatch({
+    const subscribe = applyGuardedSyncBatch({
       graphSpaceId: "space-a",
       state,
-      source: "sse",
+      source: "subscribe",
       candidateCursor: { metaSeq: 0, graphSeq: 1 },
       events: [{ eventId: "e-1", event: nodeCreated("n1") }],
       applyGraphEvents: (events) => applied.push(...events),
@@ -31,7 +31,7 @@ describe("sync ingestion dedup across transports", () => {
       log: () => undefined
     });
 
-    expect(sse.appliedCount).toBe(1);
+    expect(subscribe.appliedCount).toBe(1);
     expect(poll.appliedCount).toBe(0);
     expect(poll.duplicateCount).toBe(1);
     expect(applied).toHaveLength(1);
@@ -39,21 +39,18 @@ describe("sync ingestion dedup across transports", () => {
   });
 
   it("overlapping poll/subscribe batches converge to deterministic state", () => {
-    const run = (order: Array<"poll" | "sse">): string[] => {
+    const run = (order: Array<"poll" | "subscribe">): string[] => {
       const state: SyncIngestionState = { cursor: { metaSeq: 0, graphSeq: 0 }, seenEventIdsByGraphSpace: new Map() };
       const applied: string[] = [];
-      for (const source of order) {
+      for (const [index, source] of order.entries()) {
         const events = source === "poll"
           ? [
               { eventId: "e-1", event: nodeCreated("n1") },
-              { eventId: "e-2", event: nodeCreated("n2") }
-            ]
-          : [
-              { eventId: "e-1", event: nodeCreated("n1") },
               { eventId: "e-2", event: nodeCreated("n2") },
               { eventId: "e-3", event: nodeCreated("n3") }
-            ];
-        const candidateCursor = source === "poll" ? { metaSeq: 0, graphSeq: 2 } : { metaSeq: 0, graphSeq: 3 };
+            ]
+          : [{ eventId: "e-2", event: nodeCreated("n2") }];
+        const candidateCursor = { metaSeq: 0, graphSeq: index + 1 };
         applyGuardedSyncBatch({
           graphSpaceId: "space-a",
           state,
@@ -71,7 +68,8 @@ describe("sync ingestion dedup across transports", () => {
       return applied.sort();
     };
 
-    expect(run(["poll", "sse"])).toEqual(run(["sse", "poll"]));
+    expect(run(["poll", "subscribe"])).toEqual(["n1", "n2", "n3"]);
+    expect(run(["subscribe", "poll"])).toEqual(["n1", "n2", "n3"]);
   });
 
   it("replay after already applied events produces no ghost update and cursor monotone", () => {
@@ -94,7 +92,7 @@ describe("sync ingestion dedup across transports", () => {
     const replay = applyGuardedSyncBatch({
       graphSpaceId: "space-a",
       state,
-      source: "replay",
+      source: "pull",
       candidateCursor: { metaSeq: 0, graphSeq: 3 },
       events: [
         { eventId: "e-1", event: nodeCreated("n1") },
@@ -110,18 +108,18 @@ describe("sync ingestion dedup across transports", () => {
     expect(applied).toHaveLength(2);
   });
 
-  it("mixed poll/subscribe/replay permutations converge to identical normalized state", () => {
-    const permutations: Array<Array<"poll" | "sse" | "replay">> = [
-      ["poll", "sse", "replay"],
-      ["sse", "replay", "poll"],
-      ["replay", "poll", "sse"]
+  it("mixed poll/subscribe/pull permutations converge to identical normalized state", () => {
+    const permutations: Array<Array<"poll" | "subscribe" | "pull">> = [
+      ["poll", "subscribe", "pull"],
+      ["subscribe", "pull", "poll"],
+      ["pull", "poll", "subscribe"]
     ];
 
     const snapshots = permutations.map((order) => {
       const state: SyncIngestionState = { cursor: { metaSeq: 0, graphSeq: 0 }, seenEventIdsByGraphSpace: new Map() };
       const nodes = new Set<string>();
       for (const source of order) {
-        const candidateCursor = source === "poll" ? { metaSeq: 0, graphSeq: 1 } : source === "sse" ? { metaSeq: 0, graphSeq: 2 } : { metaSeq: 0, graphSeq: 3 };
+        const candidateCursor = source === "poll" ? { metaSeq: 0, graphSeq: 1 } : source === "subscribe" ? { metaSeq: 0, graphSeq: 2 } : { metaSeq: 0, graphSeq: 3 };
         const events = [
           { eventId: "e-1", event: nodeCreated("n1") },
           { eventId: "e-2", event: nodeCreated("n2") }
@@ -144,5 +142,82 @@ describe("sync ingestion dedup across transports", () => {
     });
 
     expect(new Set(snapshots).size).toBe(1);
+  });
+
+  it("routes all transports through a single guarded ingestion gate", () => {
+    const state: SyncIngestionState = { cursor: { metaSeq: 0, graphSeq: 0 }, seenEventIdsByGraphSpace: new Map() };
+    const applyGraphEvents = vi.fn<(events: GraphEvent[]) => void>();
+
+    const transports: Array<"poll" | "subscribe" | "pull"> = ["poll", "subscribe", "pull"];
+    for (const [idx, source] of transports.entries()) {
+      applyGuardedSyncBatch({
+        graphSpaceId: "space-a",
+        state,
+        source,
+        candidateCursor: { metaSeq: 0, graphSeq: idx + 1 },
+        events: [{ eventId: `e-${idx}`, event: nodeCreated(`n${idx}`) }],
+        applyGraphEvents,
+        log: () => undefined
+      });
+    }
+
+    expect(applyGraphEvents).toHaveBeenCalledTimes(3);
+  });
+
+  it("duplicate does not trigger extra side effects", () => {
+    const state: SyncIngestionState = { cursor: { metaSeq: 0, graphSeq: 0 }, seenEventIdsByGraphSpace: new Map() };
+    const sideEffect = vi.fn<(events: GraphEvent[]) => void>();
+
+    applyGuardedSyncBatch({
+      graphSpaceId: "space-a",
+      state,
+      source: "subscribe",
+      candidateCursor: { metaSeq: 0, graphSeq: 1 },
+      events: [{ eventId: "e-1", event: nodeCreated("n1") }],
+      applyGraphEvents: sideEffect,
+      log: () => undefined
+    });
+
+    applyGuardedSyncBatch({
+      graphSpaceId: "space-a",
+      state,
+      source: "poll",
+      candidateCursor: { metaSeq: 0, graphSeq: 2 },
+      events: [{ eventId: "e-1", event: nodeCreated("n1") }],
+      applyGraphEvents: sideEffect,
+      log: () => undefined
+    });
+
+    expect(sideEffect).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits structured ghost guard logs for applied, duplicate, and cursor events", () => {
+    const state: SyncIngestionState = { cursor: { metaSeq: 0, graphSeq: 0 }, seenEventIdsByGraphSpace: new Map() };
+    const logs: Array<{ message: string; detail: Record<string, unknown> }> = [];
+
+    applyGuardedSyncBatch({
+      graphSpaceId: "space-a",
+      state,
+      source: "poll",
+      candidateCursor: { metaSeq: 0, graphSeq: 1 },
+      events: [{ eventId: "e-1", event: nodeCreated("n1") }],
+      applyGraphEvents: () => undefined,
+      log: (message, detail) => logs.push({ message, detail })
+    });
+
+    applyGuardedSyncBatch({
+      graphSpaceId: "space-a",
+      state,
+      source: "subscribe",
+      candidateCursor: { metaSeq: 0, graphSeq: 2 },
+      events: [{ eventId: "e-1", event: nodeCreated("n1") }],
+      applyGraphEvents: () => undefined,
+      log: (message, detail) => logs.push({ message, detail })
+    });
+
+    expect(logs.some((entry) => entry.message === "GHOST_GUARD_EVENT_APPLIED" && entry.detail.eventId === "e-1")).toBe(true);
+    expect(logs.some((entry) => entry.message === "GHOST_GUARD_DUPLICATE_IGNORED" && entry.detail.eventId === "e-1")).toBe(true);
+    expect(logs.some((entry) => entry.message === "GHOST_GUARD_BATCH_PROCESSED" && entry.detail.duplicateCount === 1)).toBe(true);
+    expect(logs.some((entry) => entry.message === "GHOST_GUARD_CURSOR_ADVANCE" && entry.detail.graphSpaceId === "space-a")).toBe(true);
   });
 });
