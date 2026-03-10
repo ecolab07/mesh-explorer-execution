@@ -87,7 +87,7 @@ jobs:
       - name: Run conformance tests (${{ matrix.mesh_backend }})
         if: ${{ matrix.mesh_backend != 'inmemory' || matrix.os != 'ubuntu-latest' }}
         run: pnpm ci:conformance:test
-      - name: Generate conformance evidence (${{ matrix.mesh_backend }})
+      - name: Generate conformance evidence via posttest (${{ matrix.mesh_backend }})
         if: ${{ matrix.mesh_backend != 'inmemory' || matrix.os != 'ubuntu-latest' }}
         run: pnpm --filter @mesh/conformance-tests posttest
       - name: Stability check (determinism)
@@ -101,6 +101,11 @@ jobs:
           mkdir -p packages/conformance-tests
           cp artifacts/conformance-evidence.runtime.json packages/conformance-tests/conformance-evidence.runtime.json
           cp artifacts/conformance-evidence.critical.md packages/conformance-tests/conformance-evidence.critical.md
+      - name: "Diagnostics (failure): list evidence files (${{ matrix.mesh_backend }})"
+        if: failure()
+        run: |
+          node -e "const fs=require('fs'); const paths=['artifacts','packages/conformance-tests']; for (const p of paths){ console.log(`[diagnostics] ${p}`); if(!fs.existsSync(p)){ console.log('  <missing>'); continue;} for (const entry of fs.readdirSync(p).sort()){ console.log(`  - ${entry}`); }}"
+
       - name: Critical gate (${{ matrix.mesh_backend }})
         if: ${{ matrix.mesh_backend != 'inmemory' || matrix.os != 'ubuntu-latest' }}
         run: pnpm --filter @mesh/conformance-tests check:critical
@@ -108,7 +113,7 @@ jobs:
         if: matrix.mesh_backend == 'inmemory' && matrix.os == 'ubuntu-latest'
         run: pnpm --filter @mesh/conformance-tests check:artifacts-clean
       - name: Upload conformance evidence artifacts
-        if: always() && matrix.mesh_backend == 'inmemory'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: conformance-artifacts-${{ matrix.os }}-${{ matrix.mesh_backend }}
@@ -118,6 +123,7 @@ jobs:
             artifacts/conformance-evidence.json
             artifacts/conformance-evidence.persistent.md
             artifacts/conformance-evidence.runtime.json
+            artifacts/conformance-evidence.runtime.meta.json
             packages/conformance-tests/conformance-evidence.critical.md
             packages/conformance-tests/conformance-evidence.runtime.json
             **/*.log
