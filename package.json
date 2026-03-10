@@ -44,7 +44,8 @@
     "dev:transport-proxy": "node tools/mesh-transport-proxy/src/index.mjs",
     "test:transport-proxy": "vitest run tools/mesh-transport-proxy/src/proxy.test.mjs",
     "dev:web": "pnpm --dir apps/mesh-explorer-webapp dev:normal",
-    "dev:web:proxy": "pnpm --dir apps/mesh-explorer-webapp dev:proxy"
+    "dev:web:proxy": "pnpm --dir apps/mesh-explorer-webapp dev:proxy",
+    "dev:lab": "node scripts/dev-lab.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

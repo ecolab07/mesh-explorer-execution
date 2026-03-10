@@ -8,8 +8,8 @@
     "dev": "pnpm dev:normal",
     "build": "vite build",
     "preview": "vite preview",
-    "dev:normal": "vite --host 127.0.0.1 --port 5173 --strictPort",
-    "dev:proxy": "MESH_SUBSCRIBE_BASE_URL=http://127.0.0.1:8091 vite --host 127.0.0.1 --port 5174 --strictPort"
+    "dev:normal": "vite --mode development",
+    "dev:proxy": "vite --mode proxy"
   },
   "dependencies": {
     "@mesh/mesh-explorer-ui": "workspace:*"
