@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { makeBootstrapCacheRecord } from "../src/bootstrapCache.js";
+import { BOOTSTRAP_SNAPSHOT_VERSION, makeBootstrapCacheRecord } from "../src/bootstrapCache.js";
 import { bootstrapCacheStorageKey, cursorStorageKey } from "../src/cursorStorage.js";
 import {
   nextMonotonicCursor,
@@ -25,9 +25,9 @@ describe("mesh explorer bootstrap cursor", () => {
       nodes: [{ id: "n1", label: "node-1" }],
       links: []
     };
-    const cache = makeBootstrapCacheRecord({ metaSeq: 2, graphSeq: 8 }, projection);
+    const cache = makeBootstrapCacheRecord({ metaSeq: 0, graphSeq: 0 }, projection);
     const decision = resolveBootstrapCursorDecision({
-      savedCursor: { metaSeq: 2, graphSeq: 8 },
+      savedCursor: { metaSeq: 0, graphSeq: 0 },
       snapshot: { cursor: { metaSeq: 0, graphSeq: 0 } },
       bootstrapCache: cache
     });
@@ -39,13 +39,13 @@ describe("mesh explorer bootstrap cursor", () => {
 
   it("CT-A2 digest mismatch => snapshot fallback", () => {
     const cache = makeBootstrapCacheRecord(
-      { metaSeq: 2, graphSeq: 8 },
+      { metaSeq: 1, graphSeq: 4 },
       { version: 1, nodes: [{ id: "n1", label: "node-1" }], links: [] }
     );
     cache.stateDigest = "corrupted";
 
     const decision = resolveBootstrapCursorDecision({
-      savedCursor: { metaSeq: 2, graphSeq: 8 },
+      savedCursor: { metaSeq: 1, graphSeq: 4 },
       snapshot: { cursor: { metaSeq: 1, graphSeq: 4 } },
       bootstrapCache: cache
     });
@@ -90,6 +90,61 @@ describe("mesh explorer bootstrap cursor", () => {
     expect(decision.bootstrapFrom).toEqual({ metaSeq: 1, graphSeq: 4 });
     expect(decision.reason).toBe("snapshot-only-schema-version-mismatch");
     expect(decision.invalidateBootstrapCache).toBe(true);
+  });
+
+  it("rejects cache when snapshotVersion is missing", () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 2, graphSeq: 8 },
+      { version: 1, nodes: [{ id: "n1", label: "node-1" }], links: [] }
+    );
+    delete cache.snapshotVersion;
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 2, graphSeq: 8 },
+      snapshot: { cursor: { metaSeq: 1, graphSeq: 4 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 1, graphSeq: 4 });
+    expect(decision.usedSavedCursor).toBe(false);
+    expect(decision.reason).toBe("snapshot-only-snapshot-version-missing");
+    expect(decision.invalidateBootstrapCache).toBe(true);
+  });
+
+  it("rejects cache when snapshotVersion mismatches even if schemaVersion matches", () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 2, graphSeq: 8 },
+      { version: 1, nodes: [{ id: "n1", label: "node-1" }], links: [] }
+    );
+    cache.snapshotVersion = BOOTSTRAP_SNAPSHOT_VERSION + 1;
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 2, graphSeq: 8 },
+      snapshot: { cursor: { metaSeq: 1, graphSeq: 4 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 1, graphSeq: 4 });
+    expect(decision.usedSavedCursor).toBe(false);
+    expect(decision.reason).toBe("snapshot-only-snapshot-version-mismatch");
+    expect(decision.invalidateBootstrapCache).toBe(true);
+  });
+
+  it("accepts cache when snapshotVersion matches and other guards pass", () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 2, graphSeq: 8 },
+      { version: 1, nodes: [{ id: "n1", label: "node-1" }], links: [] }
+    );
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 2, graphSeq: 8 },
+      snapshot: { cursor: { metaSeq: 2, graphSeq: 8 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.usedSavedCursor).toBe(true);
+    expect(decision.reason).toBe("snapshot-cursor-cache-verified");
+    expect(decision.invalidateBootstrapCache).toBe(false);
   });
 
   it("writes exact storage key format mesh.cursor.<principal>.<graphSpaceId>", () => {
