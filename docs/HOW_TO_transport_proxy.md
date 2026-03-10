@@ -73,3 +73,9 @@ Modes:
 - `fail`
 - `hang`
 - `close`
+
+## Invariant
+
+Normal dev entry must never route subscribe through proxy.
+5173 -> 8090
+5174 -> 8091
