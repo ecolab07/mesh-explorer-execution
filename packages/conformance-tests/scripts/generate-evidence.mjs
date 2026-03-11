@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
+import os from "node:os";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,9 +10,7 @@ const repoRoot = path.resolve(__dirname, "../../..");
 const testsRoot = path.resolve(repoRoot, "packages/conformance-tests/src");
 const artifactsDir = path.resolve(repoRoot, "artifacts");
 const expectedInvariantsPath = path.resolve(repoRoot, "packages/conformance-tests/expected-invariants.json");
-const reporterPath = path.resolve(__dirname, "evidence-meta-reporter.mjs");
-const reporterUrl = pathToFileURL(reporterPath).href;
-const runtimeMetaPath = path.resolve(artifactsDir, "conformance-evidence.runtime.meta.json");
+const evidenceVitestConfigPath = path.resolve(repoRoot, "packages/conformance-tests/vitest.evidence.config.mjs");
 
 const testPattern = /it\(\s*"([^"\n]+)"\s*,/g;
 const conformanceIdPattern = /CT-[A-Z0-9-]+/;
@@ -21,28 +20,6 @@ const ALL_BACKENDS = [
   { env: "persistent", label: "Persistent", requiredCriticalOnly: true }
 ];
 
-
-function trySpawnPnpm(args, env, stdio) {
-  const candidates = process.platform === "win32" ? ["pnpm", "pnpm.cmd"] : ["pnpm"];
-  let last = null;
-
-  for (const cmd of candidates) {
-    const result = spawnSync(cmd, args, {
-      cwd: repoRoot,
-      env,
-      encoding: "utf8",
-      stdio
-    });
-
-    if (!result.error || result.error.code !== "ENOENT") {
-      return { cmd, candidates, result };
-    }
-
-    last = { cmd, candidates, result };
-  }
-
-  return last;
-}
 
 function resolveBackendsFromEnv() {
   const meshBackend = process.env.MESH_BACKEND;
@@ -117,46 +94,139 @@ function runCommand(cmd, env = {}) {
   return execSync(cmd, { cwd: repoRoot, encoding: "utf8", env: { ...process.env, ...env } }).trim();
 }
 
-function collectRuntimeMeta(backendEnv) {
-  const args = ["exec", "vitest", "run", "packages/conformance-tests/src", "--reporter", reporterUrl];
+function formatRuntimeMetaFailure({
+  backendEnv,
+  command,
+  runtimeMetaPath,
+  exists,
+  size,
+  readError,
+  parseError,
+  rawSnippet
+}) {
+  return [
+    `[generate-evidence] backend=${backendEnv}`,
+    `[generate-evidence] command=${command}`,
+    `[generate-evidence] runtimeMetaPath=${runtimeMetaPath}`,
+    `[generate-evidence] runtimeMeta.exists=${exists}`,
+    `[generate-evidence] runtimeMeta.sizeBytes=${size ?? "<unknown>"}`,
+    `[generate-evidence] runtimeMeta.readError=${readError ?? "<none>"}`,
+    `[generate-evidence] runtimeMeta.parseError=${parseError ?? "<none>"}`,
+    `[generate-evidence] runtimeMeta.rawSnippet=${rawSnippet ?? "<none>"}`
+  ].join("\n");
+}
+
+async function readRuntimeMetaOrThrow(backendEnv, command, runtimeMetaPath) {
+  let stat;
+  try {
+    stat = await fs.stat(runtimeMetaPath);
+  } catch {
+    throw new Error(
+      formatRuntimeMetaFailure({
+        backendEnv,
+        command,
+        runtimeMetaPath,
+        exists: false
+      })
+    );
+  }
+
+  let raw;
+  try {
+    raw = await fs.readFile(runtimeMetaPath, "utf8");
+  } catch (error) {
+    throw new Error(
+      formatRuntimeMetaFailure({
+        backendEnv,
+        command,
+        runtimeMetaPath,
+        exists: true,
+        size: stat.size,
+        readError: error.message
+      })
+    );
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      formatRuntimeMetaFailure({
+        backendEnv,
+        command,
+        runtimeMetaPath,
+        exists: true,
+        size: stat.size,
+        parseError: error.message,
+        rawSnippet: raw.slice(0, 400)
+      })
+    );
+  }
+}
+
+async function makeRuntimeMetaPath(backendEnv) {
+  const prefix = `mesh-evidence-${backendEnv}-`;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  return {
+    tempDir,
+    runtimeMetaPath: path.join(tempDir, "runtime.meta.json")
+  };
+}
+
+async function collectRuntimeMeta(backendEnv) {
+  const args = [
+    "./packages/conformance-tests/scripts/run-vitest-with-env.mjs",
+    "--config",
+    "./packages/conformance-tests/vitest.evidence.config.mjs"
+  ];
+  const command = `node ${args.join(" ")}`;
+  const { tempDir, runtimeMetaPath } = await makeRuntimeMetaPath(backendEnv);
   const env = {
     ...process.env,
     MESH_EVIDENCE_META_PATH: runtimeMetaPath,
     MESH_BACKEND: backendEnv,
-    MESH_TX_VISIBILITY_POLICY: "acl"
+    MESH_TX_VISIBILITY_POLICY: "acl",
+    MESH_VITEST_STDIO: "pipe"
   };
-  const useInherit = process.env.CI === "true" || process.env.CI === "1";
-  const stdio = useInherit ? "inherit" : "pipe";
 
-  const spawned = trySpawnPnpm(args, env, stdio);
-  const { cmd, candidates, result } = spawned;
+  try {
+    const result = spawnSync(process.execPath, args, {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: "pipe"
+    });
 
-  if (result.error || result.status !== 0) {
-    const details = [
-      `[generate-evidence] backend=${backendEnv}`,
-      `[generate-evidence] command=${cmd} ${args.join(" ")}`,
-      `[generate-evidence] attemptedCommands=${candidates.join(", ")}`,
-      `[generate-evidence] reporterPath=${reporterPath}`,
-      `[generate-evidence] reporterUrl=${reporterUrl}`,
-      `[generate-evidence] process.execPath=${process.execPath}`,
-      `[generate-evidence] PATH=${process.env.PATH ?? "<unset>"}`,
-      `[generate-evidence] exitCode=${String(result.status)}`,
-      `[generate-evidence] signal=${String(result.signal)}`,
-      `[generate-evidence] spawnError.message=${result.error?.message ?? "<none>"}`,
-      `[generate-evidence] spawnError.code=${result.error?.code ?? "<none>"}`,
-      `[generate-evidence] spawnError.stack=${result.error?.stack ?? "<none>"}`,
-      useInherit
-        ? "[generate-evidence] stdio=inherit (see live vitest output above)"
-        : `[generate-evidence] stdout:\n${result.stdout ?? "<null>"}`,
-      useInherit
-        ? "[generate-evidence] stdio=inherit (see live vitest output above)"
-        : `[generate-evidence] stderr:\n${result.stderr ?? "<null>"}`
-    ].join("\n\n");
-    throw new Error(details);
+    if (result.error || result.status !== 0) {
+      const details = [
+        `[generate-evidence] backend=${backendEnv}`,
+        `[generate-evidence] command=${command}`,
+        `[generate-evidence] cwd=${repoRoot}`,
+        `[generate-evidence] vitestConfig=${evidenceVitestConfigPath}`,
+        `[generate-evidence] runtimeMetaPath=${runtimeMetaPath}`,
+        `[generate-evidence] env.MESH_BACKEND=${env.MESH_BACKEND}`,
+        `[generate-evidence] env.MESH_TX_VISIBILITY_POLICY=${env.MESH_TX_VISIBILITY_POLICY}`,
+        `[generate-evidence] env.MESH_VITEST_STDIO=${env.MESH_VITEST_STDIO}`,
+        `[generate-evidence] env.MESH_EVIDENCE_META_PATH=${env.MESH_EVIDENCE_META_PATH}`,
+        `[generate-evidence] process.execPath=${process.execPath}`,
+        `[generate-evidence] PATH=${process.env.PATH ?? "<unset>"}`,
+        `[generate-evidence] exitCode=${String(result.status)}`,
+        `[generate-evidence] signal=${String(result.signal)}`,
+        `[generate-evidence] spawnError.message=${result.error?.message ?? "<none>"}`,
+        `[generate-evidence] spawnError.code=${result.error?.code ?? "<none>"}`,
+        `[generate-evidence] spawnError.stack=${result.error?.stack ?? "<none>"}`,
+        `[generate-evidence] stdout:
+${result.stdout ?? "<null>"}`,
+        `[generate-evidence] stderr:
+${result.stderr ?? "<null>"}`
+      ].join("\n\n");
+      throw new Error(details);
+    }
+
+    return await readRuntimeMetaOrThrow(backendEnv, command, runtimeMetaPath);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
-
-  console.log(`[generate-evidence] vitest reporter collection succeeded via ${cmd}`);
-  return readJson(runtimeMetaPath);
 }
 
 function markdownTable(rows) {
@@ -471,8 +541,6 @@ async function main() {
   await fs.writeFile(persistentMdPath, persistentMarkdown, "utf8");
   await fs.writeFile(jsonPath, `${JSON.stringify(jsonPayload, null, 2)}\n`, "utf8");
   await fs.writeFile(runtimeJsonPath, `${JSON.stringify(runtimePayload, null, 2)}\n`, "utf8");
-  await fs.rm(runtimeMetaPath, { force: true });
-
   console.log(`Generated evidence:\n- ${mdPath}\n- ${criticalMdPath}\n- ${persistentMdPath}\n- ${jsonPath}\n- ${runtimeJsonPath}`);
 }
 

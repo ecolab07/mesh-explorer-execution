@@ -1,24 +1,21 @@
 import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
-export default defineConfig({
+export const conformanceVitestConfig = {
   test: {
-    environment: "node",
+    environment: "node"
   },
-
   resolve: {
-    preserveSymlinks: true,
+    preserveSymlinks: true
   },
-
   server: {
     deps: {
-      inline: [/^@mesh\//],
+      inline: [/^@mesh\//]
     },
     fs: {
-      allow: [
-        resolve(__dirname, ".."),
-        resolve(__dirname, "../.."),
-      ],
-    },
-  },
-});
+      allow: [resolve(__dirname, ".."), resolve(__dirname, "../..")]
+    }
+  }
+};
+
+export default defineConfig(conformanceVitestConfig);
