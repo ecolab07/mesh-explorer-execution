@@ -1158,7 +1158,7 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       candidate,
       createProjectionSnapshot(store),
       el.graphSpaceId.value,
-      normalizedPrincipal
+      normalizePrincipal(el.principal.value)
     );
     emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_COMMITTED", {
       source,
