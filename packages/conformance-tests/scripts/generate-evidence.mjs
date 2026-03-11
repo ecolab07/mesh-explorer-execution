@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
 import os from "node:os";
 
@@ -10,8 +10,7 @@ const repoRoot = path.resolve(__dirname, "../../..");
 const testsRoot = path.resolve(repoRoot, "packages/conformance-tests/src");
 const artifactsDir = path.resolve(repoRoot, "artifacts");
 const expectedInvariantsPath = path.resolve(repoRoot, "packages/conformance-tests/expected-invariants.json");
-const reporterPath = path.resolve(__dirname, "evidence-meta-reporter.mjs");
-const reporterUrl = pathToFileURL(reporterPath).href;
+const evidenceVitestConfigPath = path.resolve(repoRoot, "packages/conformance-tests/vitest.evidence.config.mjs");
 
 const testPattern = /it\(\s*"([^"\n]+)"\s*,/g;
 const conformanceIdPattern = /CT-[A-Z0-9-]+/;
@@ -178,9 +177,7 @@ async function collectRuntimeMeta(backendEnv) {
   const args = [
     "./packages/conformance-tests/scripts/run-vitest-with-env.mjs",
     "--config",
-    "./packages/conformance-tests/vitest.config.mjs",
-    "--reporter",
-    reporterUrl
+    "./packages/conformance-tests/vitest.evidence.config.mjs"
   ];
   const command = `node ${args.join(" ")}`;
   const { tempDir, runtimeMetaPath } = await makeRuntimeMetaPath(backendEnv);
@@ -205,8 +202,7 @@ async function collectRuntimeMeta(backendEnv) {
         `[generate-evidence] backend=${backendEnv}`,
         `[generate-evidence] command=${command}`,
         `[generate-evidence] cwd=${repoRoot}`,
-        `[generate-evidence] reporterPath=${reporterPath}`,
-        `[generate-evidence] reporterUrl=${reporterUrl}`,
+        `[generate-evidence] vitestConfig=${evidenceVitestConfigPath}`,
         `[generate-evidence] runtimeMetaPath=${runtimeMetaPath}`,
         `[generate-evidence] env.MESH_BACKEND=${env.MESH_BACKEND}`,
         `[generate-evidence] env.MESH_TX_VISIBILITY_POLICY=${env.MESH_TX_VISIBILITY_POLICY}`,
