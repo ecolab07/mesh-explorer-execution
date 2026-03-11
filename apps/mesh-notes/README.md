@@ -6,6 +6,10 @@
 MESH_NOTES_STORAGE_DIR=.mesh-notes-data node apps/mesh-notes-server/dist/index.js
 ```
 
+```PowerShell
+$env:MESH_NOTES_STORAGE_DIR=".mesh-notes-data"; node apps/mesh-notes-server/dist/index.js
+```
+
 ## Run replica (from tests or local script)
 
 Use `startReplica` from `apps/mesh-notes-replica/src/index.ts` and pass:
@@ -21,6 +25,19 @@ node apps/mesh-app/dist/index.js create-note --baseUrl http://127.0.0.1:8080 --p
 node apps/mesh-app/dist/index.js list-notes --baseUrl http://127.0.0.1:8080 --principal alice
 node apps/mesh-app/dist/index.js delete-note --baseUrl http://127.0.0.1:8080 --principal alice --id <id>
 node apps/mesh-app/dist/index.js watch --baseUrl http://127.0.0.1:8080 --principal alice
+```
+
+### Controled explicit mask
+
+TODO: create maskPrincipals CLI
+
+```PowerShell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8080/notes" `
+  -Headers @{ "x-mesh-principal" = "alice" } `
+  -ContentType "application/json" `
+  -Body '{"title":"visible-to-alice-and-carol","body":"B","maskPrincipals":["bob"]}'
 ```
 
 ## E2E tests
