@@ -182,7 +182,7 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
   it("[INV:CT-HTTP-TRANSPORT-3][SURF:Transport] SSE subscribe reconnect from cursor converges", async ({ task }) => {
     task.meta.invariantId = "CT-HTTP-TRANSPORT-3";
     task.meta.surface = "Transport";
-    task.meta.oracle = "SSE reconnection from last cursor converges to same visible state (duplicates tolerated).";
+    task.meta.oracle = "SSE reconnect from last cursor is monotone, lossless, duplicate-free, and converges to same final visible state.";
     task.meta.criticality = "Critical";
 
     const graphSpaceId = "space-http-subscribe";
@@ -191,22 +191,35 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
     const gateway = new Gateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
     const server = new SyncHttpReferenceServer({ graphSpaceId, gateway });
 
-    await kernel.execute({ graphSpaceId, commandId: "http-sub-1", actorId: "writer", idempotencyKey: "hs1", payload: { n: 1 } });
-    await kernel.execute({ graphSpaceId, commandId: "http-sub-2", actorId: "writer", idempotencyKey: "hs2", payload: { n: 2 } });
-
     const { url } = await server.listen();
     try {
-      const beforeDisconnect = await collectFromSse(url, graphSpaceId, 0, 2);
-      await kernel.execute({ graphSpaceId, commandId: "http-sub-3", actorId: "writer", idempotencyKey: "hs3", payload: { n: 3 } });
-      const afterReconnect = await collectFromSse(url, graphSpaceId, beforeDisconnect.cursor, 3);
-      const txIds = dedupe([...beforeDisconnect.txIds, ...afterReconnect.txIds]);
+      const firstConnected = makeDeferred<void>();
+      const firstStream = collectFromSse(url, graphSpaceId, 0, 2, () => firstConnected.resolve());
+      await firstConnected.promise;
 
-      expect(txIds).toEqual(["http-sub-1", "http-sub-2", "http-sub-3"]);
+      await kernel.execute({ graphSpaceId, commandId: "http-sub-1", actorId: "writer", idempotencyKey: "hs1", payload: { n: 1 } });
+      await kernel.execute({ graphSpaceId, commandId: "http-sub-2", actorId: "writer", idempotencyKey: "hs2", payload: { n: 2 } });
+
+      const beforeDisconnect = await firstStream;
+
+      const reconnectConnected = makeDeferred<void>();
+      const secondStream = collectFromSse(url, graphSpaceId, beforeDisconnect.cursor, 3, () => reconnectConnected.resolve());
+      await reconnectConnected.promise;
+
+      await kernel.execute({ graphSpaceId, commandId: "http-sub-3", actorId: "writer", idempotencyKey: "hs3", payload: { n: 3 } });
+      const afterReconnect = await secondStream;
+
+      const txIds = [...beforeDisconnect.txIds, ...afterReconnect.txIds];
+      expect(beforeDisconnect.cursor).toBe(2);
+      expect(afterReconnect.cursor).toBeGreaterThanOrEqual(beforeDisconnect.cursor);
       expect(afterReconnect.cursor).toBe(3);
+      expect(txIds).toEqual(["http-sub-1", "http-sub-2", "http-sub-3"]);
+      expect(dedupe(txIds)).toEqual(txIds);
+      expect((await store.readTxIndex(graphSpaceId)).map((entry) => entry.txId)).toEqual(["http-sub-1", "http-sub-2", "http-sub-3"]);
     } finally {
       await server.close();
     }
-  });
+  }, 10_000);
 
   it("[INV:CT-HTTP-TRANSPORT-4][SURF:Transport] absent vs masked indistinguishable on status/body/cursor", async ({ task }) => {
     task.meta.invariantId = "CT-HTTP-TRANSPORT-4";
@@ -263,14 +276,17 @@ async function collectFromSse(
   baseUrl: string,
   graphSpaceId: string,
   fromCursor: number,
-  targetCursor: number
+  targetCursor: number,
+  onConnected?: () => void
 ): Promise<{ txIds: string[]; cursor: number }> {
   const txIds: string[] = [];
   const aborter = new AbortController();
-  const response = await fetch(`${baseUrl}/v1/${graphSpaceId}/sync:subscribe?from=${fromCursor}&heartbeatMs=20`, {
+  const response = await fetch(`${baseUrl}/v1/${graphSpaceId}/sync:subscribe?from=${fromCursor}&heartbeatMs=25`, {
     headers: { "x-mesh-principal": "alice" },
     signal: aborter.signal
   });
+
+  onConnected?.();
 
   const reader = response.body?.getReader();
   const decoder = new TextDecoder();
