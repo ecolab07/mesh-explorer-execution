@@ -1,6 +1,11 @@
 import type { Cursor } from "./graphStore.js";
 import type { BootstrapCacheRecord } from "./bootstrapCache.js";
-import { BOOTSTRAP_CACHE_SCHEMA_VERSION, BOOTSTRAP_SNAPSHOT_VERSION, computeStateDigest } from "./bootstrapCache.js";
+import {
+  BOOTSTRAP_CACHE_SCHEMA_VERSION,
+  BOOTSTRAP_PROJECTION_VERSION,
+  BOOTSTRAP_SNAPSHOT_VERSION,
+  computeStateDigest
+} from "./bootstrapCache.js";
 import { compareCursor } from "./syncGuards.js";
 
 export const ZERO_CURSOR: Cursor = { metaSeq: 0, graphSeq: 0 };
@@ -21,6 +26,8 @@ export type BootstrapCursorDecision = {
     | "snapshot-only-snapshot-version-missing"
     | "snapshot-only-snapshot-version-mismatch"
     | "snapshot-only-schema-version-mismatch"
+    | "snapshot-only-projection-version-missing"
+    | "snapshot-only-projection-version-mismatch"
     | "snapshot-only-cursor-mismatch"
     | "snapshot-only-digest-mismatch"
     | "snapshot-cursor-cache-verified";
@@ -63,6 +70,24 @@ export function resolveBootstrapCursorDecision(input: BootstrapCursorDecisionInp
       bootstrapFrom: normalizedSnapshot,
       usedSavedCursor: false,
       reason: "snapshot-only-snapshot-version-mismatch",
+      invalidateBootstrapCache: true
+    };
+  }
+
+  if (typeof input.bootstrapCache.projectionVersion !== "number") {
+    return {
+      bootstrapFrom: normalizedSnapshot,
+      usedSavedCursor: false,
+      reason: "snapshot-only-projection-version-missing",
+      invalidateBootstrapCache: true
+    };
+  }
+
+  if (input.bootstrapCache.projectionVersion !== BOOTSTRAP_PROJECTION_VERSION) {
+    return {
+      bootstrapFrom: normalizedSnapshot,
+      usedSavedCursor: false,
+      reason: "snapshot-only-projection-version-mismatch",
       invalidateBootstrapCache: true
     };
   }

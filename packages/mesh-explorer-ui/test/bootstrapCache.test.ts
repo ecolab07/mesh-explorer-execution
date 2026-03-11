@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { BOOTSTRAP_SNAPSHOT_VERSION, computeStateDigest, makeBootstrapCacheRecord, readBootstrapCacheRecord } from "../src/bootstrapCache.js";
+import {
+  BOOTSTRAP_PROJECTION_VERSION,
+  BOOTSTRAP_SNAPSHOT_VERSION,
+  computeStateDigest,
+  makeBootstrapCacheRecord,
+  readBootstrapCacheRecord
+} from "../src/bootstrapCache.js";
 
 describe("bootstrap cache digest", () => {
   it("is stable for identical projection", () => {
@@ -67,4 +73,25 @@ describe("bootstrap cache digest", () => {
 
     expect(record.snapshotVersion).toBe(BOOTSTRAP_SNAPSHOT_VERSION);
   });
+  it("persists projectionVersion in bootstrap metadata", () => {
+    const record = makeBootstrapCacheRecord(
+      { metaSeq: 1, graphSeq: 3 },
+      { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] }
+    );
+
+    expect(record.projectionVersion).toBe(BOOTSTRAP_PROJECTION_VERSION);
+  });
+
+  it("restores projectionVersion through storage round-trip", () => {
+    const stored = JSON.stringify(
+      makeBootstrapCacheRecord(
+        { metaSeq: 1, graphSeq: 3 },
+        { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] }
+      )
+    );
+
+    const read = readBootstrapCacheRecord("mesh.bootstrapCache.alice.g1", () => stored);
+    expect(read?.projectionVersion).toBe(BOOTSTRAP_PROJECTION_VERSION);
+  });
+
 });

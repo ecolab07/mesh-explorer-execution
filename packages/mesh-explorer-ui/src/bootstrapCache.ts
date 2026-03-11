@@ -2,6 +2,7 @@ import type { Cursor, GraphLink, GraphNode, GraphStore } from "./graphStore.js";
 
 export const BOOTSTRAP_CACHE_SCHEMA_VERSION = 1;
 export const BOOTSTRAP_SNAPSHOT_VERSION = 1;
+export const BOOTSTRAP_PROJECTION_VERSION = 1;
 
 export type BootstrapProjection = {
   version: 1;
@@ -12,6 +13,7 @@ export type BootstrapProjection = {
 export type BootstrapCacheRecord = {
   schemaVersion: number;
   snapshotVersion?: number;
+  projectionVersion?: number;
   cursor: Cursor;
   stateDigest: string;
   projection: BootstrapProjection;
@@ -49,6 +51,7 @@ export function makeBootstrapCacheRecord(cursor: Cursor, projection: BootstrapPr
   return {
     schemaVersion: BOOTSTRAP_CACHE_SCHEMA_VERSION,
     snapshotVersion: BOOTSTRAP_SNAPSHOT_VERSION,
+    projectionVersion: BOOTSTRAP_PROJECTION_VERSION,
     cursor,
     stateDigest: computeStateDigest(projection),
     projection
@@ -79,6 +82,9 @@ export function readBootstrapCacheRecord(storageKey: string, read: (key: string)
     if (typeof parsed.schemaVersion !== "number") return null;
     if (!("snapshotVersion" in parsed) || (parsed.snapshotVersion !== undefined && typeof parsed.snapshotVersion !== "number")) {
       parsed.snapshotVersion = undefined;
+    }
+    if (!("projectionVersion" in parsed) || (parsed.projectionVersion !== undefined && typeof parsed.projectionVersion !== "number")) {
+      parsed.projectionVersion = undefined;
     }
     if (!isCursor(parsed.cursor)) return null;
     if (typeof parsed.stateDigest !== "string" || parsed.stateDigest.trim().length === 0) return null;
