@@ -22,28 +22,6 @@ const ALL_BACKENDS = [
 ];
 
 
-function trySpawnPnpm(args, env, stdio) {
-  const candidates = process.platform === "win32" ? ["pnpm", "pnpm.cmd"] : ["pnpm"];
-  let last = null;
-
-  for (const cmd of candidates) {
-    const result = spawnSync(cmd, args, {
-      cwd: repoRoot,
-      env,
-      encoding: "utf8",
-      stdio
-    });
-
-    if (!result.error || result.error.code !== "ENOENT") {
-      return { cmd, candidates, result };
-    }
-
-    last = { cmd, candidates, result };
-  }
-
-  return last;
-}
-
 function resolveBackendsFromEnv() {
   const meshBackend = process.env.MESH_BACKEND;
   const meshTestBackend = process.env.MESH_TEST_BACKEND;
@@ -197,28 +175,43 @@ async function makeRuntimeMetaPath(backendEnv) {
 }
 
 async function collectRuntimeMeta(backendEnv) {
-  const args = ["exec", "vitest", "run", "packages/conformance-tests/src", "--reporter", reporterUrl];
+  const args = [
+    "./packages/conformance-tests/scripts/run-vitest-with-env.mjs",
+    "--config",
+    "./packages/conformance-tests/vitest.config.mjs",
+    "--reporter",
+    reporterUrl
+  ];
+  const command = `node ${args.join(" ")}`;
   const { tempDir, runtimeMetaPath } = await makeRuntimeMetaPath(backendEnv);
   const env = {
     ...process.env,
     MESH_EVIDENCE_META_PATH: runtimeMetaPath,
     MESH_BACKEND: backendEnv,
-    MESH_TX_VISIBILITY_POLICY: "acl"
+    MESH_TX_VISIBILITY_POLICY: "acl",
+    MESH_VITEST_STDIO: "pipe"
   };
-  const useInherit = process.env.CI === "true" || process.env.CI === "1";
-  const stdio = useInherit ? "inherit" : "pipe";
+
   try {
-    const spawned = trySpawnPnpm(args, env, stdio);
-    const { cmd, candidates, result } = spawned;
+    const result = spawnSync(process.execPath, args, {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: "pipe"
+    });
 
     if (result.error || result.status !== 0) {
       const details = [
         `[generate-evidence] backend=${backendEnv}`,
-        `[generate-evidence] command=${cmd} ${args.join(" ")}`,
-        `[generate-evidence] attemptedCommands=${candidates.join(", ")}`,
+        `[generate-evidence] command=${command}`,
+        `[generate-evidence] cwd=${repoRoot}`,
         `[generate-evidence] reporterPath=${reporterPath}`,
         `[generate-evidence] reporterUrl=${reporterUrl}`,
         `[generate-evidence] runtimeMetaPath=${runtimeMetaPath}`,
+        `[generate-evidence] env.MESH_BACKEND=${env.MESH_BACKEND}`,
+        `[generate-evidence] env.MESH_TX_VISIBILITY_POLICY=${env.MESH_TX_VISIBILITY_POLICY}`,
+        `[generate-evidence] env.MESH_VITEST_STDIO=${env.MESH_VITEST_STDIO}`,
+        `[generate-evidence] env.MESH_EVIDENCE_META_PATH=${env.MESH_EVIDENCE_META_PATH}`,
         `[generate-evidence] process.execPath=${process.execPath}`,
         `[generate-evidence] PATH=${process.env.PATH ?? "<unset>"}`,
         `[generate-evidence] exitCode=${String(result.status)}`,
@@ -226,18 +219,15 @@ async function collectRuntimeMeta(backendEnv) {
         `[generate-evidence] spawnError.message=${result.error?.message ?? "<none>"}`,
         `[generate-evidence] spawnError.code=${result.error?.code ?? "<none>"}`,
         `[generate-evidence] spawnError.stack=${result.error?.stack ?? "<none>"}`,
-        useInherit
-          ? "[generate-evidence] stdio=inherit (see live vitest output above)"
-          : `[generate-evidence] stdout:\n${result.stdout ?? "<null>"}`,
-        useInherit
-          ? "[generate-evidence] stdio=inherit (see live vitest output above)"
-          : `[generate-evidence] stderr:\n${result.stderr ?? "<null>"}`
+        `[generate-evidence] stdout:
+${result.stdout ?? "<null>"}`,
+        `[generate-evidence] stderr:
+${result.stderr ?? "<null>"}`
       ].join("\n\n");
       throw new Error(details);
     }
 
-    console.log(`[generate-evidence] vitest reporter collection succeeded via ${cmd}`);
-    return await readRuntimeMetaOrThrow(backendEnv, `${cmd} ${args.join(" ")}`, runtimeMetaPath);
+    return await readRuntimeMetaOrThrow(backendEnv, command, runtimeMetaPath);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
