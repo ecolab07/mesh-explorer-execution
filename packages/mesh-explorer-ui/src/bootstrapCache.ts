@@ -21,6 +21,11 @@ export type BootstrapCacheRecord = {
   projection: BootstrapProjection;
 };
 
+export type BootstrapPersistenceResult = {
+  committed: boolean;
+  phase: "committed" | "cache-write-failed" | "cursor-write-failed";
+};
+
 export function createProjectionSnapshot(store: GraphStore): BootstrapProjection {
   const state = store.getState();
   return {
@@ -70,14 +75,29 @@ export function persistBootstrapCacheRecord(
   storageKey: string,
   cursorStorageKey: string,
   record: BootstrapCacheRecord,
-  write: (key: string, value: string) => void
-): boolean {
+  write: (key: string, value: string) => void,
+  remove: (key: string) => void
+): BootstrapPersistenceResult {
+  // Finalization contract: restart may trust persisted bootstrap artifacts only when
+  // both cache projection and cursor marker are durably written as one logical unit.
+  // If cursor write fails after cache write, cache is removed best-effort so ambiguous
+  // partial persistence resolves to conservative replay on restart.
   try {
     write(storageKey, JSON.stringify(record));
-    write(cursorStorageKey, JSON.stringify(record.cursor));
-    return true;
   } catch {
-    return false;
+    return { committed: false, phase: "cache-write-failed" };
+  }
+
+  try {
+    write(cursorStorageKey, JSON.stringify(record.cursor));
+    return { committed: true, phase: "committed" };
+  } catch {
+    try {
+      remove(storageKey);
+    } catch {
+      // best effort cleanup to keep ambiguous durable state conservative.
+    }
+    return { committed: false, phase: "cursor-write-failed" };
   }
 }
 
