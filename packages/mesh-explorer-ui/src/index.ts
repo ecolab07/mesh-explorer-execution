@@ -44,6 +44,7 @@ import {
   readBootstrapCacheRecord
 } from "./bootstrapCache.js";
 import { resolveBootstrapSnapshotSelectionDetails } from "./bootstrapSnapshotObservability.js";
+import { emitBootstrapFinalizeCommitLogs } from "./bootstrapFinalizeObservability.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -1243,18 +1244,11 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       });
       return false;
     }
-    emitMeshDebugLog("BOOTSTRAP_FINALIZE_DURABLE_PERSIST_SUCCEEDED", {
-      source: "bootstrap-finalize",
-      finalCursor
-    });
     store.setCursor(finalCursor);
-    emitMeshDebugLog("BOOTSTRAP_FINALIZE_CURSOR_EXPOSED", {
+    emitBootstrapFinalizeCommitLogs(emitMeshDebugLog, {
       source: "bootstrap-finalize",
-      finalCursor
-    });
-    emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_COMMITTED", {
-      source: "bootstrap-finalize",
-      cursor: finalCursor
+      finalCursor,
+      projectionVersion: BOOTSTRAP_PROJECTION_VERSION
     });
     return true;
   }
