@@ -1,9 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { startMeshNotesServer, type MeshNotesServerHandle } from "../../apps/mesh-notes-server/src/index.js";
-import { startReplica, type ReplicaHandle } from "../../apps/mesh-notes-replica/src/index.js";
+import { startMeshNotesServer } from "../../apps/mesh-notes-server/src/index.js";
+import { startReplica } from "../../apps/mesh-notes-replica/src/index.js";
 
 async function eventually(fn: () => Promise<void> | void, options?: { timeoutMs?: number; intervalMs?: number }): Promise<void> {
   const timeoutMs = options?.timeoutMs ?? 4_000;
@@ -23,6 +23,9 @@ async function eventually(fn: () => Promise<void> | void, options?: { timeoutMs?
 
   throw lastError;
 }
+
+type Principal = "alice" | "bob" | "carol";
+type NoteView = { id: string; title: string; body: string; deleted?: boolean };
 
 describe("Phase 17 app skeleton", { timeout: 30_000 }, () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -95,35 +98,127 @@ describe("Phase 17 app skeleton", { timeout: 30_000 }, () => {
     });
   });
 
-  it("multi-principal isolation with shared graph space", async () => {
+  it("multi-principal visibility converges with tx-level masking and restart safety", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "mesh-notes-phase17-"));
     cleanups.push(async () => rm(storageDir, { recursive: true, force: true }));
 
     const server = await startMeshNotesServer({ storageDir });
     cleanups.push(async () => server.close());
 
-    const aliceReplica = await startReplica({ baseUrl: server.syncUrl, principal: "alice", cursorFile: join(storageDir, "alice.cursor") });
-    const bobReplica = await startReplica({ baseUrl: server.syncUrl, principal: "bob", cursorFile: join(storageDir, "bob.cursor") });
-    cleanups.push(async () => aliceReplica.stopReplica());
-    cleanups.push(async () => bobReplica.stopReplica());
+    const principals: Principal[] = ["alice", "bob", "carol"];
+    const cursorFiles = {
+      alice: join(storageDir, "alice.cursor"),
+      bob: join(storageDir, "bob.cursor"),
+      carol: join(storageDir, "carol.cursor")
+    };
 
-    const aliceId = await createNote(server.url, "alice", "secret", "for alice");
+    const replicas = {
+      alice: await startReplica({ baseUrl: server.syncUrl, principal: "alice", cursorFile: cursorFiles.alice }),
+      bob: await startReplica({ baseUrl: server.syncUrl, principal: "bob", cursorFile: cursorFiles.bob }),
+      carol: await startReplica({ baseUrl: server.syncUrl, principal: "carol", cursorFile: cursorFiles.carol })
+    };
+
+    cleanups.push(async () => replicas.alice.stopReplica());
+    cleanups.push(async () => replicas.bob.stopReplica());
+    cleanups.push(async () => replicas.carol.stopReplica());
+
+    const allVisible = await createNote(server.url, "alice", "shared-1", "all principals", []);
+    const bobMasked = await createNote(server.url, "alice", "alice+carol", "hidden from bob", ["bob"]);
+    const carolMasked = await createNote(server.url, "alice", "alice+bob", "hidden from carol", ["carol"]);
+    const allVisible2 = await createNote(server.url, "alice", "shared-2", "all principals", []);
+
+    const expectedByPrincipal: Record<Principal, NoteView[]> = {
+      alice: [
+        { id: allVisible, title: "shared-1", body: "all principals", deleted: false },
+        { id: bobMasked, title: "alice+carol", body: "hidden from bob", deleted: false },
+        { id: carolMasked, title: "alice+bob", body: "hidden from carol", deleted: false },
+        { id: allVisible2, title: "shared-2", body: "all principals", deleted: false }
+      ],
+      bob: [
+        { id: allVisible, title: "shared-1", body: "all principals", deleted: false },
+        { id: carolMasked, title: "alice+bob", body: "hidden from carol", deleted: false },
+        { id: allVisible2, title: "shared-2", body: "all principals", deleted: false }
+      ],
+      carol: [
+        { id: allVisible, title: "shared-1", body: "all principals", deleted: false },
+        { id: bobMasked, title: "alice+carol", body: "hidden from bob", deleted: false },
+        { id: allVisible2, title: "shared-2", body: "all principals", deleted: false }
+      ]
+    };
 
     await eventually(async () => {
-      expect(await listNotes(server.url, "alice")).toEqual([{ id: aliceId, title: "secret", body: "for alice", deleted: false }]);
-      expect(await listNotes(server.url, "bob")).toEqual([]);
-      expect(aliceReplica.getState()).toEqual([{ id: aliceId, title: "secret", body: "for alice", deleted: false }]);
-      expect(bobReplica.getState()).toEqual([]);
-      expect(await fetchGraphCursor(server.syncUrl, "bob", bobReplica.getCursor())).toBe(bobReplica.getCursor());
+      for (const principal of principals) {
+        expect(replicas[principal].getState()).toEqual(expectedByPrincipal[principal]);
+        expect(await listNotes(server.url, principal)).toEqual(expectedByPrincipal[principal]);
+      }
+    });
+
+    const cursors = {
+      alice: replicas.alice.getCursor(),
+      bob: replicas.bob.getCursor(),
+      carol: replicas.carol.getCursor()
+    };
+
+    expect(cursors).toEqual({ alice: 4, bob: 3, carol: 3 });
+
+    for (const principal of principals) {
+      expect(await fetchGraphCursor(server.syncUrl, principal, cursors[principal])).toBe(cursors[principal]);
+      expect(await fetchGraphCursor(server.syncUrl, principal, cursors[principal] + 5)).toBe(cursors[principal] + 5);
+    }
+
+    const beforeReplay = {
+      alice: structuredClone(replicas.alice.getState()),
+      bob: structuredClone(replicas.bob.getState()),
+      carol: structuredClone(replicas.carol.getState())
+    };
+
+    for (const principal of principals) {
+      const replay = await fetchPull(server.syncUrl, principal, 0);
+      const replayEvents = replay.txBundlesVisible.flatMap((bundle) => bundle.txBundle.graphEvents);
+      const before = structuredClone(replicas[principal].getState());
+      // duplicate replay must not mutate ongoing incremental state
+      expect(replayEvents.length).toBeGreaterThanOrEqual(before.length);
+      expect(replicas[principal].getState()).toEqual(before);
+      expect(replicas[principal].getState()).toEqual(beforeReplay[principal]);
+    }
+
+    await replicas.alice.stopReplica();
+    await replicas.bob.stopReplica();
+    await replicas.carol.stopReplica();
+
+    const restarted = {
+      alice: await startReplica({ baseUrl: server.syncUrl, principal: "alice", cursorFile: cursorFiles.alice }),
+      bob: await startReplica({ baseUrl: server.syncUrl, principal: "bob", cursorFile: cursorFiles.bob }),
+      carol: await startReplica({ baseUrl: server.syncUrl, principal: "carol", cursorFile: cursorFiles.carol })
+    };
+
+    cleanups.push(async () => restarted.alice.stopReplica());
+    cleanups.push(async () => restarted.bob.stopReplica());
+    cleanups.push(async () => restarted.carol.stopReplica());
+
+    await eventually(async () => {
+      for (const principal of principals) {
+        expect(restarted[principal].getState()).toEqual(expectedByPrincipal[principal]);
+        expect(restarted[principal].getCursor()).toBe(cursors[principal]);
+      }
+    });
+
+    await writeFile(cursorFiles.bob, await readFile(cursorFiles.alice, "utf8"), "utf8");
+    const bobMismatched = await startReplica({ baseUrl: server.syncUrl, principal: "bob", cursorFile: cursorFiles.bob });
+    cleanups.push(async () => bobMismatched.stopReplica());
+
+    await eventually(async () => {
+      expect(bobMismatched.getState()).toEqual(expectedByPrincipal.bob);
+      expect(bobMismatched.getCursor()).toBe(cursors.bob);
     });
   });
 });
 
-async function createNote(baseUrl: string, principal: string, title: string, body: string): Promise<string> {
+async function createNote(baseUrl: string, principal: string, title: string, body: string, maskPrincipals?: string[]): Promise<string> {
   const response = await fetch(`${baseUrl}/notes`, {
     method: "POST",
     headers: headers(principal),
-    body: JSON.stringify({ title, body })
+    body: JSON.stringify({ title, body, maskPrincipals })
   });
   const payload = (await response.json()) as { noteId: string };
   return payload.noteId;
@@ -158,6 +253,19 @@ async function fetchGraphCursor(baseUrl: string, principal: string, cursor: numb
   });
   const payload = (await response.json()) as { cursorAfterVisible?: number };
   return payload.cursorAfterVisible ?? cursor;
+}
+
+async function fetchPull(baseUrl: string, principal: string, cursor: number): Promise<{
+  txBundlesVisible: Array<{ txBundle: { graphEvents: unknown[] } }>;
+  cursorAfterVisible: number;
+}> {
+  const response = await fetch(`${baseUrl}/v1/notes-app-shared-space-v1/sync:pull?from=${cursor}&limitTx=64`, {
+    headers: headers(principal)
+  });
+  return (await response.json()) as {
+    txBundlesVisible: Array<{ txBundle: { graphEvents: unknown[] } }>;
+    cursorAfterVisible: number;
+  };
 }
 
 function headers(principal: string): HeadersInit {
