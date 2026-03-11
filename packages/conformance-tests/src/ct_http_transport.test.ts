@@ -79,8 +79,21 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
     const graphSpaceId = "space-http-submit";
     const kernel = new KernelMinimalImpl(store);
     const Gateway = await loadLocalSyncGatewayCtor();
-    const gateway = new Gateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
-    const server = new SyncHttpReferenceServer({ graphSpaceId, gateway, submitResponseDelayMs: 150 });
+    const firstExecutionStarted = makeDeferred<void>();
+    const releaseExecution = makeDeferred<void>();
+    let firstExecutionStartedSettled = false;
+    const gateway = new Gateway(store, {
+      graphSpaceId,
+      executeCommand: async (command) => {
+        if (!firstExecutionStartedSettled) {
+          firstExecutionStartedSettled = true;
+          firstExecutionStarted.resolve();
+          await releaseExecution.promise;
+        }
+        return kernel.execute(command);
+      }
+    });
+    const server = new SyncHttpReferenceServer({ graphSpaceId, gateway });
 
     const command: Command = {
       graphSpaceId,
@@ -93,20 +106,21 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
     const { url } = await server.listen();
     try {
       const aborter = new AbortController();
-      setTimeout(() => aborter.abort(), 30);
-      await expect(
-        fetch(`${url}/v1/${graphSpaceId}/commands:submit`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-mesh-principal": "alice"
-          },
-          body: JSON.stringify(command),
-          signal: aborter.signal
-        })
-      ).rejects.toThrow();
+      const firstAttempt = fetch(`${url}/v1/${graphSpaceId}/commands:submit`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-mesh-principal": "alice"
+        },
+        body: JSON.stringify(command),
+        signal: aborter.signal
+      });
 
-      const retry = await fetch(`${url}/v1/${graphSpaceId}/commands:submit`, {
+      await firstExecutionStarted.promise;
+      aborter.abort();
+      await expect(firstAttempt).rejects.toThrow();
+
+      const retry = fetch(`${url}/v1/${graphSpaceId}/commands:submit`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -115,13 +129,17 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
         body: JSON.stringify(command)
       });
 
-      const retriedOutcome = (await retry.json()) as CommandOutcome;
+      releaseExecution.resolve();
+
+      const retriedOutcome = (await (await retry).json()) as CommandOutcome;
       expect(retriedOutcome.status).toBe("committed");
+      expect(retriedOutcome.commandId).toBe(command.commandId);
       expect((await store.readTxIndex(graphSpaceId)).map((entry) => entry.txId)).toEqual(["http-cmd-1"]);
     } finally {
+      releaseExecution.resolve();
       await server.close();
     }
-  });
+  }, 10_000);
 
   it("[INV:CT-HTTP-TRANSPORT-2][SURF:Transport] pull cursor monotone and tx-closed", async ({ task }) => {
     task.meta.invariantId = "CT-HTTP-TRANSPORT-2";
@@ -164,7 +182,7 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
   it("[INV:CT-HTTP-TRANSPORT-3][SURF:Transport] SSE subscribe reconnect from cursor converges", async ({ task }) => {
     task.meta.invariantId = "CT-HTTP-TRANSPORT-3";
     task.meta.surface = "Transport";
-    task.meta.oracle = "SSE reconnection from last cursor converges to same visible state (duplicates tolerated).";
+    task.meta.oracle = "SSE reconnect from last cursor is monotone, lossless, duplicate-free, and converges to same final visible state.";
     task.meta.criticality = "Critical";
 
     const graphSpaceId = "space-http-subscribe";
@@ -173,22 +191,35 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
     const gateway = new Gateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
     const server = new SyncHttpReferenceServer({ graphSpaceId, gateway });
 
-    await kernel.execute({ graphSpaceId, commandId: "http-sub-1", actorId: "writer", idempotencyKey: "hs1", payload: { n: 1 } });
-    await kernel.execute({ graphSpaceId, commandId: "http-sub-2", actorId: "writer", idempotencyKey: "hs2", payload: { n: 2 } });
-
     const { url } = await server.listen();
     try {
-      const beforeDisconnect = await collectFromSse(url, graphSpaceId, 0, 2);
-      await kernel.execute({ graphSpaceId, commandId: "http-sub-3", actorId: "writer", idempotencyKey: "hs3", payload: { n: 3 } });
-      const afterReconnect = await collectFromSse(url, graphSpaceId, beforeDisconnect.cursor, 3);
-      const txIds = dedupe([...beforeDisconnect.txIds, ...afterReconnect.txIds]);
+      const firstConnected = makeDeferred<void>();
+      const firstStream = collectFromSse(url, graphSpaceId, 0, 2, () => firstConnected.resolve());
+      await firstConnected.promise;
 
-      expect(txIds).toEqual(["http-sub-1", "http-sub-2", "http-sub-3"]);
+      await kernel.execute({ graphSpaceId, commandId: "http-sub-1", actorId: "writer", idempotencyKey: "hs1", payload: { n: 1 } });
+      await kernel.execute({ graphSpaceId, commandId: "http-sub-2", actorId: "writer", idempotencyKey: "hs2", payload: { n: 2 } });
+
+      const beforeDisconnect = await firstStream;
+
+      const reconnectConnected = makeDeferred<void>();
+      const secondStream = collectFromSse(url, graphSpaceId, beforeDisconnect.cursor, 3, () => reconnectConnected.resolve());
+      await reconnectConnected.promise;
+
+      await kernel.execute({ graphSpaceId, commandId: "http-sub-3", actorId: "writer", idempotencyKey: "hs3", payload: { n: 3 } });
+      const afterReconnect = await secondStream;
+
+      const txIds = [...beforeDisconnect.txIds, ...afterReconnect.txIds];
+      expect(beforeDisconnect.cursor).toBe(2);
+      expect(afterReconnect.cursor).toBeGreaterThanOrEqual(beforeDisconnect.cursor);
       expect(afterReconnect.cursor).toBe(3);
+      expect(txIds).toEqual(["http-sub-1", "http-sub-2", "http-sub-3"]);
+      expect(dedupe(txIds)).toEqual(txIds);
+      expect((await store.readTxIndex(graphSpaceId)).map((entry) => entry.txId)).toEqual(["http-sub-1", "http-sub-2", "http-sub-3"]);
     } finally {
       await server.close();
     }
-  });
+  }, 10_000);
 
   it("[INV:CT-HTTP-TRANSPORT-4][SURF:Transport] absent vs masked indistinguishable on status/body/cursor", async ({ task }) => {
     task.meta.invariantId = "CT-HTTP-TRANSPORT-4";
@@ -245,14 +276,17 @@ async function collectFromSse(
   baseUrl: string,
   graphSpaceId: string,
   fromCursor: number,
-  targetCursor: number
+  targetCursor: number,
+  onConnected?: () => void
 ): Promise<{ txIds: string[]; cursor: number }> {
   const txIds: string[] = [];
   const aborter = new AbortController();
-  const response = await fetch(`${baseUrl}/v1/${graphSpaceId}/sync:subscribe?from=${fromCursor}&heartbeatMs=20`, {
+  const response = await fetch(`${baseUrl}/v1/${graphSpaceId}/sync:subscribe?from=${fromCursor}&heartbeatMs=25`, {
     headers: { "x-mesh-principal": "alice" },
     signal: aborter.signal
   });
+
+  onConnected?.();
 
   const reader = response.body?.getReader();
   const decoder = new TextDecoder();
@@ -292,6 +326,14 @@ async function collectFromSse(
 
   aborter.abort();
   return { txIds, cursor };
+}
+
+function makeDeferred<T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function dedupe(values: string[]): string[] {
