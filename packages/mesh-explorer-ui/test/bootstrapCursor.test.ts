@@ -185,6 +185,29 @@ describe("mesh explorer bootstrap cursor", () => {
     expect(decision.invalidateBootstrapCache).toBe(false);
   });
 
+
+  it("transitions from snapshot-only-cache-missing to snapshot-cursor-cache-verified after cache persist", () => {
+    const snapshotCursor = { metaSeq: 0, graphSeq: 2 };
+    const projection = { version: 1 as const, nodes: [{ id: "n1", label: "A" }], links: [] };
+
+    const firstDecision = resolveBootstrapCursorDecision({
+      savedCursor: null,
+      snapshot: { cursor: snapshotCursor },
+      bootstrapCache: null
+    });
+    expect(firstDecision.reason).toBe("snapshot-only-cache-missing");
+
+    const cache = makeBootstrapCacheRecord(snapshotCursor, projection, { graphSpaceId: "g1", principal: "alice" });
+    const secondDecision = resolveBootstrapCursorDecision({
+      savedCursor: snapshotCursor,
+      snapshot: { cursor: snapshotCursor },
+      bootstrapCache: cache
+    });
+
+    expect(secondDecision.reason).toBe("snapshot-cursor-cache-verified");
+    expect(secondDecision.usedSavedCursor).toBe(true);
+  });
+
   it("writes exact storage key format mesh.cursor.<principal>.<graphSpaceId>", () => {
     expect(cursorStorageKey("local-dev", "mesh-explorer-graph-v1")).toBe("mesh.cursor.local-dev.mesh-explorer-graph-v1");
     expect(bootstrapCacheStorageKey("local-dev", "mesh-explorer-graph-v1")).toBe(

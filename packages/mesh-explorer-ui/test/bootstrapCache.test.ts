@@ -94,4 +94,29 @@ describe("bootstrap cache digest", () => {
     expect(read?.projectionVersion).toBe(BOOTSTRAP_PROJECTION_VERSION);
   });
 
+  it("persists graphSpaceId and principal in bootstrap metadata", () => {
+    const record = makeBootstrapCacheRecord(
+      { metaSeq: 1, graphSeq: 3 },
+      { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] },
+      { graphSpaceId: "g1", principal: "alice" }
+    );
+
+    expect(record.graphSpaceId).toBe("g1");
+    expect(record.principal).toBe("alice");
+  });
+
+  it("restores graphSpaceId and principal through storage round-trip", () => {
+    const stored = JSON.stringify(
+      makeBootstrapCacheRecord(
+        { metaSeq: 1, graphSeq: 3 },
+        { version: 1, nodes: [{ id: "n1", label: "A" }], links: [] },
+        { graphSpaceId: "g1", principal: "alice" }
+      )
+    );
+
+    const read = readBootstrapCacheRecord("mesh.bootstrapCache.alice.g1", () => stored);
+    expect(read?.graphSpaceId).toBe("g1");
+    expect(read?.principal).toBe("alice");
+  });
+
 });
