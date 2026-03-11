@@ -42,6 +42,7 @@ import {
   persistBootstrapCacheRecord,
   readBootstrapCacheRecord
 } from "./bootstrapCache.js";
+import { resolveBootstrapSnapshotSelectionDetails } from "./bootstrapSnapshotObservability.js";
 
 type Cursor = { metaSeq: number; graphSeq: number };
 type GraphData = { nodes: GraphNode[]; links: GraphLink[] };
@@ -394,6 +395,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
 
     const bootstrapCursor = bootstrapDecision.bootstrapFrom;
     syncIngestionState.cursor = bootstrapCursor;
+    const snapshotSelectionDetails = resolveBootstrapSnapshotSelectionDetails(snapshot.snapshotId, snapshotCursor, snapshot.snapshots);
+    if (snapshotSelectionDetails) {
+      emitMeshDebugLog("BOOTSTRAP_SNAPSHOT_SELECTED", {
+        graphSpaceId: el.graphSpaceId.value,
+        principal: normalizedPrincipal,
+        ...snapshotSelectionDetails
+      });
+    }
     emitMeshDebugLog("BOOTSTRAP_DECISION", {
       graphSpaceId: el.graphSpaceId.value,
       principal: normalizedPrincipal,
@@ -442,16 +451,28 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     void subscribeLoop(sessionId, activeAbort.signal);
 
 
-    async function fetchSnapshot(principalValue: string): Promise<{ payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor: Cursor }> {
+    async function fetchSnapshot(principalValue: string): Promise<{
+      payload?: { nodes?: GraphNode[]; links?: GraphLink[] };
+      cursor: Cursor;
+      snapshotId: string | null;
+      snapshots: Array<{ snapshotId: string }>;
+    }> {
       const response = await meshFetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/graph:snapshot`, { headers: headers(principalValue) }, {
         principal: principalValue,
         transport: "fetch",
         debugAuth,
         onNetworkResult: (status) => markNetworkConnectivity(status, "snapshot-bootstrap")
       });
-      if (!response.ok) return { payload: { nodes: [], links: [] }, cursor: { metaSeq: 0, graphSeq: 0 } };
-      const snapshot = (await response.json()) as { payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor?: Cursor };
-      return { payload: snapshot.payload, cursor: snapshot.cursor ?? { metaSeq: 0, graphSeq: 0 } };
+      if (!response.ok) return { payload: { nodes: [], links: [] }, cursor: { metaSeq: 0, graphSeq: 0 }, snapshotId: null, snapshots: [] };
+      const snapshot = (await response.json()) as { snapshotId?: string; payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor?: Cursor };
+      const listedSnapshots = await fetch(`${el.baseUrl.value}/v1/${encodeURIComponent(el.graphSpaceId.value)}/snapshots`, { headers: headers(principalValue) });
+      const snapshots = listedSnapshots.ok ? (await listedSnapshots.json()) as Array<{ snapshotId: string }> : [];
+      return {
+        payload: snapshot.payload,
+        cursor: snapshot.cursor ?? { metaSeq: 0, graphSeq: 0 },
+        snapshotId: snapshot.snapshotId ?? null,
+        snapshots
+      };
     }
 
     function bootstrapFromSnapshot(snapshot: { payload?: { nodes?: GraphNode[]; links?: GraphLink[] }; cursor: Cursor }): void {
