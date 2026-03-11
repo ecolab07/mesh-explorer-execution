@@ -28,6 +28,12 @@ type NoteEvent = {
   _acl?: Record<string, "mask">;
 };
 
+type CreateNoteBody = {
+  title?: unknown;
+  body?: unknown;
+  maskPrincipals?: unknown;
+};
+
 export interface MeshNotesServerOptions {
   storageDir: string;
   graphSpaceId?: string;
@@ -106,16 +112,17 @@ async function handleRequest(
   }
 
   if (req.method === "POST" && requestUrl.pathname === "/notes") {
-    const body = (await readJsonBody(req)) as { title?: unknown; body?: unknown };
+    const body = (await readJsonBody(req)) as CreateNoteBody;
     const title = typeof body.title === "string" ? body.title : "";
     const content = typeof body.body === "string" ? body.body : "";
+    const maskPrincipals = coercePrincipalList(body.maskPrincipals);
     const noteId = randomUUID();
     const outcome = await submitNoteCommand(deps.gateway, deps.graphSpaceId, principal, {
       type: "note.created",
       noteId,
       title,
       body: content,
-      _acl: maskForOtherPrincipal(principal.principalId)
+      _acl: toMaskAcl(principal.principalId, maskPrincipals)
     });
     writeJson(res, 200, { noteId, outcome });
     return;
@@ -227,9 +234,25 @@ function parsePrincipal(req: IncomingMessage): PrincipalContext | null {
   return { principalId: trimmed };
 }
 
+function coercePrincipalList(input: unknown): string[] | null {
+  if (input === undefined) return null;
+  if (!Array.isArray(input)) return null;
+  return input.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+}
+
+function toMaskAcl(actorPrincipalId: string, explicitMaskPrincipals: string[] | null): Record<string, "mask"> {
+  const principals = explicitMaskPrincipals ?? Object.keys(maskForOtherPrincipal(actorPrincipalId));
+  return principals.reduce<Record<string, "mask">>((acc, principal) => {
+    if (principal === actorPrincipalId) return acc;
+    acc[principal] = "mask";
+    return acc;
+  }, {});
+}
+
 function maskForOtherPrincipal(principal: string): Record<string, "mask"> {
-  if (principal === "alice") return { bob: "mask" };
-  if (principal === "bob") return { alice: "mask" };
+  if (principal === "alice") return { bob: "mask", carol: "mask" };
+  if (principal === "bob") return { alice: "mask", carol: "mask" };
+  if (principal === "carol") return { alice: "mask", bob: "mask" };
   return {};
 }
 

@@ -148,7 +148,8 @@ async function bootstrapState(
     }
     cursor = next.cursorAfter;
   }
-  return Math.max(cursor, minimumCursor);
+  void minimumCursor;
+  return cursor;
 }
 
 function applyGraphEvents(state: Map<string, NoteState>, seen: Set<string>, events: unknown[]): void {
