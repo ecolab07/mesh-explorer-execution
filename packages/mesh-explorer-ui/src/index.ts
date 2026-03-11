@@ -40,6 +40,7 @@ import {
   hydrateStoreFromProjection,
   makeBootstrapCacheRecord,
   persistBootstrapCacheRecord,
+  type BootstrapPersistenceResult,
   readBootstrapCacheRecord
 } from "./bootstrapCache.js";
 import { resolveBootstrapSnapshotSelectionDetails } from "./bootstrapSnapshotObservability.js";
@@ -1220,8 +1221,12 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       ? replayComplete && compareCursor(finalCursor, current) >= 0
       : shouldPersistBootstrapCursor(fromCursor, finalCursor, current, replayComplete);
     if (!shouldPersist) return false;
-    store.setCursor(finalCursor);
-    persistDurableBootstrapState(
+    emitMeshDebugLog("BOOTSTRAP_FINALIZE_DURABLE_PERSIST_STARTED", {
+      source: "bootstrap-finalize",
+      fromCursor,
+      finalCursor
+    });
+    const persistResult = persistDurableBootstrapState(
       storageKey,
       bootstrapCacheKey,
       finalCursor,
@@ -1229,6 +1234,24 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       graphSpaceId,
       principal
     );
+    if (!persistResult.committed) {
+      emitMeshDebugLog("BOOTSTRAP_FINALIZE_DURABLE_PERSIST_FAILED", {
+        source: "bootstrap-finalize",
+        fromCursor,
+        finalCursor,
+        phase: persistResult.phase
+      });
+      return false;
+    }
+    emitMeshDebugLog("BOOTSTRAP_FINALIZE_DURABLE_PERSIST_SUCCEEDED", {
+      source: "bootstrap-finalize",
+      finalCursor
+    });
+    store.setCursor(finalCursor);
+    emitMeshDebugLog("BOOTSTRAP_FINALIZE_CURSOR_EXPOSED", {
+      source: "bootstrap-finalize",
+      finalCursor
+    });
     emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_COMMITTED", {
       source: "bootstrap-finalize",
       cursor: finalCursor
@@ -1488,9 +1511,15 @@ function persistDurableBootstrapState(
   projection: ReturnType<typeof createProjectionSnapshot>,
   graphSpaceId: string,
   principal: string
-): void {
+): BootstrapPersistenceResult {
   const record = makeBootstrapCacheRecord(cursor, projection, { graphSpaceId, principal });
-  persistBootstrapCacheRecord(cacheStorage, cursorStorage, record, (key, value) => localStorage.setItem(key, value));
+  return persistBootstrapCacheRecord(
+    cacheStorage,
+    cursorStorage,
+    record,
+    (key, value) => localStorage.setItem(key, value),
+    (key) => localStorage.removeItem(key)
+  );
 }
 
 async function *parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<SyncFrame> {

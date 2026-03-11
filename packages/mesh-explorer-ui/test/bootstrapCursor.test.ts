@@ -70,7 +70,25 @@ describe("mesh explorer bootstrap cursor", () => {
 
     expect(decision.bootstrapFrom).toEqual({ metaSeq: 1, graphSeq: 4 });
     expect(decision.usedSavedCursor).toBe(false);
-    expect(decision.reason).toBe("snapshot-only-cursor-mismatch");
+    expect(decision.reason).toBe("snapshot-only-saved-cursor-mismatch");
+    expect(decision.invalidateBootstrapCache).toBe(true);
+  });
+
+  it("rejects cache when saved cursor diverges from snapshot cursor", () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 2, graphSeq: 8 },
+      { version: 1, nodes: [{ id: "n1", label: "node-1" }], links: [] }
+    );
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 2, graphSeq: 9 },
+      snapshot: { cursor: { metaSeq: 2, graphSeq: 8 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 2, graphSeq: 8 });
+    expect(decision.usedSavedCursor).toBe(false);
+    expect(decision.reason).toBe("snapshot-only-saved-cursor-mismatch");
     expect(decision.invalidateBootstrapCache).toBe(true);
   });
 

@@ -117,7 +117,7 @@ describe("bootstrap convergence guards", () => {
       snapshot: { cursor: staleSnapshotCursor },
       bootstrapCache: makeBootstrapCacheRecord(savedCursor, { version: 1, nodes: [], links: [] })
     });
-    expect(decision.reason).toBe("snapshot-only-cursor-mismatch");
+    expect(decision.reason).toBe("snapshot-only-saved-cursor-mismatch");
 
     const store = createGraphStore();
     store.setCursor(decision.bootstrapFrom);

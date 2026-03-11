@@ -129,7 +129,7 @@ describe("mesh explorer sync materialization", { timeout: 30_000 }, () => {
 
     const secondSession = await runBootstrapSession(server.url, "alice", firstSession.persisted);
     expect(secondSession.decision.usedSavedCursor).toBe(true);
-    expect(secondSession.decision.reason).toBe("saved-cursor-cache-verified");
+    expect(secondSession.decision.reason).toBe("snapshot-cursor-cache-verified");
     expect(secondSession.replay.graphEventsApplied).toBe(0);
     expect(secondSession.store.getState().cursor.graphSeq).toBeGreaterThanOrEqual(firstSession.store.getState().cursor.graphSeq);
     expect(secondSession.store.getState().nodesById.size).toBe(2);
