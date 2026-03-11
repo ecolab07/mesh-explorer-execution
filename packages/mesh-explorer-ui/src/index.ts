@@ -422,7 +422,22 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       finalCursor: replayResult.cursor,
       graphEventsApplied: replayResult.graphEventsApplied
     });
-    persistBootstrapCursor(storageKey, bootstrapCacheKey, snapshotCursor, replayResult.cursor, !bootstrapReplayPending);
+    const bootstrapCachePersisted = persistBootstrapCursor(
+      storageKey,
+      bootstrapCacheKey,
+      snapshotCursor,
+      replayResult.cursor,
+      !bootstrapReplayPending,
+      bootstrapDecision.reason === "snapshot-only-cache-missing",
+      el.graphSpaceId.value,
+      normalizedPrincipal
+    );
+    if (bootstrapCachePersisted && bootstrapDecision.reason === "snapshot-only-cache-missing") {
+      emitMeshDebugLog("BOOTSTRAP_CACHE_PERSISTED", {
+        cursor: replayResult.cursor,
+        projectionVersion: BOOTSTRAP_PROJECTION_VERSION
+      });
+    }
     setConnectionStatus("connected (poll-only)");
     void subscribeLoop(sessionId, activeAbort.signal);
 
@@ -490,7 +505,16 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
                   });
                   const replayResult = await pollReplayFromCursor(fromCursor, activeSessionId, signal, "pull");
                   if (activeSessionId !== syncSession) return;
-                  persistBootstrapCursor(storageKey, bootstrapCacheKey, fromCursor, replayResult.cursor, !bootstrapReplayPending);
+                  persistBootstrapCursor(
+                    storageKey,
+                    bootstrapCacheKey,
+                    fromCursor,
+                    replayResult.cursor,
+                    !bootstrapReplayPending,
+                    false,
+                    el.graphSpaceId.value,
+                    normalizedPrincipal
+                  );
                   continue;
                 }
 
@@ -1128,7 +1152,14 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       });
       return true;
     }
-    persistDurableBootstrapState(storageKey, bootstrapCacheKey, candidate, createProjectionSnapshot(store));
+    persistDurableBootstrapState(
+      storageKey,
+      bootstrapCacheKey,
+      candidate,
+      createProjectionSnapshot(store),
+      el.graphSpaceId.value,
+      normalizedPrincipal
+    );
     emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_COMMITTED", {
       source,
       cursor: candidate
@@ -1158,16 +1189,30 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
     bootstrapCacheKey: string,
     fromCursor: Cursor,
     finalCursor: Cursor,
-    replayComplete: boolean
-  ): void {
+    replayComplete: boolean,
+    forcePersist: boolean,
+    graphSpaceId: string,
+    principal: string
+  ): boolean {
     const current = store.getState().cursor;
-    if (!shouldPersistBootstrapCursor(fromCursor, finalCursor, current, replayComplete)) return;
+    const shouldPersist = forcePersist
+      ? replayComplete && compareCursor(finalCursor, current) >= 0
+      : shouldPersistBootstrapCursor(fromCursor, finalCursor, current, replayComplete);
+    if (!shouldPersist) return false;
     store.setCursor(finalCursor);
-    persistDurableBootstrapState(storageKey, bootstrapCacheKey, finalCursor, createProjectionSnapshot(store));
+    persistDurableBootstrapState(
+      storageKey,
+      bootstrapCacheKey,
+      finalCursor,
+      createProjectionSnapshot(store),
+      graphSpaceId,
+      principal
+    );
     emitMeshDebugLog("BOOTSTRAP_CACHE_WRITE_COMMITTED", {
       source: "bootstrap-finalize",
       cursor: finalCursor
     });
+    return true;
   }
 
   function setRendererMode(mode: "canvas-2d" | "fallback-json"): void {
@@ -1419,9 +1464,11 @@ function persistDurableBootstrapState(
   cursorStorage: string,
   cacheStorage: string,
   cursor: Cursor,
-  projection: ReturnType<typeof createProjectionSnapshot>
+  projection: ReturnType<typeof createProjectionSnapshot>,
+  graphSpaceId: string,
+  principal: string
 ): void {
-  const record = makeBootstrapCacheRecord(cursor, projection);
+  const record = makeBootstrapCacheRecord(cursor, projection, { graphSpaceId, principal });
   persistBootstrapCacheRecord(cacheStorage, cursorStorage, record, (key, value) => localStorage.setItem(key, value));
 }
 

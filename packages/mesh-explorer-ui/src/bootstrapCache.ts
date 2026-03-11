@@ -14,6 +14,8 @@ export type BootstrapCacheRecord = {
   schemaVersion: number;
   snapshotVersion?: number;
   projectionVersion?: number;
+  graphSpaceId?: string;
+  principal?: string;
   cursor: Cursor;
   stateDigest: string;
   projection: BootstrapProjection;
@@ -47,11 +49,17 @@ export function computeStateDigest(projection: BootstrapProjection): string {
   return fnv1a64Hex(stableStringify(canonicalProjection));
 }
 
-export function makeBootstrapCacheRecord(cursor: Cursor, projection: BootstrapProjection): BootstrapCacheRecord {
+export function makeBootstrapCacheRecord(
+  cursor: Cursor,
+  projection: BootstrapProjection,
+  metadata?: { graphSpaceId: string; principal: string }
+): BootstrapCacheRecord {
   return {
     schemaVersion: BOOTSTRAP_CACHE_SCHEMA_VERSION,
     snapshotVersion: BOOTSTRAP_SNAPSHOT_VERSION,
     projectionVersion: BOOTSTRAP_PROJECTION_VERSION,
+    graphSpaceId: metadata?.graphSpaceId,
+    principal: metadata?.principal,
     cursor,
     stateDigest: computeStateDigest(projection),
     projection
@@ -85,6 +93,12 @@ export function readBootstrapCacheRecord(storageKey: string, read: (key: string)
     }
     if (!("projectionVersion" in parsed) || (parsed.projectionVersion !== undefined && typeof parsed.projectionVersion !== "number")) {
       parsed.projectionVersion = undefined;
+    }
+    if (!("graphSpaceId" in parsed) || (parsed.graphSpaceId !== undefined && typeof parsed.graphSpaceId !== "string")) {
+      parsed.graphSpaceId = undefined;
+    }
+    if (!("principal" in parsed) || (parsed.principal !== undefined && typeof parsed.principal !== "string")) {
+      parsed.principal = undefined;
     }
     if (!isCursor(parsed.cursor)) return null;
     if (typeof parsed.stateDigest !== "string" || parsed.stateDigest.trim().length === 0) return null;
