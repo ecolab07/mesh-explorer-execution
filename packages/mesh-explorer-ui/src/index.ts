@@ -34,6 +34,7 @@ import { buildMultiDeletePlan } from "./deleteSelection.js";
 import { emitMeshDebugLogToSinks } from "./meshDebugLog.js";
 import { evaluateSubscribeConvergence } from "./syncConvergenceGuard.js";
 import {
+  BOOTSTRAP_PROJECTION_VERSION,
   clearBootstrapCacheRecord,
   createProjectionSnapshot,
   hydrateStoreFromProjection,
@@ -400,7 +401,9 @@ export function mountMeshExplorerUi(container: HTMLElement): void {
       snapshotCursor,
       bootstrapCursor,
       decisionReason: bootstrapDecision.reason,
-      usedSavedCursor: bootstrapDecision.usedSavedCursor
+      usedSavedCursor: bootstrapDecision.usedSavedCursor,
+      expectedProjectionVersion: BOOTSTRAP_PROJECTION_VERSION,
+      persistedProjectionVersion: bootstrapCache?.projectionVersion ?? null
     });
     emitMeshDebugLog("BOOTSTRAP_REPLAY_STARTED", {
       graphSpaceId: el.graphSpaceId.value,

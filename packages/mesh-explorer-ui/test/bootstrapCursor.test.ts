@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BOOTSTRAP_SNAPSHOT_VERSION, makeBootstrapCacheRecord } from "../src/bootstrapCache.js";
+import { BOOTSTRAP_PROJECTION_VERSION, BOOTSTRAP_SNAPSHOT_VERSION, makeBootstrapCacheRecord } from "../src/bootstrapCache.js";
 import { bootstrapCacheStorageKey, cursorStorageKey } from "../src/cursorStorage.js";
 import {
   nextMonotonicCursor,
@@ -130,6 +130,44 @@ describe("mesh explorer bootstrap cursor", () => {
     expect(decision.invalidateBootstrapCache).toBe(true);
   });
 
+
+  it("rejects cache when projectionVersion is missing", () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 2, graphSeq: 8 },
+      { version: 1, nodes: [{ id: "n1", label: "node-1" }], links: [] }
+    );
+    delete cache.projectionVersion;
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 2, graphSeq: 8 },
+      snapshot: { cursor: { metaSeq: 1, graphSeq: 4 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 1, graphSeq: 4 });
+    expect(decision.usedSavedCursor).toBe(false);
+    expect(decision.reason).toBe("snapshot-only-projection-version-missing");
+    expect(decision.invalidateBootstrapCache).toBe(true);
+  });
+
+  it("rejects cache when projectionVersion mismatches", () => {
+    const cache = makeBootstrapCacheRecord(
+      { metaSeq: 2, graphSeq: 8 },
+      { version: 1, nodes: [{ id: "n1", label: "node-1" }], links: [] }
+    );
+    cache.projectionVersion = BOOTSTRAP_PROJECTION_VERSION + 1;
+
+    const decision = resolveBootstrapCursorDecision({
+      savedCursor: { metaSeq: 2, graphSeq: 8 },
+      snapshot: { cursor: { metaSeq: 1, graphSeq: 4 } },
+      bootstrapCache: cache
+    });
+
+    expect(decision.bootstrapFrom).toEqual({ metaSeq: 1, graphSeq: 4 });
+    expect(decision.usedSavedCursor).toBe(false);
+    expect(decision.reason).toBe("snapshot-only-projection-version-mismatch");
+    expect(decision.invalidateBootstrapCache).toBe(true);
+  });
   it("accepts cache when snapshotVersion matches and other guards pass", () => {
     const cache = makeBootstrapCacheRecord(
       { metaSeq: 2, graphSeq: 8 },
