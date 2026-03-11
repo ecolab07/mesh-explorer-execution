@@ -79,8 +79,21 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
     const graphSpaceId = "space-http-submit";
     const kernel = new KernelMinimalImpl(store);
     const Gateway = await loadLocalSyncGatewayCtor();
-    const gateway = new Gateway(store, { graphSpaceId, executeCommand: (command) => kernel.execute(command) });
-    const server = new SyncHttpReferenceServer({ graphSpaceId, gateway, submitResponseDelayMs: 150 });
+    const firstExecutionStarted = makeDeferred<void>();
+    const releaseExecution = makeDeferred<void>();
+    let firstExecutionStartedSettled = false;
+    const gateway = new Gateway(store, {
+      graphSpaceId,
+      executeCommand: async (command) => {
+        if (!firstExecutionStartedSettled) {
+          firstExecutionStartedSettled = true;
+          firstExecutionStarted.resolve();
+          await releaseExecution.promise;
+        }
+        return kernel.execute(command);
+      }
+    });
+    const server = new SyncHttpReferenceServer({ graphSpaceId, gateway });
 
     const command: Command = {
       graphSpaceId,
@@ -93,20 +106,21 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
     const { url } = await server.listen();
     try {
       const aborter = new AbortController();
-      setTimeout(() => aborter.abort(), 30);
-      await expect(
-        fetch(`${url}/v1/${graphSpaceId}/commands:submit`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-mesh-principal": "alice"
-          },
-          body: JSON.stringify(command),
-          signal: aborter.signal
-        })
-      ).rejects.toThrow();
+      const firstAttempt = fetch(`${url}/v1/${graphSpaceId}/commands:submit`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-mesh-principal": "alice"
+        },
+        body: JSON.stringify(command),
+        signal: aborter.signal
+      });
 
-      const retry = await fetch(`${url}/v1/${graphSpaceId}/commands:submit`, {
+      await firstExecutionStarted.promise;
+      aborter.abort();
+      await expect(firstAttempt).rejects.toThrow();
+
+      const retry = fetch(`${url}/v1/${graphSpaceId}/commands:submit`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -115,13 +129,17 @@ describe.each(getConformanceBackends())("CT-HTTP-TRANSPORT-* (%s)", (backend: Co
         body: JSON.stringify(command)
       });
 
-      const retriedOutcome = (await retry.json()) as CommandOutcome;
+      releaseExecution.resolve();
+
+      const retriedOutcome = (await (await retry).json()) as CommandOutcome;
       expect(retriedOutcome.status).toBe("committed");
+      expect(retriedOutcome.commandId).toBe(command.commandId);
       expect((await store.readTxIndex(graphSpaceId)).map((entry) => entry.txId)).toEqual(["http-cmd-1"]);
     } finally {
+      releaseExecution.resolve();
       await server.close();
     }
-  });
+  }, 10_000);
 
   it("[INV:CT-HTTP-TRANSPORT-2][SURF:Transport] pull cursor monotone and tx-closed", async ({ task }) => {
     task.meta.invariantId = "CT-HTTP-TRANSPORT-2";
@@ -292,6 +310,14 @@ async function collectFromSse(
 
   aborter.abort();
   return { txIds, cursor };
+}
+
+function makeDeferred<T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function dedupe(values: string[]): string[] {
