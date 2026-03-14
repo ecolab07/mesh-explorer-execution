@@ -1,0 +1,10 @@
+{
+  "name": "@mesh/sync-runtime-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"console.log('sync-runtime-tests: no build step')\"",
+    "test": "vitest run --config ./vitest.config.mjs"
+  }
+}
